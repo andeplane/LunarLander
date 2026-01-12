@@ -1,0 +1,184 @@
+---
+alwaysApply: true
+---
+
+# Coding Patterns
+
+## Summary
+
+1. **Use dependency injection** with React context and factory functions
+2. **Implement interface-based services** with static factory methods
+3. **Use ViewModel pattern** for UI components to separate presentation from business logic
+
+---
+
+## 1. Dependency Injection with React Context
+
+### Problem
+Hard-coded dependencies make code difficult to test, less flexible, and tightly coupled to specific implementations.
+
+### Solution
+Use dependency injection through React context providers.
+
+```typescript
+// Define default dependencies and context
+const defaultDependencies = {
+  useDataSource,
+  useAnalytics,
+};
+
+export type UseMyHookContextType = typeof defaultDependencies;
+export const UseMyHookContext = createContext<UseMyHookContextType>(defaultDependencies);
+
+// Hook uses injected dependencies
+export function useMyHook() {
+  const { useDataSource, useAnalytics } = useContext(UseMyHookContext);
+  // Use injected dependencies...
+}
+```
+
+This enables easy testing by providing mock dependencies through the context provider.
+
+---
+
+## 2. Dependency Injection with Partial Overrides
+
+### Problem
+Business logic outside React components still needs testable dependency injection.
+
+### Solution
+Use factory functions with partial dependency overrides.
+
+```typescript
+export type StartSessionDependencies = {
+  serviceFactory: () => SomeService;
+};
+
+const defaultDependencies: StartSessionDependencies = {
+  serviceFactory: () => new SomeServiceImplementation(),
+};
+
+export const startSession = async (
+  props: Props,
+  dependencyOverrides?: Partial<StartSessionDependencies>
+): Promise<void> => {
+  const dependencies = { ...defaultDependencies, ...dependencyOverrides };
+  const service = dependencies.serviceFactory();
+  // Use injected dependencies...
+};
+```
+
+---
+
+## 3. Interface-Based Services
+
+### Problem
+Services need to be flexible, testable, and follow consistent patterns.
+
+### Solution
+Define interfaces and implement them with classes.
+
+```typescript
+export interface DataService {
+  load(): Promise<Data>;
+  save(data: Data): Promise<void>;
+}
+
+export class ApiDataService implements DataService {
+  async load(): Promise<Data> {
+    // Implementation...
+  }
+
+  async save(data: Data): Promise<void> {
+    // Implementation...
+  }
+}
+```
+
+---
+
+## 4. ViewModel Pattern for UI Components
+
+### Problem
+UI components become complex when they directly manage state, handle business logic, and coordinate with multiple services.
+
+### Solution
+Use the ViewModel pattern to separate UI logic from presentation.
+
+**ViewModel Hook**
+```typescript
+export interface TodoViewModel {
+  todos: Todo[];
+  isLoading: boolean;
+  addTodo: (text: string) => Promise<void>;
+  toggleTodo: (id: string) => Promise<void>;
+}
+
+export function useTodoViewModel(): TodoViewModel {
+  const { useTodoStorage, addTodoCommand, toggleTodoCommand } = useContext(TodoViewModelContext);
+  const storage = useTodoStorage();
+
+  const todos = useMemo(() => storage.listAllTodos(), [storage]);
+  const addTodo = useCallback(
+    (text: string) => addTodoCommand(text, storage),
+    [storage, addTodoCommand]
+  );
+  const toggleTodo = useCallback(
+    (id: string) => toggleTodoCommand(id, storage),
+    [storage, toggleTodoCommand]
+  );
+
+  return { todos, isLoading: false, addTodo, toggleTodo };
+}
+```
+
+**UI Component Using ViewModel**
+```typescript
+export const TodoView = () => {
+  const { todos, isLoading, addTodo, toggleTodo } = useTodoViewModel();
+  
+  if (isLoading) return <Loading />;
+  
+  return (
+    <ul>
+      {todos.map((todo) => (
+        <TodoItem key={todo.id} todo={todo} onToggle={toggleTodo} />
+      ))}
+    </ul>
+  );
+};
+```
+
+**Testing the ViewModel**
+```typescript
+describe(useTodoViewModel.name, () => {
+  let mockContext: TodoViewModelContextType;
+  let wrapper: ComponentType<{ children: ReactNode }>;
+
+  beforeEach(() => {
+    mockContext = {
+      useTodoStorage: vi.fn(() => mockTodoStorage),
+      addTodoCommand: vi.fn(),
+      toggleTodoCommand: vi.fn(),
+    };
+
+    wrapper = ({ children }) => (
+      <TodoViewModelContext.Provider value={mockContext}>
+        {children}
+      </TodoViewModelContext.Provider>
+    );
+  });
+
+  it('should handle adding todo', async () => {
+    // Arrange
+    const todoText = 'New todo item';
+    const { result } = renderHook(() => useTodoViewModel(), { wrapper });
+
+    // Act
+    await result.current.addTodo(todoText);
+
+    // Assert
+    expect(mockContext.addTodoCommand).toHaveBeenCalledWith(todoText, mockTodoStorage);
+  });
+});
+```

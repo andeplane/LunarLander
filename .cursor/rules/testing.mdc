@@ -1,0 +1,363 @@
+---
+alwaysApply: true
+---
+
+# Testing Standards
+
+## Test File Naming
+- Unit tests must be named `<something>.spec.ts(x)`
+- Use vitest for all unit tests
+
+## Running Tests
+- Use `npm run test` for watch mode
+- Use `npm run test:run` to run once
+- Always run tests after making changes
+
+---
+
+## Test Structure
+
+### Arrange/Act/Assert Pattern
+Use explicit Arrange-Act-Assert comments for tests with more than ~10-15 statements:
+
+```typescript
+it('should not fetch data if user is not found', () => {
+  // Arrange
+  vi.mocked(mockContext.useUserInfo).mockReturnValue({
+    data: undefined,
+    isFetched: true,
+  });
+
+  // Act
+  renderHook(() => useMyHook(), { wrapper });
+
+  // Assert
+  expect(mockService.fetch).not.toHaveBeenCalled();
+});
+```
+
+### Keep Tests Focused
+- Cover all functionality but keep tests focused on one behavior
+- Extract utility functions to setup test data
+- Place helper functions at the bottom of test files
+
+---
+
+## Mocking Strategy
+
+### Prefer Context Injection Over vi.mock
+Context injection makes tests less brittle and more focused. Only use `vi.mock` when absolutely necessary, and always add a comment explaining why.
+
+```typescript
+// Preferred: Context injection
+describe(useMyHook.name, () => {
+  let mockContext: MyContextType;
+
+  beforeEach(() => {
+    mockContext = {
+      useUserInfo: vi.fn(() => ({ data: mockUser })),
+    };
+  });
+  // Use context providers in wrapper
+});
+
+// When necessary: Type-safe vi.mock (add a comment explaining why)
+// Note: Mocking navigation utils because they access window.location
+vi.mock(import('../utils/navigation'), () => ({
+  createLink: vi.fn(),
+}));
+
+// Type-safe partial mocking
+vi.mock(import('../utils/validation'), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    validateJson: vi.fn(),
+  };
+});
+```
+
+### Type-Safe Mock Creation
+**All mocking must be type-safe.** Prefer `vi.fn(() => ...)` pattern where possible.
+
+**Preferred: `vi.fn(() => ...)`** - when mock behavior is consistent across tests:
+
+```typescript
+beforeEach(() => {
+  mockContext = {
+    useUserInfo: vi.fn(() => ({
+      data: { id: 'jane_doe' },
+      isFetched: true,
+    })),
+  };
+});
+```
+
+**Alternative: `vi.fn()` + `vi.mocked()`** - when you need to reconfigure per test:
+
+```typescript
+beforeEach(() => {
+  mockContext = {
+    useUserInfo: vi.fn(),
+  };
+  vi.mocked(mockContext.useUserInfo).mockReturnValue({
+    data: { id: 'jane_doe' },
+    isFetched: true,
+  });
+});
+
+it('should handle missing user', () => {
+  // Reconfigure mock for this specific test
+  vi.mocked(mockContext.useUserInfo).mockReturnValue({
+    data: undefined,
+    isFetched: true,
+  });
+  // ...
+});
+```
+
+### Interface-Based Mocks
+When implementing full interfaces, use `assert.fail` for unused methods:
+
+```typescript
+beforeEach(() => {
+  mockStorage = {
+    list: vi.fn(),
+    retrieve: vi.fn(() => { assert.fail('Not implemented'); }),
+    upsert: vi.fn(() => { assert.fail('Not implemented'); }),
+    delete: vi.fn(() => { assert.fail('Not implemented'); }),
+  };
+});
+```
+
+**Better:** Prefer narrow interfaces that only include methods the unit under test needs.
+
+---
+
+## Testing React Hooks and Components
+
+### Context Provider Pattern for Hooks
+Extract wrapper components to reusable functions:
+
+```typescript
+import { renderHook } from '@testing-library/react';
+import type { ComponentType, ReactNode } from 'react';
+
+describe(useFilteredItems.name, () => {
+  let mockContext: UseFilteredItemsContextType;
+  let wrapper: ComponentType<{ children: ReactNode }>;
+
+  beforeEach(() => {
+    mockContext = {
+      useItemsQuery: vi.fn(() => ({
+        items: mockItems,
+        refetch: vi.fn(),
+        isLoading: false,
+      })),
+    };
+
+    wrapper = createContextWrapper(mockContext);
+  });
+
+  it('should filter items correctly', () => {
+    const { result } = renderHook(() => useFilteredItems('search'), {
+      wrapper,
+    });
+
+    expect(result.current.filteredItems).toEqual(expectedItems);
+  });
+});
+
+// Helper function at bottom of file
+function createContextWrapper(
+  mockContext: UseFilteredItemsContextType
+): ComponentType<{ children: ReactNode }> {
+  return ({ children }) => (
+    <UseFilteredItemsContext.Provider value={mockContext}>
+      {children}
+    </UseFilteredItemsContext.Provider>
+  );
+}
+```
+
+### Use `act()` for State Updates
+Wrap state-changing operations in `act()`:
+
+```typescript
+import { act, renderHook } from '@testing-library/react';
+
+it('should handle state updates', async () => {
+  const { result } = renderHook(() => useCounter());
+
+  // Synchronous state updates
+  act(() => {
+    result.current.increment();
+  });
+  expect(result.current.count).toBe(1);
+
+  // Async state updates
+  await act(async () => {
+    await result.current.incrementAsync();
+  });
+  expect(result.current.count).toBe(2);
+});
+```
+
+### Use `waitFor` for Async Assertions
+Avoid flaky tests by using `waitFor` for async state changes:
+
+```typescript
+import { waitFor } from '@testing-library/react';
+
+it('should update state asynchronously', async () => {
+  const { result } = renderHook(() => useAsyncHook());
+
+  act(() => {
+    result.current.triggerAction();
+  });
+
+  await waitFor(() => expect(result.current.isLoading).toBe(false));
+  await waitFor(() => expect(result.current.data).toBeDefined());
+});
+```
+
+---
+
+## Type Safety in Tests
+
+### Use `Partial<T>` Over `as unknown as T`
+Maintain type safety while only mocking needed properties:
+
+```typescript
+// Good: Type-safe partial mocking
+function createMockWindow(overrides: Partial<Window> = {}): Window {
+  const defaultWindow: Partial<Window> = {
+    postMessage: vi.fn(),
+  };
+  return { ...defaultWindow, ...overrides } as Window;
+}
+
+// Avoid: Completely unsafe casting
+const badMock = {} as unknown as Window; // No type checking at all
+```
+
+### Type-Safe Return Value Assertions
+Use explicit type annotations when verifying complex return types:
+
+```typescript
+it('should return correctly typed result', () => {
+  const { result } = renderHook(() => useMyHook());
+
+  expect(result.current).toEqual<typeof result.current>({
+    items: mockItems,
+    isLoading: false,
+    refetch: expect.any(Function),
+  });
+});
+```
+
+### Never Use `any`
+- Prefer `unknown` or strong types
+- Use `Partial<T>` and `as T` to mock only needed fields
+
+### Direct React Type Imports
+Use direct imports instead of the React namespace:
+
+```typescript
+// Good: Direct type imports
+import type { ComponentType, ReactNode } from 'react';
+let wrapper: ComponentType<{ children: ReactNode }>;
+
+// Avoid: Global React import
+import React from 'react';
+let wrapper: React.ComponentType<{ children: React.ReactNode }>;
+```
+
+---
+
+## Best Practices
+
+### Isolate Common Setup in `beforeEach`
+```typescript
+describe(MyService.name, () => {
+  let service: MyService;
+  let mockDep: MockDependency;
+
+  beforeEach(() => {
+    mockDep = {
+      fetch: vi.fn(() => Promise.resolve(mockData)),
+    };
+    service = new MyService(mockDep);
+  });
+});
+```
+
+### Extract Helper Functions
+Place reusable mock creation at the bottom of test files:
+
+```typescript
+describe(MyService.name, () => {
+  beforeEach(() => {
+    const config = createMockConfig();
+    const tool = createMockTool('calculator', 'Performs calculations');
+    service = new MyService(config, [tool]);
+  });
+});
+
+// Helper functions at bottom
+function createMockConfig(): Config {
+  return { apiUrl: 'https://api.test', timeout: 5000 };
+}
+
+function createMockTool(name: string, description: string): Tool {
+  return {
+    name,
+    description,
+    invoke: vi.fn(),
+  };
+}
+```
+
+### Use Safe URLs in Tests
+Always use `.test` TLD for fake URLs (RFC 2606):
+
+```typescript
+// Good: Safe URL that won't leak traffic
+const baseUrl = 'https://api.test';
+
+// Avoid: Could accidentally leak traffic
+const baseUrl = 'https://fake-api.com';
+```
+
+### Use `src/__mocks__` for Shared Mock Data
+Extract large or reusable mock data to `src/__mocks__/`:
+
+```typescript
+// In src/__mocks__/createMockUser.ts
+export function createMockUser(overrides?: Partial<User>): User {
+  return {
+    id: 'user-1',
+    name: 'Test User',
+    email: 'test@example.test',
+    ...overrides,
+  };
+}
+
+// In test file
+import { createMockUser } from '../__mocks__/createMockUser';
+
+it('should process user', () => {
+  const user = createMockUser({ name: 'Custom Name' });
+  // ...
+});
+```
+
+### MSW Usage
+Use MSW sparingly - prefer mocking at the SDK/service level over REST APIs:
+
+```typescript
+// Preferred: Mock at service level
+vi.mocked(sdk.items.list).mockResolvedValue({ items: mockItems });
+
+// Use MSW only when testing full HTTP request/response cycle is required
+```
