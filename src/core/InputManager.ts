@@ -4,10 +4,12 @@
  * - Mouse input handling
  * - Pointer lock management
  * - Input state tracking
+ * - Scroll wheel for speed adjustment
  */
 export class InputManager {
   private keys: Set<string> = new Set();
   private mouseDelta: { x: number; y: number } = { x: 0, y: 0 };
+  private scrollDelta: number = 0;
   private isPointerLocked: boolean = false;
 
   constructor() {
@@ -36,6 +38,11 @@ export class InputManager {
     document.addEventListener('pointerlockchange', () => {
       this.isPointerLocked = document.pointerLockElement !== null;
     });
+
+    // Scroll wheel for speed adjustment
+    window.addEventListener('wheel', (e) => {
+      this.scrollDelta += e.deltaY;
+    });
   }
 
   /**
@@ -51,6 +58,16 @@ export class InputManager {
   getMouseDelta(): { x: number; y: number } {
     const delta = { ...this.mouseDelta };
     this.mouseDelta = { x: 0, y: 0 };
+    return delta;
+  }
+
+  /**
+   * Get scroll wheel delta (since last call)
+   * Positive = scroll down, Negative = scroll up
+   */
+  getScrollDelta(): number {
+    const delta = this.scrollDelta;
+    this.scrollDelta = 0;
     return delta;
   }
 

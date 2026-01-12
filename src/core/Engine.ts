@@ -1,16 +1,23 @@
 import * as THREE from 'three';
+import { FlightController } from '../camera/FlightController';
 
 /**
  * Main engine class responsible for:
  * - Renderer setup and initialization
- * - Main render loop
+ * - Main render loop with deltaTime tracking
  * - Scene management
+ * - FlightController updates
  */
 export class Engine {
   private renderer: THREE.WebGLRenderer;
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private animationId: number | null = null;
+  private flightController: FlightController | null = null;
+  
+  // Time tracking
+  private clock: THREE.Clock = new THREE.Clock();
+  private lastTime: number = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     // Initialize renderer
@@ -24,15 +31,22 @@ export class Engine {
 
     // Initialize camera
     this.camera = new THREE.PerspectiveCamera(
-      75,
+      70,
       window.innerWidth / window.innerHeight,
       0.1,
       100000
     );
-    this.camera.position.set(0, 100, 0);
+    this.camera.position.set(0, 100, 200);
 
     // Handle window resize
     window.addEventListener('resize', () => this.handleResize());
+  }
+
+  /**
+   * Set the flight controller for camera updates
+   */
+  setFlightController(controller: FlightController): void {
+    this.flightController = controller;
   }
 
   /**
@@ -60,9 +74,18 @@ export class Engine {
    * Start the render loop
    */
   start(): void {
+    this.clock.start();
+    this.lastTime = this.clock.getElapsedTime();
+    
     const animate = () => {
       this.animationId = requestAnimationFrame(animate);
-      this.update();
+      
+      // Calculate delta time
+      const currentTime = this.clock.getElapsedTime();
+      const deltaTime = currentTime - this.lastTime;
+      this.lastTime = currentTime;
+      
+      this.update(deltaTime);
       this.render();
     };
     animate();
@@ -81,8 +104,11 @@ export class Engine {
   /**
    * Update loop (called every frame)
    */
-  private update(): void {
-    // Update logic will be added here
+  private update(deltaTime: number): void {
+    // Update flight controller
+    if (this.flightController) {
+      this.flightController.update(deltaTime);
+    }
   }
 
   /**
