@@ -4,12 +4,21 @@ import { Engine } from './core/Engine';
 import { InputManager } from './core/InputManager';
 import { FlightController } from './camera/FlightController';
 import { Skybox } from './environment/Skybox';
-import type { CameraConfig } from './types';
+import { ChunkManager } from './terrain/ChunkManager';
+import type { CameraConfig, ChunkConfig } from './types';
 
 /**
  * Main entry point for Lunar Explorer
  * Initializes the Three.js scene and starts the render loop
  */
+
+// Parse URL parameters
+const urlParams = new URLSearchParams(window.location.search);
+const debugMeshes = urlParams.get('debugMeshes') === 'true';
+
+if (debugMeshes) {
+  console.log('Debug mode enabled: Chunk meshes will show colored triangles');
+}
 
 // Get canvas element
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -34,6 +43,16 @@ const cameraConfig: CameraConfig = {
   mouseSensitivity: 0.002
 };
 
+// Chunk configuration (Minecraft-inspired)
+const chunkConfig: ChunkConfig = {
+  size: 64,           // 64m per chunk
+  resolution: 16,     // 16x16 vertices (simple quad grid)
+  viewDistance: 5,    // Load 5 chunks in each direction
+  buildBudget: 2,     // Max chunks to build per frame
+  disposeBuffer: 2,   // Extra chunks before disposal
+  debugMeshes         // Use URL param for debug visualization
+};
+
 // Initialize flight controller
 const flightController = new FlightController(
   engine.getCamera(),
@@ -41,6 +60,13 @@ const flightController = new FlightController(
   cameraConfig
 );
 engine.setFlightController(flightController);
+
+// Initialize chunk manager
+const chunkManager = new ChunkManager(chunkConfig, engine.getScene());
+engine.setChunkManager(chunkManager);
+
+// Set initial camera position above terrain
+engine.getCamera().position.set(0, 100, 0);
 
 // Set up click to enable pointer lock
 canvas.addEventListener('click', () => {
@@ -50,17 +76,6 @@ canvas.addEventListener('click', () => {
 // Initialize skybox with Milky Way texture
 const skybox = new Skybox(engine.getScene());
 skybox.loadTexture('/textures/8k_stars_milky_way.jpg');
-
-// Add a test sphere for visual reference
-const sphereGeometry = new THREE.SphereGeometry(20, 32, 32);
-const sphereMaterial = new THREE.MeshStandardMaterial({ 
-  color: 0x888888,
-  roughness: 0.8,
-  metalness: 0.2
-});
-const testSphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-testSphere.position.set(0, 0, 0);
-engine.getScene().add(testSphere);
 
 // Add directional light (sun)
 const sunLight = new THREE.DirectionalLight(0xffffff, 2);
@@ -89,3 +104,6 @@ console.log('  Q/Shift - Down | E/Space - Up');
 console.log('  Mouse - Look around');
 console.log('  Scroll - Adjust speed');
 console.log('  Escape - Release mouse');
+console.log('');
+console.log('URL Parameters:');
+console.log('  ?debugMeshes=true - Show colored triangles for each chunk');

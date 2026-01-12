@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { FlightController } from '../camera/FlightController';
+import { ChunkManager } from '../terrain/ChunkManager';
 
 /**
  * Main engine class responsible for:
@@ -7,6 +8,7 @@ import { FlightController } from '../camera/FlightController';
  * - Main render loop with deltaTime tracking
  * - Scene management
  * - FlightController updates
+ * - ChunkManager updates
  */
 export class Engine {
   private renderer: THREE.WebGLRenderer;
@@ -14,10 +16,14 @@ export class Engine {
   private camera: THREE.PerspectiveCamera;
   private animationId: number | null = null;
   private flightController: FlightController | null = null;
+  private chunkManager: ChunkManager | null = null;
   
   // Time tracking
   private clock: THREE.Clock = new THREE.Clock();
   private lastTime: number = 0;
+  
+  // Reusable vector for camera direction
+  private readonly cameraDirection: THREE.Vector3 = new THREE.Vector3();
 
   constructor(canvas: HTMLCanvasElement) {
     // Initialize renderer
@@ -47,6 +53,13 @@ export class Engine {
    */
   setFlightController(controller: FlightController): void {
     this.flightController = controller;
+  }
+
+  /**
+   * Set the chunk manager for terrain updates
+   */
+  setChunkManager(manager: ChunkManager): void {
+    this.chunkManager = manager;
   }
 
   /**
@@ -109,6 +122,12 @@ export class Engine {
     if (this.flightController) {
       this.flightController.update(deltaTime);
     }
+
+    // Update chunk manager with camera position and direction
+    if (this.chunkManager) {
+      this.camera.getWorldDirection(this.cameraDirection);
+      this.chunkManager.update(this.camera.position, this.cameraDirection);
+    }
   }
 
   /**
@@ -132,6 +151,9 @@ export class Engine {
    */
   dispose(): void {
     this.stop();
+    if (this.chunkManager) {
+      this.chunkManager.dispose();
+    }
     this.renderer.dispose();
   }
 }
