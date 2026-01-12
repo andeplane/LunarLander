@@ -3,7 +3,6 @@ import type { ChunkCoord, ChunkConfig, NeighborLODs } from '../types';
 import { getTargetLODForScreenSize, LOD_LEVELS } from '../types';
 import { Chunk } from './Chunk';
 import { ChunkBuilder } from './ChunkBuilder';
-import { generateChunkMesh } from './meshGeneration';
 
 /**
  * LOD upgrade request in the queue
@@ -400,8 +399,8 @@ export class ChunkManager {
    * Process build queue for new chunks atomically:
    * 1. Collect new chunks to build (within budget)
    * 2. Create chunk objects and update LODMap for ALL
-   * 3. Build all meshes using consistent map
-   * 4. Add to scene
+   * 3. Pre-compute neighborLODs for ALL affected chunks (while map is consistent)
+   * 4. Dispatch all builds to workers asynchronously
    */
   private processBuildQueue(): void {
     const budget = this.config.buildBudget;
@@ -456,7 +455,8 @@ export class ChunkManager {
       }
     }
     
-    // Step 4: Build all affected chunks synchronously
+    // Step 4: Pre-compute neighborLODs for ALL affected chunks while map is consistent
+    // Then dispatch all builds to workers asynchronously
     for (const key of affectedChunks) {
       const chunk = this.activeChunks.get(key);
       if (!chunk) continue;
@@ -464,21 +464,47 @@ export class ChunkManager {
       const lod = this.currentLODMap.get(key);
       if (lod === undefined || lod < 0) continue;
       
+      // Pre-compute neighborLODs NOW while map is consistent
       const neighborLODs = this.getNeighborLODs(chunk.coord, lod);
-      const meshData = generateChunkMesh(
-        chunk.coord.x, chunk.coord.z, lod, this.config.size, neighborLODs
-      );
-      
       const isNewChunk = chunk.state === 'building';
       
-      if (isNewChunk) {
-        // New chunk - add LOD data and add to scene
-        chunk.addLODFromData(lod, meshData.vertices, meshData.normals, meshData.indices, this.config.debugMeshes);
-        chunk.addToScene(this.scene);
-      } else {
-        // Existing neighbor - replace mesh
-        chunk.replaceLODMesh(lod, meshData.vertices, meshData.normals, meshData.indices, this.config.debugMeshes);
-      }
+      // Dispatch to worker with pre-computed neighborLODs
+      this.chunkBuilder.buildChunk(
+        chunk.coord,
+        lod,
+        this.config.size,
+        neighborLODs,
+        (coord, lodLevel, vertices, normals, indices) => {
+          this.onChunkBuilt(coord, lodLevel, vertices, normals, indices, isNewChunk);
+        }
+      );
+    }
+  }
+
+  /**
+   * Callback when a chunk mesh is built by worker
+   */
+  private onChunkBuilt(
+    coord: ChunkCoord,
+    lodLevel: number,
+    vertices: Float32Array,
+    normals: Float32Array,
+    indices: Uint32Array,
+    isNewChunk: boolean
+  ): void {
+    const key = this.getChunkKey(coord);
+    const chunk = this.activeChunks.get(key);
+    
+    // Chunk may have been unloaded while building
+    if (!chunk) return;
+    
+    if (isNewChunk) {
+      // New chunk - add LOD data and add to scene
+      chunk.addLODFromData(lodLevel, vertices, normals, indices, this.config.debugMeshes);
+      chunk.addToScene(this.scene);
+    } else {
+      // Existing neighbor - replace mesh
+      chunk.replaceLODMesh(lodLevel, vertices, normals, indices, this.config.debugMeshes);
     }
   }
 
@@ -486,7 +512,8 @@ export class ChunkManager {
    * Process LOD changes (both upgrades AND downgrades) atomically:
    * 1. Collect all LOD changes for this frame
    * 2. Update currentLODMap for ALL of them upfront
-   * 3. Build all affected meshes using consistent map
+   * 3. Pre-compute neighborLODs for ALL affected chunks (while map is consistent)
+   * 4. Dispatch all builds to workers asynchronously
    */
   private processLODUpgradeQueue(): void {
     const budget = this.config.lodUpgradeBudget || 2;
@@ -530,7 +557,8 @@ export class ChunkManager {
       affectedChunks.add(this.getChunkKey({ x: coord.x + 1, z: coord.z + 1 }));
     }
     
-    // Step 4: Build/rebuild all affected chunks synchronously using consistent map
+    // Step 4: Pre-compute neighborLODs for ALL affected chunks while map is consistent
+    // Then dispatch all builds to workers asynchronously
     for (const key of affectedChunks) {
       const chunk = this.activeChunks.get(key);
       if (!chunk || chunk.state !== 'active') continue;
@@ -538,23 +566,48 @@ export class ChunkManager {
       const lod = this.currentLODMap.get(key);
       if (lod === undefined || lod < 0) continue;
       
-      // Generate mesh with consistent neighbor LODs
+      // Pre-compute neighborLODs NOW while map is consistent
       const neighborLODs = this.getNeighborLODs(chunk.coord, lod);
-      const meshData = generateChunkMesh(
-        chunk.coord.x, chunk.coord.z, lod, this.config.size, neighborLODs
+      
+      // Dispatch to worker with pre-computed neighborLODs
+      this.chunkBuilder.buildChunk(
+        chunk.coord,
+        lod,
+        this.config.size,
+        neighborLODs,
+        (coord, lodLevel, vertices, normals, indices) => {
+          this.onLODMeshBuilt(coord, lodLevel, vertices, normals, indices);
+        }
       );
-      
-      // Add or replace the LOD mesh
-      if (chunk.hasLOD(lod)) {
-        chunk.replaceLODMesh(lod, meshData.vertices, meshData.normals, meshData.indices, this.config.debugMeshes);
-      } else {
-        chunk.addLODFromData(lod, meshData.vertices, meshData.normals, meshData.indices, this.config.debugMeshes);
-      }
-      
-      // Ensure we're rendering at the correct LOD (handles both upgrades and downgrades)
-      if (chunk.getCurrentRenderingLOD() !== lod) {
-        chunk.switchToLOD(lod);
-      }
+    }
+  }
+
+  /**
+   * Callback when a LOD mesh is built by worker
+   */
+  private onLODMeshBuilt(
+    coord: ChunkCoord,
+    lodLevel: number,
+    vertices: Float32Array,
+    normals: Float32Array,
+    indices: Uint32Array
+  ): void {
+    const key = this.getChunkKey(coord);
+    const chunk = this.activeChunks.get(key);
+    
+    // Chunk may have been unloaded while building
+    if (!chunk || chunk.state !== 'active') return;
+    
+    // Add or replace the LOD mesh
+    if (chunk.hasLOD(lodLevel)) {
+      chunk.replaceLODMesh(lodLevel, vertices, normals, indices, this.config.debugMeshes);
+    } else {
+      chunk.addLODFromData(lodLevel, vertices, normals, indices, this.config.debugMeshes);
+    }
+    
+    // Ensure we're rendering at the correct LOD (handles both upgrades and downgrades)
+    if (chunk.getCurrentRenderingLOD() !== lodLevel) {
+      chunk.switchToLOD(lodLevel);
     }
   }
 
