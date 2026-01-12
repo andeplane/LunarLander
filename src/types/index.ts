@@ -122,6 +122,17 @@ export interface Chunk {
 // ============================================
 
 /**
+ * LOD levels of neighboring chunks for edge stitching
+ * -1 means neighbor doesn't exist (treat as same LOD)
+ */
+export interface NeighborLODs {
+  north: number;  // +Z direction
+  south: number;  // -Z direction
+  east: number;   // +X direction
+  west: number;   // -X direction
+}
+
+/**
  * Message sent to worker to request chunk mesh generation
  */
 export interface ChunkBuildRequest {
@@ -131,6 +142,7 @@ export interface ChunkBuildRequest {
   lodLevel: number;   // LOD level determines resolution
   size: number;
   requestId: number;
+  neighborLODs: NeighborLODs;  // For edge stitching
 }
 
 /**

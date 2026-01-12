@@ -12,7 +12,14 @@ const workerSelf = self as unknown as {
   postMessage(message: unknown, transfer?: Transferable[]): void;
 };
 
-// Worker message types
+// Worker message types - must match types/index.ts
+interface NeighborLODs {
+  north: number;
+  south: number;
+  east: number;
+  west: number;
+}
+
 interface ChunkBuildRequest {
   type: 'build';
   chunkX: number;
@@ -20,6 +27,7 @@ interface ChunkBuildRequest {
   lodLevel: number;
   size: number;
   requestId: number;
+  neighborLODs: NeighborLODs;
 }
 
 interface ChunkBuildResult {
@@ -38,10 +46,10 @@ workerSelf.onmessage = (event: MessageEvent<ChunkBuildRequest>) => {
   const request = event.data;
 
   if (request.type === 'build') {
-    const { chunkX, chunkZ, lodLevel, size, requestId } = request;
+    const { chunkX, chunkZ, lodLevel, size, requestId, neighborLODs } = request;
 
-    // Generate mesh data for the specified LOD level
-    const meshData = generateChunkMesh(chunkX, chunkZ, lodLevel, size);
+    // Generate mesh data for the specified LOD level with edge stitching
+    const meshData = generateChunkMesh(chunkX, chunkZ, lodLevel, size, neighborLODs);
 
     // Send result back with transferable arrays for performance
     const result: ChunkBuildResult = {

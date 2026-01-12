@@ -1,4 +1,4 @@
-import type { ChunkCoord, ChunkBuildRequest, ChunkBuildResult } from '../types';
+import type { ChunkCoord, ChunkBuildRequest, ChunkBuildResult, NeighborLODs } from '../types';
 
 /**
  * Callback when a chunk mesh is built
@@ -20,7 +20,7 @@ export class ChunkBuilder {
   private nextRequestId: number = 0;
   private pendingRequests: Map<number, { coord: ChunkCoord; lodLevel: number; callback: ChunkBuiltCallback }> = new Map();
   private isReady: boolean = false;
-  private queuedRequests: Array<{ coord: ChunkCoord; lodLevel: number; size: number; callback: ChunkBuiltCallback }> = [];
+  private queuedRequests: Array<{ coord: ChunkCoord; lodLevel: number; size: number; neighborLODs: NeighborLODs; callback: ChunkBuiltCallback }> = [];
 
   constructor() {
     // Create worker from the worker file
@@ -55,11 +55,12 @@ export class ChunkBuilder {
     coord: ChunkCoord,
     lodLevel: number,
     size: number,
+    neighborLODs: NeighborLODs,
     callback: ChunkBuiltCallback
   ): void {
     if (!this.isReady) {
       // Queue request until worker is ready
-      this.queuedRequests.push({ coord, lodLevel, size, callback });
+      this.queuedRequests.push({ coord, lodLevel, size, neighborLODs, callback });
       return;
     }
 
@@ -75,7 +76,8 @@ export class ChunkBuilder {
       chunkZ: coord.z,
       lodLevel,
       size,
-      requestId
+      requestId,
+      neighborLODs
     };
 
     this.worker.postMessage(request);
@@ -86,7 +88,7 @@ export class ChunkBuilder {
    */
   private processQueuedRequests(): void {
     for (const req of this.queuedRequests) {
-      this.buildChunk(req.coord, req.lodLevel, req.size, req.callback);
+      this.buildChunk(req.coord, req.lodLevel, req.size, req.neighborLODs, req.callback);
     }
     this.queuedRequests = [];
   }

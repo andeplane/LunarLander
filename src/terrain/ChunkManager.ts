@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { ChunkCoord, ChunkConfig } from '../types';
+import type { ChunkCoord, ChunkConfig, NeighborLODs } from '../types';
 import { getTargetLODForScreenSize, LOD_LEVELS } from '../types';
 import { Chunk } from './Chunk';
 import { ChunkBuilder } from './ChunkBuilder';
@@ -30,6 +30,10 @@ export class ChunkManager {
   private chunkBuilder: ChunkBuilder;
   private pendingBuilds: Set<string> = new Set();
   private pendingLODUpgrades: Set<string> = new Set();
+  
+  // Edge rebuild queue - for updating neighbor edges when LOD changes
+  private edgeRebuildQueue: Array<{ coord: ChunkCoord; lodLevel: number }> = [];
+  private pendingEdgeRebuilds: Set<string> = new Set();
 
   // Frustum culling
   private readonly frustum = new THREE.Frustum();
@@ -102,6 +106,9 @@ export class ChunkManager {
 
     // Process LOD upgrade queue
     this.processLODUpgradeQueue();
+
+    // Process edge rebuild queue (neighbor edges after LOD changes)
+    this.processEdgeRebuildQueue();
 
     // Unload distant chunks (using effective view distance)
     this.unloadDistantChunks(currentChunk, effectiveViewDistance);
@@ -395,11 +402,15 @@ export class ChunkManager {
       this.activeChunks.set(key, chunk);
       this.pendingBuilds.add(key);
 
+      // Get neighbor LODs for edge stitching
+      const neighborLODs = this.getNeighborLODs(coord, 0);
+
       // Request mesh from worker at LOD 0 (lowest detail first)
       this.chunkBuilder.buildChunk(
         coord,
         0, // Start with LOD 0
         this.config.size,
+        neighborLODs,
         (resultCoord, lodLevel, vertices, normals, indices) => {
           this.onChunkBuilt(resultCoord, lodLevel, vertices, normals, indices);
         }
@@ -439,11 +450,15 @@ export class ChunkManager {
       // Mark as pending
       this.pendingLODUpgrades.add(upgradeKey);
 
+      // Get neighbor LODs for edge stitching
+      const neighborLODs = this.getNeighborLODs(request.coord, request.targetLOD);
+
       // Request higher LOD from worker
       this.chunkBuilder.buildChunk(
         request.coord,
         request.targetLOD,
         this.config.size,
+        neighborLODs,
         (resultCoord, lodLevel, vertices, normals, indices) => {
           this.onChunkBuilt(resultCoord, lodLevel, vertices, normals, indices);
         }
@@ -485,6 +500,10 @@ export class ChunkManager {
     if (isFirstLOD) {
       chunk.addToScene(this.scene);
     }
+
+    // Queue neighbor rebuilds so their edges match this chunk's LOD
+    // This ensures edge consistency when chunks are built or upgrade LOD
+    this.queueNeighborRebuilds(coord);
   }
 
   /**
@@ -535,6 +554,124 @@ export class ChunkManager {
    */
   public getChunkKey(coord: ChunkCoord): string {
     return `${coord.x},${coord.z}`;
+  }
+
+  /**
+   * Get LOD levels of neighboring chunks for edge stitching
+   * Returns -1 for neighbors that don't exist (treated as same LOD in mesh generation)
+   */
+  public getNeighborLODs(coord: ChunkCoord, targetLOD: number): NeighborLODs {
+    const getNeighborLOD = (nx: number, nz: number): number => {
+      const neighborKey = this.getChunkKey({ x: nx, z: nz });
+      const neighbor = this.activeChunks.get(neighborKey);
+      
+      if (!neighbor || neighbor.state !== 'active') {
+        // Neighbor doesn't exist or isn't ready - use same LOD (no stitching needed)
+        return targetLOD;
+      }
+      
+      // Return the highest LOD the neighbor has generated
+      // This ensures we stitch to what the neighbor actually has
+      return neighbor.getHighestGeneratedLOD();
+    };
+
+    return {
+      north: getNeighborLOD(coord.x, coord.z + 1),  // +Z
+      south: getNeighborLOD(coord.x, coord.z - 1),  // -Z
+      east: getNeighborLOD(coord.x + 1, coord.z),   // +X
+      west: getNeighborLOD(coord.x - 1, coord.z),   // -X
+    };
+  }
+
+  /**
+   * Queue all 4 neighbors for edge rebuild
+   * Called when a chunk finishes building to ensure neighbor edges are consistent
+   */
+  private queueNeighborRebuilds(coord: ChunkCoord): void {
+    const neighbors = [
+      { x: coord.x - 1, z: coord.z },  // west
+      { x: coord.x + 1, z: coord.z },  // east
+      { x: coord.x, z: coord.z - 1 },  // south
+      { x: coord.x, z: coord.z + 1 },  // north
+    ];
+
+    for (const neighborCoord of neighbors) {
+      const key = this.getChunkKey(neighborCoord);
+      const neighbor = this.activeChunks.get(key);
+      
+      if (neighbor && neighbor.state === 'active') {
+        const currentLOD = neighbor.getHighestGeneratedLOD();
+        if (currentLOD >= 0) {
+          this.queueEdgeRebuild(neighborCoord, currentLOD);
+        }
+      }
+    }
+  }
+
+  /**
+   * Queue a single chunk for edge rebuild at its current LOD
+   */
+  private queueEdgeRebuild(coord: ChunkCoord, lodLevel: number): void {
+    const key = `${this.getChunkKey(coord)}:${lodLevel}`;
+    if (!this.pendingEdgeRebuilds.has(key)) {
+      this.pendingEdgeRebuilds.add(key);
+      this.edgeRebuildQueue.push({ coord, lodLevel });
+    }
+  }
+
+  /**
+   * Process edge rebuild queue with budget-limited processing
+   */
+  private processEdgeRebuildQueue(): void {
+    const budget = 2;  // Process a few per frame
+    let processed = 0;
+
+    while (this.edgeRebuildQueue.length > 0 && processed < budget) {
+      const { coord, lodLevel } = this.edgeRebuildQueue.shift()!;
+      const key = `${this.getChunkKey(coord)}:${lodLevel}`;
+      this.pendingEdgeRebuilds.delete(key);
+
+      const chunk = this.activeChunks.get(this.getChunkKey(coord));
+      if (!chunk || chunk.state !== 'active') continue;
+
+      // Skip if chunk no longer has this LOD (might have been disposed/rebuilt)
+      if (!chunk.hasLOD(lodLevel)) continue;
+
+      // Request rebuild with fresh neighborLODs
+      const neighborLODs = this.getNeighborLODs(coord, lodLevel);
+      this.chunkBuilder.buildChunk(
+        coord,
+        lodLevel,
+        this.config.size,
+        neighborLODs,
+        (resultCoord, resultLOD, vertices, normals, indices) => {
+          this.onEdgeRebuildComplete(resultCoord, resultLOD, vertices, normals, indices);
+        }
+      );
+      processed++;
+    }
+  }
+
+  /**
+   * Callback when edge rebuild is complete
+   * Does NOT trigger further neighbor rebuilds (prevents infinite loops)
+   */
+  private onEdgeRebuildComplete(
+    coord: ChunkCoord,
+    lodLevel: number,
+    vertices: Float32Array,
+    normals: Float32Array,
+    indices: Uint32Array
+  ): void {
+    const key = this.getChunkKey(coord);
+    const chunk = this.activeChunks.get(key);
+    
+    if (!chunk || chunk.state !== 'active') {
+      return;
+    }
+
+    // Replace the LOD mesh data with the new edge-corrected version
+    chunk.replaceLODMesh(lodLevel, vertices, normals, indices, this.config.debugMeshes);
   }
 
   /**

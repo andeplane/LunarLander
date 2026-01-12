@@ -111,6 +111,79 @@ export class Chunk {
   }
 
   /**
+   * Replace an existing LOD mesh with updated data (for edge rebuilds)
+   * Does NOT trigger LOD switching - maintains current rendering state
+   */
+  replaceLODMesh(
+    lodLevel: number,
+    vertices: Float32Array,
+    normals: Float32Array,
+    indices: Uint32Array,
+    debugMode: boolean
+  ): void {
+    const oldData = this.lodMeshes.get(lodLevel);
+    const wasCurrentlyRendering = this.currentRenderingLOD === lodLevel;
+
+    // Remove old mesh from scene if it was rendering
+    if (wasCurrentlyRendering && this.scene) {
+      if (this.activeMesh) {
+        this.scene.remove(this.activeMesh);
+      }
+      if (this.activeWireframeMesh) {
+        this.scene.remove(this.activeWireframeMesh);
+      }
+    }
+
+    // Dispose old geometry and meshes
+    if (oldData) {
+      oldData.geometry.dispose();
+      if (oldData.mesh.material instanceof THREE.Material) {
+        oldData.mesh.material.dispose();
+      }
+      if (oldData.wireframeMesh?.material instanceof THREE.Material) {
+        oldData.wireframeMesh.material.dispose();
+      }
+    }
+
+    // Create new geometry
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+
+    // Create new mesh
+    let mesh: THREE.Mesh;
+    let wireframeMesh: THREE.Mesh | null = null;
+
+    if (debugMode) {
+      const result = this.createDebugMeshForGeometry(geometry);
+      mesh = result.mesh;
+      wireframeMesh = result.wireframeMesh;
+    } else {
+      mesh = this.createStandardMeshForGeometry(geometry);
+    }
+
+    // Store updated LOD data
+    this.lodMeshes.set(lodLevel, {
+      geometry,
+      mesh,
+      wireframeMesh
+    });
+
+    // Re-add to scene if this was the currently rendering LOD
+    if (wasCurrentlyRendering && this.scene) {
+      this.scene.add(mesh);
+      if (wireframeMesh && wireframeMesh.visible) {
+        this.scene.add(wireframeMesh);
+      }
+      this.activeMesh = mesh;
+      this.activeWireframeMesh = wireframeMesh;
+    }
+
+    this.lastAccessTime = performance.now();
+  }
+
+  /**
    * Switch to rendering a specific LOD level
    * Returns true if successful, false if LOD not available
    */
