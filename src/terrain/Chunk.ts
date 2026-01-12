@@ -2,60 +2,179 @@ import * as THREE from 'three';
 import type { ChunkCoord, ChunkState } from '../types';
 
 /**
+ * LOD mesh data stored for each level
+ */
+interface LODMeshData {
+  geometry: THREE.BufferGeometry;
+  mesh: THREE.Mesh;
+  wireframeMesh: THREE.Mesh | null;
+}
+
+/**
  * Individual chunk representing a terrain mesh section
  * Responsible for:
+ * - Storing multiple LOD level meshes
  * - Chunk mesh geometry creation from worker data
  * - Debug visualization with colored triangles
- * - Height data storage
- * - LOD level management
+ * - LOD level switching for rendering
  */
 export class Chunk {
   public coord: ChunkCoord;
   public state: ChunkState = 'queued';
-  public mesh: THREE.Mesh | null = null;
-  public wireframeMesh: THREE.Mesh | null = null;
-  public geometry: THREE.BufferGeometry | null = null;
   public heightData: Float32Array | null = null;
-  public lodLevel: number = 0;
   public lastAccessTime: number = 0;
   public distanceToCamera: number = Infinity;
   public priority: number = Infinity;
+
+  // LOD management
+  private lodMeshes: Map<number, LODMeshData> = new Map();
+  private currentRenderingLOD: number = -1;
+  private highestGeneratedLOD: number = -1;
+  private scene: THREE.Scene | null = null;
+
+  // Currently active mesh (for scene management)
+  private activeMesh: THREE.Mesh | null = null;
+  private activeWireframeMesh: THREE.Mesh | null = null;
 
   constructor(coord: ChunkCoord) {
     this.coord = coord;
   }
 
   /**
-   * Create mesh from worker-generated data
+   * Get the highest LOD level that has been generated
    */
-  createMeshFromData(
+  getHighestGeneratedLOD(): number {
+    return this.highestGeneratedLOD;
+  }
+
+  /**
+   * Get the current LOD level being rendered
+   */
+  getCurrentRenderingLOD(): number {
+    return this.currentRenderingLOD;
+  }
+
+  /**
+   * Check if a specific LOD level has been generated
+   */
+  hasLOD(level: number): boolean {
+    return this.lodMeshes.has(level);
+  }
+
+  /**
+   * Add LOD mesh from worker-generated data
+   */
+  addLODFromData(
+    lodLevel: number,
     vertices: Float32Array,
     normals: Float32Array,
     indices: Uint32Array,
     debugMode: boolean
   ): void {
     // Create geometry
-    this.geometry = new THREE.BufferGeometry();
-    this.geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-    this.geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-    this.geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+
+    // Create mesh
+    let mesh: THREE.Mesh;
+    let wireframeMesh: THREE.Mesh | null = null;
 
     if (debugMode) {
-      this.createDebugMesh();
+      const result = this.createDebugMeshForGeometry(geometry);
+      mesh = result.mesh;
+      wireframeMesh = result.wireframeMesh;
     } else {
-      this.createStandardMesh();
+      mesh = this.createStandardMeshForGeometry(geometry);
+    }
+
+    // Store LOD data
+    this.lodMeshes.set(lodLevel, {
+      geometry,
+      mesh,
+      wireframeMesh
+    });
+
+    // Update highest generated LOD
+    if (lodLevel > this.highestGeneratedLOD) {
+      this.highestGeneratedLOD = lodLevel;
     }
 
     this.state = 'active';
     this.lastAccessTime = performance.now();
+
+    // If this is the first LOD or higher than current, switch to it
+    if (this.currentRenderingLOD < 0 || lodLevel > this.currentRenderingLOD) {
+      this.switchToLOD(lodLevel);
+    }
   }
 
   /**
-   * Create standard terrain mesh
+   * Switch to rendering a specific LOD level
+   * Returns true if successful, false if LOD not available
    */
-  private createStandardMesh(): void {
-    if (!this.geometry) return;
+  switchToLOD(lodLevel: number): boolean {
+    const lodData = this.lodMeshes.get(lodLevel);
+    if (!lodData) {
+      return false;
+    }
 
+    // If already rendering this LOD, no change needed
+    if (this.currentRenderingLOD === lodLevel) {
+      return true;
+    }
+
+    // If in scene, swap meshes
+    if (this.scene) {
+      // Remove current mesh
+      if (this.activeMesh) {
+        this.scene.remove(this.activeMesh);
+      }
+      if (this.activeWireframeMesh) {
+        this.scene.remove(this.activeWireframeMesh);
+      }
+
+      // Add new mesh
+      this.scene.add(lodData.mesh);
+      if (lodData.wireframeMesh) {
+        this.scene.add(lodData.wireframeMesh);
+      }
+    }
+
+    // Update active references
+    this.activeMesh = lodData.mesh;
+    this.activeWireframeMesh = lodData.wireframeMesh;
+    this.currentRenderingLOD = lodLevel;
+
+    return true;
+  }
+
+  /**
+   * Get the best available LOD for a target level
+   * Returns the highest LOD we have that doesn't exceed the target
+   */
+  getBestAvailableLOD(targetLOD: number): number {
+    // Find the highest LOD we have that's <= target
+    let bestLOD = -1;
+    for (const [level] of this.lodMeshes) {
+      if (level <= targetLOD && level > bestLOD) {
+        bestLOD = level;
+      }
+    }
+    
+    // If no suitable LOD found, return highest we have
+    if (bestLOD < 0 && this.lodMeshes.size > 0) {
+      return this.highestGeneratedLOD;
+    }
+    
+    return bestLOD;
+  }
+
+  /**
+   * Create standard terrain mesh for a geometry
+   */
+  private createStandardMeshForGeometry(geometry: THREE.BufferGeometry): THREE.Mesh {
     const material = new THREE.MeshStandardMaterial({
       color: 0x888888,
       roughness: 0.9,
@@ -63,20 +182,18 @@ export class Chunk {
       side: THREE.DoubleSide
     });
 
-    this.mesh = new THREE.Mesh(this.geometry, material);
+    return new THREE.Mesh(geometry, material);
   }
 
   /**
    * Create debug mesh with colored triangles and wireframe overlay
    */
-  private createDebugMesh(): void {
-    if (!this.geometry) return;
-
+  private createDebugMeshForGeometry(geometry: THREE.BufferGeometry): { mesh: THREE.Mesh; wireframeMesh: THREE.Mesh } {
     // Generate unique color based on chunk coordinates
     const baseColor = this.getChunkColor();
 
     // Add vertex colors for triangle distinction
-    this.addVertexColors(baseColor);
+    this.addVertexColorsToGeometry(geometry, baseColor);
 
     // Create material with flat shading to see individual triangles
     const material = new THREE.MeshBasicMaterial({
@@ -84,7 +201,7 @@ export class Chunk {
       side: THREE.DoubleSide,
     });
 
-    this.mesh = new THREE.Mesh(this.geometry, material);
+    const mesh = new THREE.Mesh(geometry, material);
 
     // Create wireframe overlay to show triangle edges clearly
     const wireframeMaterial = new THREE.MeshBasicMaterial({
@@ -95,10 +212,12 @@ export class Chunk {
     });
 
     // Clone geometry for wireframe to avoid conflicts
-    const wireframeGeometry = this.geometry.clone();
-    this.wireframeMesh = new THREE.Mesh(wireframeGeometry, wireframeMaterial);
+    const wireframeGeometry = geometry.clone();
+    const wireframeMesh = new THREE.Mesh(wireframeGeometry, wireframeMaterial);
     // Slight offset to prevent z-fighting
-    this.wireframeMesh.position.y = 0.1;
+    wireframeMesh.position.y = 0.1;
+
+    return { mesh, wireframeMesh };
   }
 
   /**
@@ -125,11 +244,9 @@ export class Chunk {
    * Add vertex colors to geometry for triangle distinction
    * Each triangle gets a slightly varied color
    */
-  private addVertexColors(baseColor: THREE.Color): void {
-    if (!this.geometry) return;
-
-    const positions = this.geometry.getAttribute('position');
-    const indices = this.geometry.getIndex();
+  private addVertexColorsToGeometry(geometry: THREE.BufferGeometry, baseColor: THREE.Color): void {
+    const positions = geometry.getAttribute('position');
+    const indices = geometry.getIndex();
     
     if (!positions || !indices) return;
 
@@ -156,18 +273,20 @@ export class Chunk {
       }
     }
 
-    this.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   }
 
   /**
-   * Add mesh to scene
+   * Add mesh to scene (will add current LOD mesh)
    */
   addToScene(scene: THREE.Scene): void {
-    if (this.mesh) {
-      scene.add(this.mesh);
+    this.scene = scene;
+
+    if (this.activeMesh) {
+      scene.add(this.activeMesh);
     }
-    if (this.wireframeMesh) {
-      scene.add(this.wireframeMesh);
+    if (this.activeWireframeMesh) {
+      scene.add(this.activeWireframeMesh);
     }
   }
 
@@ -175,58 +294,53 @@ export class Chunk {
    * Remove mesh from scene
    */
   removeFromScene(scene: THREE.Scene): void {
-    if (this.mesh) {
-      scene.remove(this.mesh);
+    if (this.activeMesh) {
+      scene.remove(this.activeMesh);
     }
-    if (this.wireframeMesh) {
-      scene.remove(this.wireframeMesh);
+    if (this.activeWireframeMesh) {
+      scene.remove(this.activeWireframeMesh);
     }
+    this.scene = null;
   }
 
   /**
-   * Update LOD level
-   */
-  updateLOD(level: number): void {
-    this.lodLevel = level;
-    // LOD implementation will be added in future tickets
-  }
-
-  /**
-   * Dispose chunk resources
+   * Dispose chunk resources (all LOD levels)
    */
   dispose(): void {
     this.state = 'disposing';
 
-    if (this.geometry) {
-      this.geometry.dispose();
-      this.geometry = null;
-    }
+    // Dispose all LOD meshes
+    for (const [, lodData] of this.lodMeshes) {
+      lodData.geometry.dispose();
 
-    if (this.mesh) {
-      if (this.mesh.material) {
-        if (Array.isArray(this.mesh.material)) {
-          this.mesh.material.forEach(m => m.dispose());
+      if (lodData.mesh.material) {
+        if (Array.isArray(lodData.mesh.material)) {
+          lodData.mesh.material.forEach(m => m.dispose());
         } else {
-          this.mesh.material.dispose();
+          lodData.mesh.material.dispose();
         }
       }
-      this.mesh = null;
-    }
 
-    if (this.wireframeMesh) {
-      if (this.wireframeMesh.geometry) {
-        this.wireframeMesh.geometry.dispose();
-      }
-      if (this.wireframeMesh.material) {
-        if (Array.isArray(this.wireframeMesh.material)) {
-          this.wireframeMesh.material.forEach(m => m.dispose());
-        } else {
-          this.wireframeMesh.material.dispose();
+      if (lodData.wireframeMesh) {
+        if (lodData.wireframeMesh.geometry) {
+          lodData.wireframeMesh.geometry.dispose();
+        }
+        if (lodData.wireframeMesh.material) {
+          if (Array.isArray(lodData.wireframeMesh.material)) {
+            lodData.wireframeMesh.material.forEach(m => m.dispose());
+          } else {
+            lodData.wireframeMesh.material.dispose();
+          }
         }
       }
-      this.wireframeMesh = null;
     }
 
+    this.lodMeshes.clear();
+    this.activeMesh = null;
+    this.activeWireframeMesh = null;
+    this.currentRenderingLOD = -1;
+    this.highestGeneratedLOD = -1;
     this.heightData = null;
+    this.scene = null;
   }
 }

@@ -1,23 +1,35 @@
 import * as THREE from 'three';
 import type { ChunkCoord, ChunkConfig } from '../types';
+import { getTargetLODForScreenSize, LOD_LEVELS } from '../types';
 import { Chunk } from './Chunk';
 import { ChunkBuilder } from './ChunkBuilder';
 
 /**
+ * LOD upgrade request in the queue
+ */
+interface LODUpgradeRequest {
+  coord: ChunkCoord;
+  targetLOD: number;
+  priority: number;
+}
+
+/**
  * ChunkManager responsible for:
  * - Chunk lifecycle management (create, update, dispose)
+ * - Progressive LOD generation (start low, upgrade as needed)
  * - Frustum culling for visible chunks only
- * - Screen-space based priority (larger on screen = higher priority)
+ * - Screen-space based LOD selection
  * - Altitude-aware view distance scaling
- * - Direction-based priority (chunks in front load first)
  */
 export class ChunkManager {
   private config: ChunkConfig;
   private scene: THREE.Scene;
   private activeChunks: Map<string, Chunk> = new Map();
   private buildQueue: ChunkCoord[] = [];
+  private lodUpgradeQueue: LODUpgradeRequest[] = [];
   private chunkBuilder: ChunkBuilder;
   private pendingBuilds: Set<string> = new Set();
+  private pendingLODUpgrades: Set<string> = new Set();
 
   // Frustum culling
   private readonly frustum = new THREE.Frustum();
@@ -47,6 +59,9 @@ export class ChunkManager {
     if (this.config.frustumMargin === undefined) {
       this.config.frustumMargin = 1.2;
     }
+    if (this.config.lodUpgradeBudget === undefined) {
+      this.config.lodUpgradeBudget = 2;
+    }
   }
 
   /**
@@ -73,14 +88,20 @@ export class ChunkManager {
     // Determine which chunks should be loaded (frustum culled + altitude scaled)
     const chunksToLoad = this.getChunksToLoad(currentChunk, effectiveViewDistance);
 
-    // Queue new chunks for building
+    // Queue new chunks for building (at LOD 0)
     this.queueNewChunks(chunksToLoad, cameraPosition, camera);
+
+    // Update LOD levels for active chunks and queue upgrades
+    this.updateChunkLODs(cameraPosition, camera);
 
     // Sort build queue by priority (screen-space + direction-aware)
     this.sortBuildQueue(cameraPosition, camera);
 
-    // Process build queue (respect budget)
+    // Process build queue (new chunks at LOD 0)
     this.processBuildQueue();
+
+    // Process LOD upgrade queue
+    this.processLODUpgradeQueue();
 
     // Unload distant chunks (using effective view distance)
     this.unloadDistantChunks(currentChunk, effectiveViewDistance);
@@ -246,7 +267,18 @@ export class ChunkManager {
   }
 
   /**
+   * Calculate priority for LOD upgrades (simpler: pure distance-based)
+   * Lower value = higher priority (processed first)
+   */
+  private calculateLODUpgradePriority(coord: ChunkCoord, cameraPosition: THREE.Vector3): number {
+    const dx = (coord.x + 0.5) * this.config.size - cameraPosition.x;
+    const dz = (coord.z + 0.5) * this.config.size - cameraPosition.z;
+    return Math.sqrt(dx * dx + dz * dz);
+  }
+
+  /**
    * Queue new chunks that aren't already active or building
+   * New chunks always start at LOD 0 (lowest detail)
    */
   private queueNewChunks(chunksToLoad: ChunkCoord[], cameraPosition: THREE.Vector3, camera: THREE.PerspectiveCamera): void {
     for (const coord of chunksToLoad) {
@@ -275,6 +307,62 @@ export class ChunkManager {
   }
 
   /**
+   * Update LOD levels for all active chunks based on screen-space size
+   * Queue LOD upgrades for chunks that need higher detail
+   */
+  private updateChunkLODs(cameraPosition: THREE.Vector3, camera: THREE.PerspectiveCamera): void {
+    for (const [key, chunk] of this.activeChunks) {
+      if (chunk.state !== 'active') continue;
+
+      // Calculate screen-space size
+      const screenSize = this.calculateScreenSpaceSize(chunk.coord, cameraPosition, camera);
+
+      // Determine target LOD based on screen size
+      const targetLOD = getTargetLODForScreenSize(screenSize);
+
+      // Get best available LOD for rendering
+      const bestAvailableLOD = chunk.getBestAvailableLOD(targetLOD);
+      if (bestAvailableLOD >= 0 && bestAvailableLOD !== chunk.getCurrentRenderingLOD()) {
+        chunk.switchToLOD(bestAvailableLOD);
+      }
+
+      // Check if we need to generate a higher LOD
+      // Use progressive upgrades: go one level at a time (0→1→2→3→4)
+      const highestGenerated = chunk.getHighestGeneratedLOD();
+      if (targetLOD > highestGenerated) {
+        // Next LOD to build (one level up from what we have)
+        const nextLOD = highestGenerated + 1;
+        const maxLOD = LOD_LEVELS.length - 1;
+        
+        if (nextLOD <= maxLOD) {
+          // Queue upgrade to next LOD level (not target)
+          const upgradeKey = `${key}:${nextLOD}`;
+          if (!this.pendingLODUpgrades.has(upgradeKey)) {
+            // Check if already in queue
+            const alreadyQueued = this.lodUpgradeQueue.some(
+              req => req.coord.x === chunk.coord.x && 
+                     req.coord.z === chunk.coord.z && 
+                     req.targetLOD === nextLOD
+            );
+            
+            if (!alreadyQueued) {
+              const priority = this.calculateLODUpgradePriority(chunk.coord, cameraPosition);
+              this.lodUpgradeQueue.push({
+                coord: chunk.coord,
+                targetLOD: nextLOD,
+                priority
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // Sort LOD upgrade queue by priority
+    this.lodUpgradeQueue.sort((a, b) => a.priority - b.priority);
+  }
+
+  /**
    * Sort build queue by priority (screen-space + direction-aware)
    */
   private sortBuildQueue(cameraPosition: THREE.Vector3, camera: THREE.PerspectiveCamera): void {
@@ -286,7 +374,7 @@ export class ChunkManager {
   }
 
   /**
-   * Process build queue, respecting build budget
+   * Process build queue for new chunks (always builds LOD 0)
    */
   private processBuildQueue(): void {
     const budget = this.config.buildBudget;
@@ -307,13 +395,13 @@ export class ChunkManager {
       this.activeChunks.set(key, chunk);
       this.pendingBuilds.add(key);
 
-      // Request mesh from worker
+      // Request mesh from worker at LOD 0 (lowest detail first)
       this.chunkBuilder.buildChunk(
         coord,
-        this.config.resolution,
+        0, // Start with LOD 0
         this.config.size,
-        (resultCoord, vertices, normals, indices) => {
-          this.onChunkBuilt(resultCoord, vertices, normals, indices);
+        (resultCoord, lodLevel, vertices, normals, indices) => {
+          this.onChunkBuilt(resultCoord, lodLevel, vertices, normals, indices);
         }
       );
 
@@ -322,10 +410,55 @@ export class ChunkManager {
   }
 
   /**
+   * Process LOD upgrade queue
+   */
+  private processLODUpgradeQueue(): void {
+    const budget = this.config.lodUpgradeBudget || 2;
+    let upgraded = 0;
+
+    while (this.lodUpgradeQueue.length > 0 && upgraded < budget) {
+      const request = this.lodUpgradeQueue.shift()!;
+      const key = this.getChunkKey(request.coord);
+      const upgradeKey = `${key}:${request.targetLOD}`;
+
+      // Skip if already pending
+      if (this.pendingLODUpgrades.has(upgradeKey)) {
+        continue;
+      }
+
+      const chunk = this.activeChunks.get(key);
+      if (!chunk || chunk.state !== 'active') {
+        continue;
+      }
+
+      // Skip if chunk already has this LOD
+      if (chunk.hasLOD(request.targetLOD)) {
+        continue;
+      }
+
+      // Mark as pending
+      this.pendingLODUpgrades.add(upgradeKey);
+
+      // Request higher LOD from worker
+      this.chunkBuilder.buildChunk(
+        request.coord,
+        request.targetLOD,
+        this.config.size,
+        (resultCoord, lodLevel, vertices, normals, indices) => {
+          this.onChunkBuilt(resultCoord, lodLevel, vertices, normals, indices);
+        }
+      );
+
+      upgraded++;
+    }
+  }
+
+  /**
    * Callback when chunk mesh is built by worker
    */
   private onChunkBuilt(
     coord: ChunkCoord,
+    lodLevel: number,
     vertices: Float32Array,
     normals: Float32Array,
     indices: Uint32Array
@@ -333,17 +466,25 @@ export class ChunkManager {
     const key = this.getChunkKey(coord);
     const chunk = this.activeChunks.get(key);
 
+    // Clear pending status
+    this.pendingBuilds.delete(key);
+    this.pendingLODUpgrades.delete(`${key}:${lodLevel}`);
+
     if (!chunk) {
       // Chunk was unloaded while building
-      this.pendingBuilds.delete(key);
       return;
     }
 
-    // Create mesh from worker data
-    chunk.createMeshFromData(vertices, normals, indices, this.config.debugMeshes);
-    chunk.addToScene(this.scene);
+    // Check if this is the first LOD (chunk just created) BEFORE adding data
+    const isFirstLOD = lodLevel === 0 && chunk.state === 'building';
 
-    this.pendingBuilds.delete(key);
+    // Add LOD mesh data to chunk
+    chunk.addLODFromData(lodLevel, vertices, normals, indices, this.config.debugMeshes);
+
+    // If this is the first LOD, add to scene
+    if (isFirstLOD) {
+      chunk.addToScene(this.scene);
+    }
   }
 
   /**
@@ -362,6 +503,11 @@ export class ChunkManager {
         chunk.dispose();
         this.activeChunks.delete(key);
         this.pendingBuilds.delete(key);
+        
+        // Clear any pending LOD upgrades for this chunk
+        for (let lod = 0; lod < LOD_LEVELS.length; lod++) {
+          this.pendingLODUpgrades.delete(`${key}:${lod}`);
+        }
       }
     }
   }
@@ -413,6 +559,13 @@ export class ChunkManager {
   }
 
   /**
+   * Get LOD upgrade queue length
+   */
+  getLODUpgradeQueueLength(): number {
+    return this.lodUpgradeQueue.length;
+  }
+
+  /**
    * Cleanup and dispose all chunks
    */
   dispose(): void {
@@ -422,7 +575,9 @@ export class ChunkManager {
     }
     this.activeChunks.clear();
     this.buildQueue = [];
+    this.lodUpgradeQueue = [];
     this.pendingBuilds.clear();
+    this.pendingLODUpgrades.clear();
     this.chunkBuilder.dispose();
   }
 }

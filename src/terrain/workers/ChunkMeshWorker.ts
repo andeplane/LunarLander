@@ -10,12 +10,20 @@ const workerSelf = self as unknown as {
   postMessage(message: unknown, transfer?: Transferable[]): void;
 };
 
+// LOD level resolutions (duplicated here since workers can't import from main thread)
+// Must match LOD_LEVELS in types/index.ts
+const LOD_RESOLUTIONS = [2, 4, 7, 9, 17];
+
+function getResolutionForLOD(lodLevel: number): number {
+  return LOD_RESOLUTIONS[lodLevel] ?? LOD_RESOLUTIONS[0];
+}
+
 // Worker message types (duplicated here since workers can't import from main thread)
 interface ChunkBuildRequest {
   type: 'build';
   chunkX: number;
   chunkZ: number;
-  resolution: number;
+  lodLevel: number;
   size: number;
   requestId: number;
 }
@@ -24,6 +32,7 @@ interface ChunkBuildResult {
   type: 'built';
   chunkX: number;
   chunkZ: number;
+  lodLevel: number;
   requestId: number;
   vertices: Float32Array;
   normals: Float32Array;
@@ -31,15 +40,18 @@ interface ChunkBuildResult {
 }
 
 /**
- * Generate mesh data for a chunk
+ * Generate mesh data for a chunk at a specific LOD level
  * Creates a flat plane subdivided into triangles
  */
 function generateChunkMesh(
   chunkX: number,
   chunkZ: number,
-  resolution: number,
+  lodLevel: number,
   size: number
 ): { vertices: Float32Array; normals: Float32Array; indices: Uint32Array } {
+  // Get resolution based on LOD level
+  const resolution = getResolutionForLOD(lodLevel);
+  
   // Number of vertices = resolution x resolution
   const vertexCount = resolution * resolution;
   // Number of quads = (resolution-1) x (resolution-1)
@@ -106,16 +118,17 @@ workerSelf.onmessage = (event: MessageEvent<ChunkBuildRequest>) => {
   const request = event.data;
 
   if (request.type === 'build') {
-    const { chunkX, chunkZ, resolution, size, requestId } = request;
+    const { chunkX, chunkZ, lodLevel, size, requestId } = request;
 
-    // Generate mesh data
-    const meshData = generateChunkMesh(chunkX, chunkZ, resolution, size);
+    // Generate mesh data for the specified LOD level
+    const meshData = generateChunkMesh(chunkX, chunkZ, lodLevel, size);
 
     // Send result back with transferable arrays for performance
     const result: ChunkBuildResult = {
       type: 'built',
       chunkX,
       chunkZ,
+      lodLevel,
       requestId,
       vertices: meshData.vertices,
       normals: meshData.normals,

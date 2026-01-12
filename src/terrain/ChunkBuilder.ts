@@ -5,6 +5,7 @@ import type { ChunkCoord, ChunkBuildRequest, ChunkBuildResult } from '../types';
  */
 export type ChunkBuiltCallback = (
   coord: ChunkCoord,
+  lodLevel: number,
   vertices: Float32Array,
   normals: Float32Array,
   indices: Uint32Array
@@ -17,9 +18,9 @@ export type ChunkBuiltCallback = (
 export class ChunkBuilder {
   private worker: Worker;
   private nextRequestId: number = 0;
-  private pendingRequests: Map<number, { coord: ChunkCoord; callback: ChunkBuiltCallback }> = new Map();
+  private pendingRequests: Map<number, { coord: ChunkCoord; lodLevel: number; callback: ChunkBuiltCallback }> = new Map();
   private isReady: boolean = false;
-  private queuedRequests: Array<{ coord: ChunkCoord; resolution: number; size: number; callback: ChunkBuiltCallback }> = [];
+  private queuedRequests: Array<{ coord: ChunkCoord; lodLevel: number; size: number; callback: ChunkBuiltCallback }> = [];
 
   constructor() {
     // Create worker from the worker file
@@ -48,31 +49,31 @@ export class ChunkBuilder {
   }
 
   /**
-   * Request a chunk mesh to be built
+   * Request a chunk mesh to be built at a specific LOD level
    */
   buildChunk(
     coord: ChunkCoord,
-    resolution: number,
+    lodLevel: number,
     size: number,
     callback: ChunkBuiltCallback
   ): void {
     if (!this.isReady) {
       // Queue request until worker is ready
-      this.queuedRequests.push({ coord, resolution, size, callback });
+      this.queuedRequests.push({ coord, lodLevel, size, callback });
       return;
     }
 
     const requestId = this.nextRequestId++;
 
     // Store callback for when result arrives
-    this.pendingRequests.set(requestId, { coord, callback });
+    this.pendingRequests.set(requestId, { coord, lodLevel, callback });
 
     // Send request to worker
     const request: ChunkBuildRequest = {
       type: 'build',
       chunkX: coord.x,
       chunkZ: coord.z,
-      resolution,
+      lodLevel,
       size,
       requestId
     };
@@ -85,7 +86,7 @@ export class ChunkBuilder {
    */
   private processQueuedRequests(): void {
     for (const req of this.queuedRequests) {
-      this.buildChunk(req.coord, req.resolution, req.size, req.callback);
+      this.buildChunk(req.coord, req.lodLevel, req.size, req.callback);
     }
     this.queuedRequests = [];
   }
@@ -99,9 +100,10 @@ export class ChunkBuilder {
     if (pending) {
       this.pendingRequests.delete(result.requestId);
 
-      // Invoke callback with mesh data
+      // Invoke callback with mesh data and LOD level
       pending.callback(
         pending.coord,
+        result.lodLevel,
         result.vertices,
         result.normals,
         result.indices

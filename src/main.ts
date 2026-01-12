@@ -43,17 +43,17 @@ const cameraConfig: CameraConfig = {
   mouseSensitivity: 0.002
 };
 
-// Chunk configuration (Minecraft-inspired with screen-space loading)
+// Chunk configuration (with progressive LOD system)
 const chunkConfig: ChunkConfig = {
-  size: 64,           // 64m per chunk
-  resolution: 16,     // 16x16 vertices (simple quad grid)
-  viewDistance: 15,   // Base chunks to load in each direction
-  buildBudget: 3,     // Max chunks to build per frame (increased for faster loading)
-  disposeBuffer: 2,   // Extra chunks before disposal
-  debugMeshes,        // Use URL param for debug visualization
-  minScreenSize: 10,  // Minimum pixels on screen to load chunk
-  altitudeScale: 0.01, // How much altitude affects view distance (higher = more chunks when high)
-  frustumMargin: 1.2  // Margin for frustum culling (load slightly outside view)
+  size: 64,             // 64m per chunk
+  viewDistance: 15,     // Base chunks to load in each direction
+  buildBudget: 3,       // Max new chunks to build per frame
+  lodUpgradeBudget: 4,  // Max LOD upgrades per frame
+  disposeBuffer: 2,     // Extra chunks before disposal
+  debugMeshes,          // Use URL param for debug visualization
+  minScreenSize: 10,    // Minimum pixels on screen to load chunk
+  altitudeScale: 0.01,  // How much altitude affects view distance
+  frustumMargin: 1.2    // Margin for frustum culling
 };
 
 // Initialize flight controller
