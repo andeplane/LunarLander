@@ -35,9 +35,9 @@ export class ChunkManager {
   private edgeRebuildQueue: Array<{ coord: ChunkCoord; lodLevel: number }> = [];
   private pendingEdgeRebuilds: Set<string> = new Set();
 
-  // Target LODs - computed each frame before dispatching builds
-  // Used to ensure all chunks know what their neighbors WILL BE, not what they currently are
-  private targetLODs: Map<string, number> = new Map();
+  // Current LOD map - tracks what each chunk is ACTUALLY rendering
+  // This is the single source of truth for neighbor LOD lookups
+  private currentLODMap: Map<string, number> = new Map();
 
   // Frustum culling
   private readonly frustum = new THREE.Frustum();
@@ -72,6 +72,10 @@ export class ChunkManager {
     }
   }
 
+  // DEBUG: Set to true to only load 2 chunks for edge debugging (LOD still dynamic)
+  private debugTwoChunksMode = false;
+  private debugChunkCoords: ChunkCoord[] = [{ x: 0, z: 0 }, { x: 1, z: 0 }];
+
   /**
    * Update chunks based on camera position, direction, and frustum
    */
@@ -93,12 +97,11 @@ export class ChunkManager {
     // Calculate effective view distance based on altitude
     const effectiveViewDistance = this.calculateEffectiveViewDistance(cameraPosition.y);
 
-    // Compute target LODs for all chunks FIRST, before any build dispatching
-    // This ensures all chunks know what their neighbors WILL BE, not what they currently are
-    this.computeAllTargetLODs(cameraPosition, camera);
-
     // Determine which chunks should be loaded (frustum culled + altitude scaled)
-    const chunksToLoad = this.getChunksToLoad(currentChunk, effectiveViewDistance);
+    // DEBUG: Override to only load 2 specific chunks
+    const chunksToLoad = this.debugTwoChunksMode 
+      ? this.debugChunkCoords 
+      : this.getChunksToLoad(currentChunk, effectiveViewDistance);
 
     // Queue new chunks for building (at LOD 0)
     this.queueNewChunks(chunksToLoad, cameraPosition, camera);
@@ -119,7 +122,10 @@ export class ChunkManager {
     this.processEdgeRebuildQueue();
 
     // Unload distant chunks (using effective view distance)
-    this.unloadDistantChunks(currentChunk, effectiveViewDistance);
+    // DEBUG: Don't unload chunks in debug mode
+    if (!this.debugTwoChunksMode) {
+      this.unloadDistantChunks(currentChunk, effectiveViewDistance);
+    }
   }
 
   /**
@@ -139,31 +145,6 @@ export class ChunkManager {
     const baseViewDistance = this.config.viewDistance;
     const altitudeMultiplier = Math.max(1, altitude * (this.config.altitudeScale || 0.01));
     return baseViewDistance * altitudeMultiplier;
-  }
-
-  /**
-   * Compute target LODs for all chunks before dispatching any builds
-   * This ensures all chunks know what their neighbors WILL BE, not what they currently are
-   */
-  private computeAllTargetLODs(cameraPosition: THREE.Vector3, camera: THREE.PerspectiveCamera): void {
-    this.targetLODs.clear();
-    
-    // Compute for all active chunks
-    for (const [key, chunk] of this.activeChunks) {
-      const screenSize = this.calculateScreenSpaceSize(chunk.coord, cameraPosition, camera);
-      const targetLOD = getTargetLODForScreenSize(screenSize);
-      this.targetLODs.set(key, targetLOD);
-    }
-    
-    // Also compute for chunks in build queue (not yet active)
-    for (const coord of this.buildQueue) {
-      const key = this.getChunkKey(coord);
-      if (!this.targetLODs.has(key)) {
-        const screenSize = this.calculateScreenSpaceSize(coord, cameraPosition, camera);
-        const targetLOD = getTargetLODForScreenSize(screenSize);
-        this.targetLODs.set(key, targetLOD);
-      }
-    }
   }
 
   /**
@@ -362,8 +343,13 @@ export class ChunkManager {
 
       // Get best available LOD for rendering
       const bestAvailableLOD = chunk.getBestAvailableLOD(targetLOD);
-      if (bestAvailableLOD >= 0 && bestAvailableLOD !== chunk.getCurrentRenderingLOD()) {
+      const currentLOD = chunk.getCurrentRenderingLOD();
+      if (bestAvailableLOD >= 0 && bestAvailableLOD !== currentLOD) {
         chunk.switchToLOD(bestAvailableLOD);
+        // Queue THIS chunk for edge rebuild (its cached mesh may have stale neighbor info)
+        this.queueEdgeRebuild(chunk.coord, bestAvailableLOD);
+        // Queue neighbor edge rebuilds since our LOD changed
+        this.queueNeighborRebuilds(chunk.coord);
       }
 
       // Check if we need to generate a higher LOD
@@ -526,6 +512,9 @@ export class ChunkManager {
     // Check if this is the first LOD (chunk just created) BEFORE adding data
     const isFirstLOD = lodLevel === 0 && chunk.state === 'building';
 
+    // Track previous LOD to detect changes
+    const previousLOD = this.currentLODMap.get(key) ?? -1;
+
     // Add LOD mesh data to chunk
     chunk.addLODFromData(lodLevel, vertices, normals, indices, this.config.debugMeshes);
 
@@ -534,10 +523,19 @@ export class ChunkManager {
       chunk.addToScene(this.scene);
     }
 
-    // Queue neighbor rebuilds so their edges match this chunk's LOD
+    // Update currentLODMap with the chunk's actual rendered LOD
+    const newLOD = chunk.currentLOD;
+    if (newLOD >= 0) {
+      this.currentLODMap.set(key, newLOD);
+    }
+
+    // Queue neighbor rebuilds if LOD actually changed
     // This ensures edge consistency when chunks are built or upgrade LOD
-    this.queueNeighborRebuilds(coord);
+    if (newLOD !== previousLOD) {
+      this.queueNeighborRebuilds(coord);
+    }
   }
+
 
   /**
    * Unload chunks that are too far from camera (using effective view distance)
@@ -555,6 +553,9 @@ export class ChunkManager {
         chunk.dispose();
         this.activeChunks.delete(key);
         this.pendingBuilds.delete(key);
+        
+        // Remove from currentLODMap
+        this.currentLODMap.delete(key);
         
         // Clear any pending LOD upgrades for this chunk
         for (let lod = 0; lod < LOD_LEVELS.length; lod++) {
@@ -591,20 +592,14 @@ export class ChunkManager {
 
   /**
    * Get LOD levels of neighboring chunks for edge stitching
-   * Uses TARGET LODs (computed upfront) so chunks know what neighbors WILL BE
+   * Uses currentLODMap - the single source of truth for what's actually rendered
    */
-  public getNeighborLODs(coord: ChunkCoord, targetLOD: number): NeighborLODs {
+  public getNeighborLODs(coord: ChunkCoord, ownLOD: number): NeighborLODs {
     const getNeighborLOD = (nx: number, nz: number): number => {
       const neighborKey = this.getChunkKey({ x: nx, z: nz });
-      
-      // Use target LOD if available (preferred - tells us what neighbor WILL BE)
-      const target = this.targetLODs.get(neighborKey);
-      if (target !== undefined) {
-        return target;
-      }
-      
-      // Fallback: neighbor not in view, use same LOD as this chunk
-      return targetLOD;
+      const lod = this.currentLODMap.get(neighborKey);
+      // If neighbor doesn't exist in map, use own LOD (no stitching needed)
+      return lod ?? ownLOD;
     };
 
     return {
@@ -632,9 +627,10 @@ export class ChunkManager {
       const neighbor = this.activeChunks.get(key);
       
       if (neighbor && neighbor.state === 'active') {
-        const currentLOD = neighbor.getHighestGeneratedLOD();
-        if (currentLOD >= 0) {
-          this.queueEdgeRebuild(neighborCoord, currentLOD);
+        // Use CURRENT RENDERING LOD, not highest generated!
+        const renderingLOD = neighbor.currentLOD;
+        if (renderingLOD >= 0) {
+          this.queueEdgeRebuild(neighborCoord, renderingLOD);
         }
       }
     }
@@ -657,6 +653,7 @@ export class ChunkManager {
   private processEdgeRebuildQueue(): void {
     const budget = 2;  // Process a few per frame
     let processed = 0;
+
 
     while (this.edgeRebuildQueue.length > 0 && processed < budget) {
       const { coord, lodLevel } = this.edgeRebuildQueue.shift()!;

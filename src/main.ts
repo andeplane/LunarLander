@@ -46,7 +46,7 @@ const cameraConfig: CameraConfig = {
 // Chunk configuration (with progressive LOD system)
 const chunkConfig: ChunkConfig = {
   size: 64,             // 64m per chunk
-  viewDistance: 15,     // Base chunks to load in each direction
+  viewDistance: 50,      // Base chunks to load in each direction
   buildBudget: 3,       // Max new chunks to build per frame
   lodUpgradeBudget: 4,  // Max LOD upgrades per frame
   disposeBuffer: 2,     // Extra chunks before disposal
@@ -88,8 +88,8 @@ const sunLight = new THREE.DirectionalLight(0xffffff, 2);
 sunLight.position.set(100, 100, 50);
 engine.getScene().add(sunLight);
 
-// Add subtle ambient light
-const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+// Subtle ambient light
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
 engine.getScene().add(ambientLight);
 
 // Start the render loop

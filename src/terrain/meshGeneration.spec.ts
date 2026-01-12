@@ -224,22 +224,18 @@ describe(generateChunkMesh.name, () => {
       const mesh = generateChunkMesh(0, 0, 0, 64);
       // LOD 0: resolution = 2
       // Surface: 4 vertices, 6 indices
-      // Skirts: 4 edges * 2 verts = 8 verts, 4 edges * 1 segment * 6 = 24 indices
-      // Total: 12 verts * 3 = 36, 30 indices
-      expect(mesh.vertices.length).toBe(12 * 3);
-      expect(mesh.normals.length).toBe(12 * 3);
-      expect(mesh.indices.length).toBe(30);
+      expect(mesh.vertices.length).toBe(4 * 3);
+      expect(mesh.normals.length).toBe(4 * 3);
+      expect(mesh.indices.length).toBe(6);
     });
 
     it('should generate correct sizes for LOD 4', () => {
       const mesh = generateChunkMesh(0, 0, 4, 64);
       // LOD 4: resolution = 17
       // Surface: 289 vertices, 1536 indices
-      // Skirts: 4 edges * 17 verts = 68 verts, 4 edges * 16 segments * 6 = 384 indices
-      // Total: 357 verts * 3 = 1071, 1920 indices
-      expect(mesh.vertices.length).toBe(357 * 3);
-      expect(mesh.normals.length).toBe(357 * 3);
-      expect(mesh.indices.length).toBe(1920);
+      expect(mesh.vertices.length).toBe(289 * 3);
+      expect(mesh.normals.length).toBe(289 * 3);
+      expect(mesh.indices.length).toBe(1536);
     });
   });
 
@@ -421,7 +417,7 @@ describe(generateChunkMesh.name, () => {
       expect(meshWithStitching.vertices).toEqual(meshWithoutStitching.vertices);
     });
 
-    it('should modify edge heights when neighbor has higher LOD (bidirectional stitching)', () => {
+    it('should NOT modify edge heights when neighbor has higher LOD (higher-res adapts to us)', () => {
       const lodLevel = 2;
       const neighborLODs: NeighborLODs = { north: 4, south: 4, east: 4, west: 4 };
       
@@ -430,10 +426,10 @@ describe(generateChunkMesh.name, () => {
       
       const resolution = getResolutionForLOD(lodLevel);
       
-      // All edges should be different (stitched to higher LOD neighbors)
+      // No modification - the higher-LOD neighbor adapts to us, not vice versa
       const stitchedWest = getEdgeHeights(meshWithStitching, resolution, 'west');
       const originalWest = getEdgeHeights(meshWithoutStitching, resolution, 'west');
-      expect(stitchedWest).not.toEqual(originalWest);
+      expect(stitchedWest).toEqual(originalWest);
     });
 
     it('should modify west edge heights when west neighbor has lower LOD', () => {

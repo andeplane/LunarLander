@@ -55,6 +55,13 @@ export class Chunk {
   }
 
   /**
+   * Public accessor for the current LOD level (actual built mesh LOD)
+   */
+  get currentLOD(): number {
+    return this.currentRenderingLOD;
+  }
+
+  /**
    * Check if a specific LOD level has been generated
    */
   hasLOD(level: number): boolean {
