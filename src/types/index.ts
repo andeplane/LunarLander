@@ -17,7 +17,6 @@ export interface LODLevelConfig {
 /**
  * Default LOD levels (5 levels from 2 triangles to 512 triangles)
  * Higher thresholds = use lower LOD more often (better performance)
- * DEBUG: Increased thresholds to force different LODs on nearby chunks
  */
 export const LOD_LEVELS: LODLevelConfig[] = [
   { level: 0, resolution: 2, maxScreenSize: 50 },     // 2 triangles

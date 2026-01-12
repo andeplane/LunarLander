@@ -320,7 +320,7 @@ export class ChunkManager {
 
   /**
    * Update LOD levels for all active chunks based on screen-space size
-   * Queue LOD upgrades for chunks that need higher detail
+   * Queue LOD changes (both upgrades AND downgrades) for atomic processing
    */
   private updateChunkLODs(cameraPosition: THREE.Vector3, camera: THREE.PerspectiveCamera): void {
     for (const [_key, chunk] of this.activeChunks) {
@@ -331,8 +331,29 @@ export class ChunkManager {
 
       // Determine target LOD based on screen size
       const targetLOD = getTargetLODForScreenSize(screenSize);
+      const currentLOD = chunk.getCurrentRenderingLOD();
 
-      // Check if we need to generate a higher LOD
+      // Queue LOD DOWNGRADE if needed (chunk is now farther away)
+      // Must rebuild mesh with current neighbor info, not use cached mesh
+      if (targetLOD < currentLOD) {
+        const alreadyQueued = this.lodUpgradeQueue.some(
+          req => req.coord.x === chunk.coord.x && 
+                 req.coord.z === chunk.coord.z && 
+                 req.targetLOD === targetLOD
+        );
+        
+        if (!alreadyQueued) {
+          // Use negative priority for downgrades (process them quickly)
+          const priority = this.calculateLODUpgradePriority(chunk.coord, cameraPosition);
+          this.lodUpgradeQueue.push({
+            coord: chunk.coord,
+            targetLOD: targetLOD,
+            priority
+          });
+        }
+      }
+
+      // Queue LOD UPGRADE if needed
       // Use progressive upgrades: go one level at a time (0→1→2→3→4)
       const highestGenerated = chunk.getHighestGeneratedLOD();
       if (targetLOD > highestGenerated) {
@@ -462,7 +483,7 @@ export class ChunkManager {
   }
 
   /**
-   * Process LOD upgrades atomically:
+   * Process LOD changes (both upgrades AND downgrades) atomically:
    * 1. Collect all LOD changes for this frame
    * 2. Update currentLODMap for ALL of them upfront
    * 3. Build all affected meshes using consistent map
@@ -479,7 +500,10 @@ export class ChunkManager {
       const chunk = this.activeChunks.get(key);
       
       if (!chunk || chunk.state !== 'active') continue;
-      if (chunk.hasLOD(request.targetLOD)) continue;
+      
+      // Skip if already at this LOD (no change needed)
+      const currentLOD = this.currentLODMap.get(key);
+      if (currentLOD === request.targetLOD) continue;
       
       lodChanges.push({ coord: request.coord, chunk, newLOD: request.targetLOD });
     }
@@ -525,6 +549,11 @@ export class ChunkManager {
         chunk.replaceLODMesh(lod, meshData.vertices, meshData.normals, meshData.indices, this.config.debugMeshes);
       } else {
         chunk.addLODFromData(lod, meshData.vertices, meshData.normals, meshData.indices, this.config.debugMeshes);
+      }
+      
+      // Ensure we're rendering at the correct LOD (handles both upgrades and downgrades)
+      if (chunk.getCurrentRenderingLOD() !== lod) {
+        chunk.switchToLOD(lod);
       }
     }
   }
