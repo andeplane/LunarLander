@@ -52,7 +52,7 @@ const chunkConfig: ChunkConfig = {
   disposeBuffer: 2,     // Extra chunks before disposal
   debugMeshes,          // Use URL param for debug visualization
   minScreenSize: 10,    // Minimum pixels on screen to load chunk
-  altitudeScale: 0.01,  // How much altitude affects view distance
+  altitudeScale: 0.005, // How much altitude affects view distance (reduced for performance)
   frustumMargin: 1.2    // Margin for frustum culling
 };
 

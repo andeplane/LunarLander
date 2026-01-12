@@ -16,13 +16,13 @@ export interface LODLevelConfig {
 
 /**
  * Default LOD levels (5 levels from 2 triangles to 512 triangles)
- * Thresholds are more gradual for smoother transitions
+ * Higher thresholds = use lower LOD more often (better performance)
  */
 export const LOD_LEVELS: LODLevelConfig[] = [
-  { level: 0, resolution: 2, maxScreenSize: 30 },    // 2 triangles
-  { level: 1, resolution: 4, maxScreenSize: 80 },    // 18 triangles
-  { level: 2, resolution: 7, maxScreenSize: 150 },   // 72 triangles
-  { level: 3, resolution: 9, maxScreenSize: 300 },   // 128 triangles
+  { level: 0, resolution: 2, maxScreenSize: 50 },    // 2 triangles
+  { level: 1, resolution: 4, maxScreenSize: 150 },   // 18 triangles
+  { level: 2, resolution: 7, maxScreenSize: 300 },   // 72 triangles
+  { level: 3, resolution: 9, maxScreenSize: 500 },   // 128 triangles
   { level: 4, resolution: 17, maxScreenSize: Infinity } // 512 triangles
 ];
 
