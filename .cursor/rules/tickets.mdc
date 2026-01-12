@@ -1,0 +1,72 @@
+---
+alwaysApply: true
+---
+
+# Ticket System Workflow
+
+This project uses a ticket-based development workflow. All tickets are stored as markdown files organized by EPIC.
+
+## Ticket System Overview
+
+- **Location**: `tasks/` (pending tickets) and `tasks/done/` (completed tickets)
+- **Organization**: Tickets are organized by EPIC folders (EPIC-00 through EPIC-13) in both tasks and tasks/done
+- **PRD Reference**: Product requirements are documented in `tasks/PRD.md`
+- **Ticket Format**: Each ticket is a markdown file with structured sections
+
+## Ticket Workflow Rules
+
+### Execution Order
+- Work tickets in order within each EPIC (TICK-0001 before TICK-0002, etc.)
+- Always check dependencies listed in each ticket file before starting
+- Respect the dependency chain - don't start a ticket until its dependencies are complete
+
+### Branching Strategy
+- **One ticket = one branch = one merge to main**
+- Branch naming convention: `ticket/<TICKET_ID>-<short-slug>`
+  - Example: `ticket/TICK-0102-noise2d-fbm`
+- Keep diffs small and reversible
+- Do not refactor unrelated code in a ticket branch
+
+### Definition of Done
+
+Every ticket must meet these criteria before being marked complete:
+
+1. **Compilation**: Project compiles for visionOS and runs in immersive mode
+2. **Proof**: There is visible or logged proof the feature works
+3. **Integration**: Feature is integrated (not a detached demo) unless explicitly stated otherwise
+4. **No TODOs**: No TODOs in the main code path (allowed only behind debug flags)
+5. **Testing**: Complete the manual test plan specified in the ticket
+
+## Ticket File Structure
+
+Each ticket markdown file contains these sections:
+
+- **Why**: Rationale for the ticket
+- **Goal**: What success looks like
+- **Steps**: Implementation steps
+- **Files to Create**: New files to add
+- **Files to Modify**: Existing files to change
+- **Deliverables**: What will be delivered
+- **Acceptance Criteria**: Checklist of requirements
+- **Manual Test Plan**: Steps to verify the feature
+- **Out of Scope**: What this ticket explicitly does not include
+- **Rollback Plan**: How to revert if needed
+
+**Always read the full ticket file before starting work.**
+
+## Moving Tickets
+
+When a ticket is complete:
+
+1. Verify all acceptance criteria are met
+2. Complete the manual test plan
+3. Move the ticket file from `tasks/EPIC-XX/` to `tasks/DONE/EPIC-XX/` (keep the EPIC folder structure)
+4. Merge the branch to main
+5. Delete the ticket branch
+
+## Working with Tickets
+
+- Before starting: Read the entire ticket file, check dependencies, understand the goal
+- During work: Follow the steps, create/modify files as specified, keep changes focused
+- Before completion: Verify acceptance criteria, run manual tests, ensure no regressions
+- After completion: Move ticket to DONE, clean up any temporary debug code
