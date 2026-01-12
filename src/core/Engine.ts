@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { FlightController } from '../camera/FlightController';
 import { ChunkManager } from '../terrain/ChunkManager';
+import { InputManager } from './InputManager';
 
 /**
  * Main engine class responsible for:
@@ -17,6 +18,7 @@ export class Engine {
   private animationId: number | null = null;
   private flightController: FlightController | null = null;
   private chunkManager: ChunkManager | null = null;
+  private inputManager: InputManager | null = null;
   
   // Time tracking
   private clock: THREE.Clock = new THREE.Clock();
@@ -57,6 +59,13 @@ export class Engine {
    */
   setChunkManager(manager: ChunkManager): void {
     this.chunkManager = manager;
+  }
+
+  /**
+   * Set the input manager for input handling
+   */
+  setInputManager(manager: InputManager): void {
+    this.inputManager = manager;
   }
 
   /**
@@ -115,6 +124,13 @@ export class Engine {
    * Update loop (called every frame)
    */
   private update(deltaTime: number): void {
+    // Handle debug mesh toggle with 'o' key
+    if (this.inputManager && this.chunkManager) {
+      if (this.inputManager.isKeyJustPressed('o')) {
+        this.chunkManager.toggleDebugMeshes();
+      }
+    }
+
     // Update flight controller
     if (this.flightController) {
       this.flightController.update(deltaTime);
@@ -123,6 +139,11 @@ export class Engine {
     // Update chunk manager with camera (for frustum culling and screen-space calculations)
     if (this.chunkManager) {
       this.chunkManager.update(this.camera);
+    }
+
+    // Update input manager (clear just-pressed keys)
+    if (this.inputManager) {
+      this.inputManager.update();
     }
   }
 

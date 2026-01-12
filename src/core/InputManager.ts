@@ -8,6 +8,7 @@
  */
 export class InputManager {
   private keys: Set<string> = new Set();
+  private keysJustPressed: Set<string> = new Set();
   private mouseDelta: { x: number; y: number } = { x: 0, y: 0 };
   private scrollDelta: number = 0;
   private isPointerLocked: boolean = false;
@@ -21,7 +22,12 @@ export class InputManager {
    */
   private setupEventListeners(): void {
     window.addEventListener('keydown', (e) => {
-      this.keys.add(e.key.toLowerCase());
+      const key = e.key.toLowerCase();
+      // Track just-pressed keys (not already held)
+      if (!this.keys.has(key)) {
+        this.keysJustPressed.add(key);
+      }
+      this.keys.add(key);
     });
 
     window.addEventListener('keyup', (e) => {
@@ -50,6 +56,21 @@ export class InputManager {
    */
   isKeyPressed(key: string): boolean {
     return this.keys.has(key.toLowerCase());
+  }
+
+  /**
+   * Check if a key was just pressed this frame
+   * Call update() at the end of each frame to clear just-pressed state
+   */
+  isKeyJustPressed(key: string): boolean {
+    return this.keysJustPressed.has(key.toLowerCase());
+  }
+
+  /**
+   * Update input state (call at end of frame to clear just-pressed keys)
+   */
+  update(): void {
+    this.keysJustPressed.clear();
   }
 
   /**

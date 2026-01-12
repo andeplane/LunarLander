@@ -68,6 +68,9 @@ engine.setFlightController(flightController);
 const chunkManager = new ChunkManager(chunkConfig, engine.getScene());
 engine.setChunkManager(chunkManager);
 
+// Set input manager in engine for debug toggle handling
+engine.setInputManager(inputManager);
+
 // Set initial camera position above terrain
 engine.getCamera().position.set(0, 100, 0);
 
@@ -108,6 +111,7 @@ console.log('  Shift - Hold for speed boost (3x faster)');
 console.log('  Mouse - Look around');
 console.log('  Scroll - Adjust speed');
 console.log('  Escape - Release mouse');
+console.log('  O - Toggle debug meshes');
 console.log('');
 console.log('URL Parameters:');
 console.log('  ?debugMeshes=true - Show colored triangles for each chunk');

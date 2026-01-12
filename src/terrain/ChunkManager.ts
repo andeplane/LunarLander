@@ -566,6 +566,29 @@ export class ChunkManager {
   }
 
   /**
+   * Toggle debug mesh mode for all active chunks
+   */
+  toggleDebugMeshes(): void {
+    this.config.debugMeshes = !this.config.debugMeshes;
+    
+    // Recreate meshes for all active chunks
+    for (const chunk of this.activeChunks.values()) {
+      if (chunk.state === 'active') {
+        chunk.recreateMeshesWithDebugMode(this.config.debugMeshes);
+      }
+    }
+
+    console.log(`Debug meshes ${this.config.debugMeshes ? 'enabled' : 'disabled'}`);
+  }
+
+  /**
+   * Get current debug mesh state
+   */
+  getDebugMeshesEnabled(): boolean {
+    return this.config.debugMeshes || false;
+  }
+
+  /**
    * Cleanup and dispose all chunks
    */
   dispose(): void {

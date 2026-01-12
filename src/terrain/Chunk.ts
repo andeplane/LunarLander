@@ -137,14 +137,15 @@ export class Chunk {
 
       // Add new mesh
       this.scene.add(lodData.mesh);
-      if (lodData.wireframeMesh) {
+      // Only add wireframe if it exists and is visible (debug mode)
+      if (lodData.wireframeMesh && lodData.wireframeMesh.visible) {
         this.scene.add(lodData.wireframeMesh);
       }
     }
 
     // Update active references
     this.activeMesh = lodData.mesh;
-    this.activeWireframeMesh = lodData.wireframeMesh;
+    this.activeWireframeMesh = (lodData.wireframeMesh && lodData.wireframeMesh.visible) ? lodData.wireframeMesh : null;
     this.currentRenderingLOD = lodLevel;
 
     return true;
@@ -169,6 +170,87 @@ export class Chunk {
     }
     
     return bestLOD;
+  }
+
+  /**
+   * Switch all meshes to use debug or standard materials
+   * Preserves geometry and meshes, only changes materials
+   */
+  recreateMeshesWithDebugMode(debugMode: boolean): void {
+    for (const [level, lodData] of this.lodMeshes) {
+      const geometry = lodData.geometry;
+      const mesh = lodData.mesh;
+      const isCurrentLOD = level === this.currentRenderingLOD;
+
+      // Dispose old material
+      if (mesh.material) {
+        if (Array.isArray(mesh.material)) {
+          mesh.material.forEach(m => m.dispose());
+        } else {
+          mesh.material.dispose();
+        }
+      }
+
+      // Create new material based on debug mode
+      if (debugMode) {
+        // Ensure vertex colors exist for debug mode
+        if (!geometry.getAttribute('color')) {
+          const baseColor = this.getChunkColor();
+          this.addVertexColorsToGeometry(geometry, baseColor);
+        }
+
+        // Create debug material with vertex colors
+        mesh.material = new THREE.MeshBasicMaterial({
+          vertexColors: true,
+          side: THREE.DoubleSide,
+        });
+
+        // Create wireframe mesh if it doesn't exist
+        if (!lodData.wireframeMesh) {
+          const wireframeMaterial = new THREE.MeshBasicMaterial({
+            color: 0x000000,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.3
+          });
+          const wireframeGeometry = geometry.clone();
+          const wireframeMesh = new THREE.Mesh(wireframeGeometry, wireframeMaterial);
+          wireframeMesh.position.y = 0.1;
+          lodData.wireframeMesh = wireframeMesh;
+        }
+
+        // Add wireframe to scene only if this is the current LOD and mesh is in scene
+        if (isCurrentLOD && this.scene && mesh.parent === this.scene) {
+          if (!lodData.wireframeMesh.parent) {
+            this.scene.add(lodData.wireframeMesh);
+          }
+          lodData.wireframeMesh.visible = true;
+        }
+      } else {
+        // Create standard material
+        mesh.material = new THREE.MeshStandardMaterial({
+          color: 0x888888,
+          roughness: 0.9,
+          metalness: 0.1,
+          side: THREE.DoubleSide
+        });
+
+        // Remove wireframe mesh from scene if it exists and is current LOD
+        if (lodData.wireframeMesh) {
+          if (isCurrentLOD && lodData.wireframeMesh.parent) {
+            lodData.wireframeMesh.parent.remove(lodData.wireframeMesh);
+          }
+          lodData.wireframeMesh.visible = false;
+        }
+      }
+    }
+
+    // Update active references for current LOD
+    const currentLodData = this.lodMeshes.get(this.currentRenderingLOD);
+    if (currentLodData) {
+      this.activeMesh = currentLodData.mesh;
+      this.activeWireframeMesh = debugMode ? currentLodData.wireframeMesh : null;
+    }
   }
 
   /**
