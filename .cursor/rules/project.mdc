@@ -2,118 +2,151 @@
 alwaysApply: true
 ---
 
-# Lunar Descent Project Context
+# Lunar Explorer Project Context
 
-A modern, high-fidelity Lunar Lander game for Apple Vision Pro, played inside a full-scale cockpit, featuring hard-arcade Newtonian-style physics, a hyper-real cinematic Moon, spatial audio, and an instant-retry leaderboard loop optimized for 2–3 minute runs.
+A browser-based Moon exploration experience built with TypeScript and Three.js, featuring procedural terrain generation with LOD-based chunk streaming, delivering a visually compelling lunar surface you can fly over freely.
 
 ## Project Summary
 
-**One-liner**: A modern, high-fidelity Lunar Lander game for Apple Vision Pro, played inside a full-scale cockpit, featuring hard-arcade Newtonian-style physics, a hyper-real cinematic Moon, spatial audio, and an instant-retry leaderboard loop optimized for 2–3 minute runs.
+**One-liner**: A browser-based Moon exploration experience built with TypeScript and Three.js, featuring procedural terrain generation with LOD-based chunk streaming.
 
-**Player fantasy**: "I'm inside a lunar lander, fighting gravity with precision. The Moon outside is breathtaking. Every landing is tense, and every run teaches me something."
+**Player fantasy**: "I'm soaring over the Moon's surface, watching craters and ridges stretch to the horizon. The terrain is vast and seamless—I can fly anywhere."
 
-**Platform**: Apple Vision Pro (visionOS)
+**Platform**: Web Browser (Desktop)
 
-**Engine**: RealityKit-first with procedural meshes + Reality Composer Pro ShaderGraph materials
+**Tech Stack**: TypeScript, Three.js, Vite
 
 ## Core Experience Pillars
 
-1. **Cockpit presence**
-   - The cockpit is the "home." It grounds the user.
-   - Player can lean and small room-scale movements are supported.
-   - Cockpit is 1:1 scale and physically believable.
+1. **Beautiful procedural terrain**
+   - Realistic heightfield-based terrain with craters, ridges, and surface detail
+   - Visually compelling from high altitude down to near-surface
+   - Hyper-real cinematic lunar aesthetic
 
-2. **Exterior beauty**
-   - The Moon surface, lighting, shadows, and sky are visually compelling.
-   - Players frequently stop to look out the windows.
-   - Hyper-real cinematic lunar aesthetic.
+2. **High-performance chunk system**
+   - Seamless infinite terrain feel
+   - Distance-based LOD with smooth transitions
+   - Stable 60fps on mid-range hardware
 
-3. **Readable danger**
-   - The game is brutal—but fair.
-   - Errors are legible through motion, instruments, and audio warnings.
-   - Landing is challenging but learnable.
-
-4. **Fast loop**
-   - Crash → replay → restart feels frictionless.
-   - Results are immediate and motivating.
-   - Runs are 2–3 minutes with instant restart.
+3. **Technical showcase**
+   - Clean, well-architected TypeScript codebase
+   - Modern Three.js terrain techniques
+   - Foundation for future features (VR, landing mechanics)
 
 ## Architecture Overview
 
 ### Key Modules
 
-- **App**: Entry point, window management, immersive space lifecycle
-  - `AppMain.swift`, `ContentView.swift`, `ImmersiveGameView.swift`
+- **Core**: Engine setup, main loop, input handling
+  - `Engine.ts`: Main loop, renderer setup
+  - `InputManager.ts`: Keyboard/mouse handling
 
-- **Game**: Core game systems
-  - `GameRoot.swift`: Scene hierarchy root (worldRoot + cockpitRoot)
-  - `GameState/`: Game state machine, config, run controller, metrics, scoring, leaderboard
-  - `Terrain/`: Procedural terrain generation, chunks, LOD, materials, rocks
-  - `Physics/`: Rigid body simulation, thrusters, fuel, landing evaluation
-  - `Input/`: Joystick gesture handling, control state, input filtering
-  - `Replay/`: Replay recording, camera controller, cinematic presets, effects
-  - `Audio/`: Spatial audio manager, engine audio, warning system
-  - `Debug/`: Debug HUD, menu, signposts, release flags
-  - `UI/`: Results panel, in-world UI attachments
-  - `Sky/`: Sky dome, sun lighting, Earth body
-  - `Cockpit/`: Cockpit blockout, comfort rules, joystick placement, loader
-  - `ECS/`: Tick system, components, frame mapping
+- **Terrain**: Procedural terrain generation and management
+  - `ChunkManager.ts`: Chunk lifecycle management
+  - `Chunk.ts`: Individual chunk mesh + data
+  - `LODController.ts`: Distance-based LOD decisions
+  - `HeightGenerator.ts`: Noise-based terrain generation
+  - `TerrainMaterial.ts`: Lunar surface shader/material
+  - `MoonSurface.ts`: Lunar surface details like craters
 
-### Scene Hierarchy
+- **Camera**: Flight controls
+  - `FlightController.ts`: Free-flight camera controls
 
-- `rootEntity`: Top-level entity
-  - `worldRoot`: Terrain, sky, external objects (moves during gameplay)
-  - `cockpitRoot`: Interior cockpit geometry, joysticks, UI attachments (fixed in real space during gameplay)
+- **Environment**: Sky and lighting
+  - `Skybox.ts`: Starfield background
+  - `Lighting.ts`: Sun directional light + shadows
+
+- **Utils**: Shared utilities
+  - `noise.ts`: Simplex/Perlin noise utilities
+  - `math.ts`: Vector/math helpers
+
+### Project Structure
+
+```
+src/
+├── main.ts                 # Entry point, scene setup
+├── core/
+│   ├── Engine.ts
+│   └── InputManager.ts
+├── terrain/
+│   ├── ChunkManager.ts
+│   ├── Chunk.ts
+│   ├── LODController.ts
+│   ├── HeightGenerator.ts
+│   └── TerrainMaterial.ts
+│   └── MoonSurface.ts
+├── camera/
+│   └── FlightController.ts
+├── environment/
+│   ├── Skybox.ts
+│   └── Lighting.ts
+├── utils/
+│   ├── noise.ts
+│   └── math.ts
+└── types/
+    └── index.ts
+```
 
 ## Runtime Rules
 
 - **Units**: 1 world unit = 1 meter everywhere
-- **Terrain**: Single source of truth - `TerrainHeightModel` drives BOTH rendering and physics queries
-- **Physics**: Use a fixed-timestep simulation loop (accumulator pattern)
-- **Performance**: Avoid per-frame allocations in hot loops (terrain updates, physics step)
-- **Comfort**: Keep player comfort - no forced camera motion during gameplay; only head movement
+- **Terrain**: Single source of truth - `HeightGenerator` drives BOTH rendering and height queries (will call functions in MoonSurface.ts)
+- **Performance**: Avoid per-frame allocations in hot loops (chunk updates, rendering)
+- **Chunks**: Generate mesh data off main thread where possible
 
 ## Units Convention
 
 - **Length**: meters
 - **Time**: seconds
-- **Mass**: kilograms
 - **Angles**: radians internally; degrees only for UI/debug
 
 ## Non-Goals (v1)
 
 These are explicitly out of scope for v1:
 
-- No open-world exploration
-- No story/campaign
+- No VR/WebXR support (future consideration)
+- No landing mechanics or physics simulation
+- No scoring, leaderboards, or game loop
+- No collision detection with terrain
 - No multiplayer
-- No tutorial/hand-holding onboarding
-- No complex meta progression (unlock trees, upgrades)
-- No alternative input systems ("Plan B") in v1
-- No true full-Moon spherical traversal system (v1 uses local terrain approach)
+- No mobile support (desktop-first)
 
 ## Key Technical Decisions
 
-- **Terrain**: Local procedural heightfield + horizon illusion (not spherical planet)
-- **Physics**: Hard-arcade rigid body (forces + torque), deterministic
-- **Input**: Two-handed virtual joysticks in cockpit (room-scale only, no artificial locomotion)
-- **Scoring**: Fuel efficiency is primary score driver
-- **Rendering**: RealityKit procedural meshes + ShaderGraph materials (v1)
-- **Audio**: Spatial audio is a pillar - engine/thrust, structural creaks, warnings
+- **Terrain**: Local procedural heightfield with chunk streaming (not spherical planet)
+- **LOD**: 4 levels based on distance (256x256 down to 16x16 vertices per chunk)
+- **Noise**: Multi-octave fractal noise and crater stamps
+- **Rendering**: Three.js with PBR materials and cascaded shadow maps
+- **Controls**: Keyboard/mouse 6DOF flight camera
+- **Build**: Vite for dev server and bundling
+
+## Dependencies
+
+| Package | Purpose |
+|---------|---------|
+| `three` | 3D rendering engine |
+| `simplex-noise` | Procedural noise generation |
+| `typescript` | Type-safe development |
+| `vite` | Dev server and bundler |
 
 ## Reference Documents
 
-- **Product Requirements**: `Tickets/PRD.md` - Complete product requirements document
-- **Tickets**: `Tickets/TODO/` (pending) and `Tickets/DONE/` (completed) - Implementation tickets organized by EPIC
+- **Product Requirements**: `docs/PRD.md` - Complete product requirements document
 
-## Development Workflow
+## Performance Targets
 
-This project uses a ticket-based workflow. See `.cursor/rules/tickets.mdc` for ticket workflow rules.
+| Metric | Target |
+|--------|--------|
+| Frame rate | 60fps stable |
+| Frame time | <16.6ms |
+| Draw calls | <500 per frame |
+| Triangle count | <2M visible |
+| Memory | <1GB GPU, <500MB JS heap |
+| Chunk build time | <50ms per chunk |
 
 ## Success Metrics
 
-- Median run length: ~2–3 minutes
-- High "one more try" factor (attempts per session)
-- Near-instant restart latency
-- Stable frame pacing
-- Low crash rate
+- Stable 60fps during flight at various altitudes
+- Chunk loading/unloading without visible hitches
+- Seamless LOD transitions (no popping artifacts)
+- Memory usage remains bounded during extended sessions

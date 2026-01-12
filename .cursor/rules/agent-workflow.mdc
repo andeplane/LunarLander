@@ -8,7 +8,7 @@ When working on tickets, follow this workflow to ensure quality and correctness.
 
 ## Before Starting Work
 
-1. **Read the entire ticket file** from `Tickets/TODO/EPIC-XX/`
+1. **Read the entire ticket file** from `tasks/EPIC-XX/`
    - Understand the "Why" and "Goal" sections
    - Review all dependencies listed in the ticket
    - Check if dependencies are complete before starting
@@ -30,20 +30,21 @@ When working on tickets, follow this workflow to ensure quality and correctness.
 
 4. **Ensure code quality**:
    - Follow project conventions and architecture patterns
-   - Maintain single source of truth principles (e.g., TerrainHeightModel)
+   - Maintain single source of truth principles (e.g., HeightGenerator for terrain)
    - Avoid per-frame allocations in hot loops
    - Use appropriate units (meters, seconds, radians internally)
 
 ## Verification Phase
 
 5. **Build the project** to verify it compiles:
-   - Run `xcodebuild` or build in Xcode
-   - Fix any compilation errors before considering the ticket complete
-   - Ensure the project builds for visionOS target
+   - Run `npm run build` to check TypeScript compilation
+   - Fix any TypeScript errors before considering the ticket complete
+   - Ensure no lint errors with `npm run lint` (if configured)
 
-6. **Verify functionality**:
-   - Check that the feature works as described in the ticket
-   - Ensure there is visible or logged proof the feature works
+6. **Test in browser**:
+   - I will be running `npm run dev` to start the development server in my terminal.
+   - Open the browser and verify the feature works visually using Browser MCP tools
+   - Check the browser console for errors or warnings
    - Verify integration (not a detached demo) unless explicitly stated otherwise
 
 7. **Check acceptance criteria**:
@@ -60,7 +61,8 @@ When working on tickets, follow this workflow to ensure quality and correctness.
 9. **Final checks**:
    - No TODOs in main code path (allowed only behind debug flags)
    - No obvious regressions introduced
-   - Code follows project standards
+   - Code follows project standards (TypeScript strict mode, etc.)
+   - Performance is acceptable (60fps target, no memory leaks)
 
 ## Communication
 
