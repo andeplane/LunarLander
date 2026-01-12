@@ -21,9 +21,6 @@ export class Engine {
   // Time tracking
   private clock: THREE.Clock = new THREE.Clock();
   private lastTime: number = 0;
-  
-  // Reusable vector for camera direction
-  private readonly cameraDirection: THREE.Vector3 = new THREE.Vector3();
 
   constructor(canvas: HTMLCanvasElement) {
     // Initialize renderer
@@ -123,10 +120,9 @@ export class Engine {
       this.flightController.update(deltaTime);
     }
 
-    // Update chunk manager with camera position and direction
+    // Update chunk manager with camera (for frustum culling and screen-space calculations)
     if (this.chunkManager) {
-      this.camera.getWorldDirection(this.cameraDirection);
-      this.chunkManager.update(this.camera.position, this.cameraDirection);
+      this.chunkManager.update(this.camera);
     }
   }
 

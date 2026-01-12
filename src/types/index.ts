@@ -14,10 +14,13 @@ export interface ChunkCoord {
 export interface ChunkConfig {
   size: number;           // World units per chunk
   resolution: number;     // Vertices per chunk edge
-  viewDistance: number;   // Chunks to load in each direction
+  viewDistance: number;   // Base chunks to load in each direction
   buildBudget: number;    // Max chunks to build per frame
   disposeBuffer: number;  // Extra distance before disposal
   debugMeshes: boolean;   // Enable debug visualization
+  minScreenSize?: number; // Minimum pixels on screen to load chunk (default: 10)
+  altitudeScale?: number; // How much altitude affects view distance (default: 0.01)
+  frustumMargin?: number; // Margin for frustum culling (default: 1.2)
 }
 
 /**

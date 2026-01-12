@@ -6,9 +6,10 @@ import { ChunkBuilder } from './ChunkBuilder';
 /**
  * ChunkManager responsible for:
  * - Chunk lifecycle management (create, update, dispose)
- * - Spiral loading pattern around camera (Minecraft-style)
+ * - Frustum culling for visible chunks only
+ * - Screen-space based priority (larger on screen = higher priority)
+ * - Altitude-aware view distance scaling
  * - Direction-based priority (chunks in front load first)
- * - Distance-based unloading
  */
 export class ChunkManager {
   private config: ChunkConfig;
@@ -18,52 +19,104 @@ export class ChunkManager {
   private chunkBuilder: ChunkBuilder;
   private pendingBuilds: Set<string> = new Set();
 
-  // Reusable vectors to avoid allocations
+  // Frustum culling
+  private readonly frustum = new THREE.Frustum();
+  private readonly frustumMatrix = new THREE.Matrix4();
+
+  // Reusable vectors and boxes to avoid allocations
   private readonly tempVec3 = new THREE.Vector3();
   private readonly cameraForward = new THREE.Vector3();
+  private readonly chunkBox = new THREE.Box3();
+  private readonly chunkCenter = new THREE.Vector3();
+
+  // Screen-space calculation cache
+  private screenHeight: number = 1;
 
   constructor(config: ChunkConfig, scene: THREE.Scene) {
     this.config = config;
     this.scene = scene;
     this.chunkBuilder = new ChunkBuilder();
+
+    // Set defaults for optional config values
+    if (this.config.minScreenSize === undefined) {
+      this.config.minScreenSize = 10;
+    }
+    if (this.config.altitudeScale === undefined) {
+      this.config.altitudeScale = 0.01;
+    }
+    if (this.config.frustumMargin === undefined) {
+      this.config.frustumMargin = 1.2;
+    }
   }
 
   /**
-   * Update chunks based on camera position and direction
+   * Update chunks based on camera position, direction, and frustum
    */
-  update(cameraPosition: THREE.Vector3, cameraDirection: THREE.Vector3): void {
+  update(camera: THREE.PerspectiveCamera): void {
+    // Update screen dimensions for screen-space calculations
+    this.screenHeight = window.innerHeight;
+
     // Get current chunk coordinate
+    const cameraPosition = camera.position;
     const currentChunk = this.worldToChunkCoord(cameraPosition.x, cameraPosition.z);
 
     // Store camera forward for priority calculations
-    this.cameraForward.copy(cameraDirection).setY(0).normalize();
+    camera.getWorldDirection(this.cameraForward);
+    this.cameraForward.setY(0).normalize();
 
-    // Determine which chunks should be loaded
-    const chunksToLoad = this.getChunksToLoad(currentChunk, cameraPosition);
+    // Update frustum for culling
+    this.updateFrustum(camera);
+
+    // Calculate effective view distance based on altitude
+    const effectiveViewDistance = this.calculateEffectiveViewDistance(cameraPosition.y);
+
+    // Determine which chunks should be loaded (frustum culled + altitude scaled)
+    const chunksToLoad = this.getChunksToLoad(currentChunk, effectiveViewDistance);
 
     // Queue new chunks for building
-    this.queueNewChunks(chunksToLoad, cameraPosition);
+    this.queueNewChunks(chunksToLoad, cameraPosition, camera);
 
-    // Sort build queue by priority (direction-aware)
-    this.sortBuildQueue(cameraPosition);
+    // Sort build queue by priority (screen-space + direction-aware)
+    this.sortBuildQueue(cameraPosition, camera);
 
     // Process build queue (respect budget)
     this.processBuildQueue();
 
-    // Unload distant chunks
-    this.unloadDistantChunks(currentChunk);
+    // Unload distant chunks (using effective view distance)
+    this.unloadDistantChunks(currentChunk, effectiveViewDistance);
   }
 
   /**
-   * Get list of chunks that should be loaded using spiral pattern
-   * Minecraft-style: expand outward from camera position
+   * Update frustum from camera for culling
    */
-  private getChunksToLoad(centerChunk: ChunkCoord, cameraPosition: THREE.Vector3): ChunkCoord[] {
-    const chunks: ChunkCoord[] = [];
-    const viewDist = this.config.viewDistance;
+  private updateFrustum(camera: THREE.PerspectiveCamera): void {
+    // Combine camera projection and world matrix
+    this.frustumMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    this.frustum.setFromProjectionMatrix(this.frustumMatrix);
+  }
 
-    // Spiral loading: start from center and expand outward
-    // This ensures closer chunks are added first
+  /**
+   * Calculate effective view distance based on altitude
+   * Higher altitude = can see further = load more chunks
+   */
+  private calculateEffectiveViewDistance(altitude: number): number {
+    const baseViewDistance = this.config.viewDistance;
+    const altitudeMultiplier = Math.max(1, altitude * (this.config.altitudeScale || 0.01));
+    return baseViewDistance * altitudeMultiplier;
+  }
+
+  /**
+   * Get list of chunks that should be loaded
+   * Uses frustum culling and altitude-scaled view distance
+   */
+  private getChunksToLoad(
+    centerChunk: ChunkCoord,
+    effectiveViewDistance: number
+  ): ChunkCoord[] {
+    const chunks: ChunkCoord[] = [];
+    const viewDist = Math.ceil(effectiveViewDistance);
+
+    // Generate potential chunks in spiral pattern
     for (let ring = 0; ring <= viewDist; ring++) {
       if (ring === 0) {
         // Center chunk
@@ -89,21 +142,72 @@ export class ChunkManager {
       }
     }
 
-    // Sort by priority (distance + direction bias)
-    chunks.sort((a, b) => {
-      const priorityA = this.calculatePriority(a, cameraPosition);
-      const priorityB = this.calculatePriority(b, cameraPosition);
-      return priorityA - priorityB;
-    });
+    // Filter chunks by frustum culling
+    const visibleChunks = chunks.filter(coord => this.isChunkInFrustum(coord));
 
-    return chunks;
+    return visibleChunks;
+  }
+
+  /**
+   * Check if a chunk is visible in the camera frustum
+   */
+  private isChunkInFrustum(coord: ChunkCoord): boolean {
+    // Create bounding box for chunk
+    const chunkMinX = coord.x * this.config.size;
+    const chunkMaxX = (coord.x + 1) * this.config.size;
+    const chunkMinZ = coord.z * this.config.size;
+    const chunkMaxZ = (coord.z + 1) * this.config.size;
+
+    // Use a small height range for the bounding box (chunks are flat)
+    const height = 10; // Small height for frustum test
+    this.chunkBox.set(
+      new THREE.Vector3(chunkMinX, -height, chunkMinZ),
+      new THREE.Vector3(chunkMaxX, height, chunkMaxZ)
+    );
+
+    // Expand box slightly for margin
+    const margin = this.config.frustumMargin || 1.2;
+    this.chunkBox.expandByScalar(this.config.size * (margin - 1));
+
+    // Test against frustum
+    return this.frustum.intersectsBox(this.chunkBox);
+  }
+
+  /**
+   * Calculate screen-space size of a chunk in pixels
+   */
+  private calculateScreenSpaceSize(coord: ChunkCoord, cameraPosition: THREE.Vector3, camera: THREE.PerspectiveCamera): number {
+    // Get chunk center
+    this.chunkCenter.set(
+      (coord.x + 0.5) * this.config.size,
+      0, // Chunks are at Y=0
+      (coord.z + 0.5) * this.config.size
+    );
+
+    // Calculate distance from camera to chunk center
+    this.tempVec3.copy(this.chunkCenter).sub(cameraPosition);
+    const distance = this.tempVec3.length();
+
+    if (distance < 0.1) {
+      return Infinity; // Very close chunks get highest priority
+    }
+
+    // Calculate screen-space size
+    // Formula: screenSize = (worldSize / distance) * screenHeight * fovFactor
+    const worldSize = this.config.size;
+    const fovRadians = (camera.fov * Math.PI) / 180;
+    const fovFactor = 1 / Math.tan(fovRadians / 2);
+    
+    const screenSize = (worldSize / distance) * this.screenHeight * fovFactor;
+
+    return screenSize;
   }
 
   /**
    * Calculate priority for a chunk (lower = higher priority)
-   * Chunks in front of camera get bonus priority
+   * Combines screen-space size, direction, and distance
    */
-  private calculatePriority(coord: ChunkCoord, cameraPosition: THREE.Vector3): number {
+  private calculatePriority(coord: ChunkCoord, cameraPosition: THREE.Vector3, camera: THREE.PerspectiveCamera): number {
     // Get chunk center in world space
     const chunkCenterX = (coord.x + 0.5) * this.config.size;
     const chunkCenterZ = (coord.z + 0.5) * this.config.size;
@@ -121,16 +225,30 @@ export class ChunkManager {
     // Dot product with camera forward (1 = in front, -1 = behind)
     const dot = this.tempVec3.dot(this.cameraForward);
 
-    // Priority: base distance minus direction bonus
-    // Chunks in front (dot > 0) get lower priority (loaded first)
+    // Calculate screen-space size
+    const screenSize = this.calculateScreenSpaceSize(coord, cameraPosition, camera);
+
+    // Filter out chunks that are too small on screen
+    if (screenSize < (this.config.minScreenSize || 10)) {
+      return Infinity; // Don't load chunks that are too small
+    }
+
+    // Priority calculation:
+    // - Base distance (closer = higher priority)
+    // - Screen size bonus (larger on screen = higher priority)
+    // - Direction bonus (in front = higher priority)
+    const screenSizeWeight = 0.1; // Weight for screen size
     const directionBonus = dot * this.config.size * 2;
-    return distance - directionBonus;
+    const screenSizeBonus = screenSize * screenSizeWeight;
+
+    // Lower priority = build first
+    return distance - screenSizeBonus - directionBonus;
   }
 
   /**
    * Queue new chunks that aren't already active or building
    */
-  private queueNewChunks(chunksToLoad: ChunkCoord[], _cameraPosition: THREE.Vector3): void {
+  private queueNewChunks(chunksToLoad: ChunkCoord[], cameraPosition: THREE.Vector3, camera: THREE.PerspectiveCamera): void {
     for (const coord of chunksToLoad) {
       const key = this.getChunkKey(coord);
 
@@ -144,18 +262,25 @@ export class ChunkManager {
         continue;
       }
 
+      // Check screen-space size - don't queue chunks that are too small
+      const screenSize = this.calculateScreenSpaceSize(coord, cameraPosition, camera);
+      const minSize = this.config.minScreenSize || 10;
+      if (screenSize < minSize) {
+        continue;
+      }
+
       // Add to queue
       this.buildQueue.push(coord);
     }
   }
 
   /**
-   * Sort build queue by priority
+   * Sort build queue by priority (screen-space + direction-aware)
    */
-  private sortBuildQueue(cameraPosition: THREE.Vector3): void {
+  private sortBuildQueue(cameraPosition: THREE.Vector3, camera: THREE.PerspectiveCamera): void {
     this.buildQueue.sort((a, b) => {
-      const priorityA = this.calculatePriority(a, cameraPosition);
-      const priorityB = this.calculatePriority(b, cameraPosition);
+      const priorityA = this.calculatePriority(a, cameraPosition, camera);
+      const priorityB = this.calculatePriority(b, cameraPosition, camera);
       return priorityA - priorityB;
     });
   }
@@ -222,10 +347,10 @@ export class ChunkManager {
   }
 
   /**
-   * Unload chunks that are too far from camera
+   * Unload chunks that are too far from camera (using effective view distance)
    */
-  private unloadDistantChunks(currentChunk: ChunkCoord): void {
-    const maxDist = this.config.viewDistance + this.config.disposeBuffer;
+  private unloadDistantChunks(currentChunk: ChunkCoord, effectiveViewDistance: number): void {
+    const maxDist = effectiveViewDistance + this.config.disposeBuffer;
 
     for (const [key, chunk] of this.activeChunks) {
       const dx = Math.abs(chunk.coord.x - currentChunk.x);
