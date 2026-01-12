@@ -7,6 +7,8 @@ import {
   calculateTriangleCount,
   generateChunkMesh,
   getTerrainHeight,
+  getSharedEdge,
+  getSharedEdgeHeights,
   type NeighborLODs,
 } from './meshGeneration';
 
@@ -564,4 +566,210 @@ describe(generateChunkMesh.name, () => {
       expect(middleHeight).toBeCloseTo(expectedHeight, 3);
     });
   });
+});
+
+// ============================================
+// getSharedEdge tests
+// ============================================
+describe('getSharedEdge', () => {
+  it('should return east when neighbor is to the right', () => {
+    expect(getSharedEdge(0, 0, 1, 0)).toBe('east');
+  });
+
+  it('should return west when neighbor is to the left', () => {
+    expect(getSharedEdge(0, 0, -1, 0)).toBe('west');
+  });
+
+  it('should return north when neighbor is above', () => {
+    expect(getSharedEdge(0, 0, 0, 1)).toBe('north');
+  });
+
+  it('should return south when neighbor is below', () => {
+    expect(getSharedEdge(0, 0, 0, -1)).toBe('south');
+  });
+
+  it('should return null for diagonal neighbors', () => {
+    expect(getSharedEdge(0, 0, 1, 1)).toBeNull();
+    expect(getSharedEdge(0, 0, -1, -1)).toBeNull();
+  });
+
+  it('should return null for same chunk', () => {
+    expect(getSharedEdge(0, 0, 0, 0)).toBeNull();
+  });
+
+  it('should return null for non-adjacent chunks', () => {
+    expect(getSharedEdge(0, 0, 2, 0)).toBeNull();
+    expect(getSharedEdge(0, 0, 0, 3)).toBeNull();
+  });
+});
+
+// ============================================
+// getSharedEdgeHeights tests
+// ============================================
+describe('getSharedEdgeHeights', () => {
+  const size = 64;
+
+  it('should return null for non-adjacent chunks', () => {
+    expect(getSharedEdgeHeights(0, 0, 2, 0, 2, 2, size)).toBeNull();
+    expect(getSharedEdgeHeights(0, 0, 1, 1, 2, 2, size)).toBeNull();
+  });
+
+  it('should return correct number of heights for chunk resolution', () => {
+    const heights = getSharedEdgeHeights(0, 0, 1, 0, 2, 2, size);
+    expect(heights).not.toBeNull();
+    expect(heights!.length).toBe(getResolutionForLOD(2)); // 7 vertices
+  });
+
+  it('should return heights matching direct sampling when both chunks have same LOD', () => {
+    const lodLevel = 2;
+    const heights = getSharedEdgeHeights(0, 0, 1, 0, lodLevel, lodLevel, size);
+    expect(heights).not.toBeNull();
+    
+    const resolution = getResolutionForLOD(lodLevel);
+    const step = size / (resolution - 1);
+    
+    // This is the east edge of chunk (0,0), which is at worldX = size
+    for (let i = 0; i < resolution; i++) {
+      const worldX = size;  // East edge
+      const worldZ = i * step;
+      const expected = getTerrainHeight(worldX, worldZ, lodLevel);
+      expect(heights![i]).toBeCloseTo(expected, 5);
+    }
+  });
+
+  describe('symmetric edge heights', () => {
+    it('chunk A east edge should equal chunk B west edge (same LOD)', () => {
+      const lodLevel = 2;
+      
+      // Chunk A's east edge (neighbor is to the east)
+      const chunkAEastHeights = getSharedEdgeHeights(0, 0, 1, 0, lodLevel, lodLevel, size);
+      
+      // Chunk B's west edge (neighbor is to the west)
+      const chunkBWestHeights = getSharedEdgeHeights(1, 0, 0, 0, lodLevel, lodLevel, size);
+      
+      expect(chunkAEastHeights).not.toBeNull();
+      expect(chunkBWestHeights).not.toBeNull();
+      
+      // Should be identical
+      expect(chunkAEastHeights!.length).toBe(chunkBWestHeights!.length);
+      for (let i = 0; i < chunkAEastHeights!.length; i++) {
+        expect(chunkAEastHeights![i]).toBeCloseTo(chunkBWestHeights![i], 5);
+      }
+    });
+
+    it('chunk A north edge should equal chunk B south edge (same LOD)', () => {
+      const lodLevel = 3;
+      
+      const chunkANorthHeights = getSharedEdgeHeights(0, 0, 0, 1, lodLevel, lodLevel, size);
+      const chunkBSouthHeights = getSharedEdgeHeights(0, 1, 0, 0, lodLevel, lodLevel, size);
+      
+      expect(chunkANorthHeights).not.toBeNull();
+      expect(chunkBSouthHeights).not.toBeNull();
+      
+      expect(chunkANorthHeights!.length).toBe(chunkBSouthHeights!.length);
+      for (let i = 0; i < chunkANorthHeights!.length; i++) {
+        expect(chunkANorthHeights![i]).toBeCloseTo(chunkBSouthHeights![i], 5);
+      }
+    });
+  });
+
+  describe('different LOD edge heights', () => {
+    it('higher-LOD chunk should interpolate onto lower-LOD grid (east/west edge)', () => {
+      const highLOD = 3;  // 9 vertices
+      const lowLOD = 1;   // 4 vertices
+      
+      // Chunk A (high LOD) has neighbor B (low LOD) to the east
+      const chunkAEastHeights = getSharedEdgeHeights(0, 0, 1, 0, highLOD, lowLOD, size);
+      
+      // Chunk B (low LOD) has neighbor A (high LOD) to the west  
+      const chunkBWestHeights = getSharedEdgeHeights(1, 0, 0, 0, lowLOD, highLOD, size);
+      
+      expect(chunkAEastHeights).not.toBeNull();
+      expect(chunkBWestHeights).not.toBeNull();
+      
+      // High-LOD chunk has more vertices
+      expect(chunkAEastHeights!.length).toBe(9);
+      expect(chunkBWestHeights!.length).toBe(4);
+      
+      // The 4 vertices of the low-LOD chunk should match corresponding vertices
+      // of the high-LOD chunk (at positions 0, 8/3, 16/3, 8 ≈ 0, 2.67, 5.33, 8)
+      // Actually the grid positions for res=4 are: 0, size/3, 2*size/3, size
+      // And for res=9 are: 0, size/8, 2*size/8, ..., size
+      
+      // First and last vertices should match exactly
+      expect(chunkAEastHeights![0]).toBeCloseTo(chunkBWestHeights![0], 5);
+      expect(chunkAEastHeights![8]).toBeCloseTo(chunkBWestHeights![3], 5);
+    });
+
+    it('interpolated heights should lie on the line between coarse grid points', () => {
+      const highLOD = 4;  // 17 vertices
+      const lowLOD = 0;   // 2 vertices (just endpoints)
+      
+      const heights = getSharedEdgeHeights(0, 0, 1, 0, highLOD, lowLOD, size);
+      expect(heights).not.toBeNull();
+      expect(heights!.length).toBe(17);
+      
+      // Get the two endpoint heights (sampled at low LOD)
+      const h0 = getTerrainHeight(size, 0, lowLOD);
+      const h1 = getTerrainHeight(size, size, lowLOD);
+      
+      // All heights should be linearly interpolated between h0 and h1
+      for (let i = 0; i < 17; i++) {
+        const t = i / 16;  // 0 to 1
+        const expected = h0 + t * (h1 - h0);
+        expect(heights![i]).toBeCloseTo(expected, 5);
+      }
+    });
+
+    it('lower-LOD chunk should NOT interpolate (uses its own grid)', () => {
+      const highLOD = 4;  // 17 vertices
+      const lowLOD = 1;   // 4 vertices
+      
+      // Low-LOD chunk with high-LOD neighbor - should use own grid
+      const heights = getSharedEdgeHeights(0, 0, 1, 0, lowLOD, highLOD, size);
+      expect(heights).not.toBeNull();
+      expect(heights!.length).toBe(4);
+      
+      // Heights should be sampled at lowLOD (not interpolated)
+      const step = size / 3;  // 4 vertices means 3 segments
+      for (let i = 0; i < 4; i++) {
+        const worldZ = i * step;
+        const expected = getTerrainHeight(size, worldZ, lowLOD);
+        expect(heights![i]).toBeCloseTo(expected, 5);
+      }
+    });
+  });
+
+  describe('edge endpoint consistency', () => {
+    it('opposite chunks should agree on shared edge endpoints', () => {
+      const lodLevel = 2;
+      
+      // Chunk A's east edge endpoints should match chunk B's west edge endpoints
+      const aEast = getSharedEdgeHeights(0, 0, 1, 0, lodLevel, lodLevel, size);
+      const bWest = getSharedEdgeHeights(1, 0, 0, 0, lodLevel, lodLevel, size);
+      
+      expect(aEast).not.toBeNull();
+      expect(bWest).not.toBeNull();
+      
+      // First and last vertices (the corners) should match
+      expect(aEast![0]).toBeCloseTo(bWest![0], 5);
+      expect(aEast![aEast!.length - 1]).toBeCloseTo(bWest![bWest!.length - 1], 5);
+    });
+
+    it('edge endpoints should match direct terrain sampling', () => {
+      const lodLevel = 3;
+      
+      const heights = getSharedEdgeHeights(0, 0, 1, 0, lodLevel, lodLevel, size);
+      expect(heights).not.toBeNull();
+      
+      // East edge of chunk (0,0) is at worldX = size
+      // First vertex at z=0, last at z=size
+      expect(heights![0]).toBeCloseTo(getTerrainHeight(size, 0, lodLevel), 5);
+      expect(heights![heights!.length - 1]).toBeCloseTo(getTerrainHeight(size, size, lodLevel), 5);
+    });
+  });
+
+  // NOTE: Corner consistency across different edges (e.g., chunk A's east edge corner
+  // vs chunk A's north edge corner) requires knowing ALL 4 neighbor LODs for that corner.
+  // This is handled in generateChunkMesh via the diagonal neighbor LODs, not in getSharedEdgeHeights.
 });

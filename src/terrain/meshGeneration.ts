@@ -181,66 +181,136 @@ function computeNormal(
 export type { NeighborLODs } from '../types';
 
 /**
- * Get interpolated height and normal for an edge vertex
- * The vertex stays at its original position, but height is interpolated
- * along the neighbor's coarser grid to ensure the edge lies on neighbor's surface
- * Returns [height, nx, ny, nz]
+ * Determines the direction of a neighbor relative to a chunk
  */
-function getStitchedEdgeData(
-  edgePosition: number,  // Position along edge [0, size]
-  size: number,
-  neighborLOD: number,
-  edgeWorldCoord: number,  // Fixed coordinate (X for north/south edges, Z for east/west)
-  isXEdge: boolean,  // true for north/south (varying X), false for east/west (varying Z)
-  chunkWorldOffsetX: number,
-  chunkWorldOffsetZ: number,
-  normalSampleDist: number
-): [number, number, number, number] {
-  // Get neighbor's grid spacing
-  const neighborRes = getResolutionForLOD(neighborLOD);
-  const neighborStep = size / (neighborRes - 1);
+export type EdgeDirection = 'north' | 'south' | 'east' | 'west';
 
-  // Find which segment of the neighbor's grid this position falls into
-  const segmentIndex = Math.floor(edgePosition / neighborStep);
-  const segmentStart = segmentIndex * neighborStep;
-  const segmentEnd = Math.min(segmentStart + neighborStep, size);
+/**
+ * Determine which edge is shared between two adjacent chunks
+ * Returns the edge direction from the perspective of the first chunk
+ */
+export function getSharedEdge(
+  chunkX: number, chunkZ: number,
+  neighborX: number, neighborZ: number
+): EdgeDirection | null {
+  const dx = neighborX - chunkX;
+  const dz = neighborZ - chunkZ;
   
-  // Calculate interpolation factor within the segment [0, 1]
-  const segmentLength = segmentEnd - segmentStart;
-  const t = segmentLength > 0 ? (edgePosition - segmentStart) / segmentLength : 0;
-
-  // Get heights at the two neighbor grid points (using neighbor's LOD for consistency)
-  let h0: number, h1: number;
-  let n0: [number, number, number], n1: [number, number, number];
-  
-  if (isXEdge) {
-    // Edge varies along X axis
-    const x0 = chunkWorldOffsetX + segmentStart;
-    const x1 = chunkWorldOffsetX + segmentEnd;
-    h0 = getTerrainHeight(x0, edgeWorldCoord, neighborLOD);
-    h1 = getTerrainHeight(x1, edgeWorldCoord, neighborLOD);
-    n0 = computeNormal(x0, edgeWorldCoord, neighborLOD, normalSampleDist);
-    n1 = computeNormal(x1, edgeWorldCoord, neighborLOD, normalSampleDist);
-  } else {
-    // Edge varies along Z axis
-    const z0 = chunkWorldOffsetZ + segmentStart;
-    const z1 = chunkWorldOffsetZ + segmentEnd;
-    h0 = getTerrainHeight(edgeWorldCoord, z0, neighborLOD);
-    h1 = getTerrainHeight(edgeWorldCoord, z1, neighborLOD);
-    n0 = computeNormal(edgeWorldCoord, z0, neighborLOD, normalSampleDist);
-    n1 = computeNormal(edgeWorldCoord, z1, neighborLOD, normalSampleDist);
+  // Must be exactly adjacent (not diagonal, not same)
+  if (Math.abs(dx) + Math.abs(dz) !== 1) {
+    return null;
   }
-
-  // Interpolate height linearly
-  const height = h0 + t * (h1 - h0);
   
-  // Interpolate normal and renormalize
-  const nx = n0[0] + t * (n1[0] - n0[0]);
-  const ny = n0[1] + t * (n1[1] - n0[1]);
-  const nz = n0[2] + t * (n1[2] - n0[2]);
-  const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+  if (dx === 1) return 'east';
+  if (dx === -1) return 'west';
+  if (dz === 1) return 'north';
+  if (dz === -1) return 'south';
+  
+  return null;
+}
 
-  return [height, nx / len, ny / len, nz / len];
+/**
+ * Compute the shared edge heights between two adjacent chunks.
+ * Both chunks MUST use these exact heights for their shared edge to avoid gaps.
+ * 
+ * The lower-LOD chunk defines the grid points; the higher-LOD chunk
+ * interpolates its additional vertices onto that grid.
+ * 
+ * @param chunkX, chunkZ - Coordinates of the chunk requesting edge heights
+ * @param neighborX, neighborZ - Coordinates of the adjacent neighbor chunk
+ * @param chunkLOD - LOD level of the requesting chunk
+ * @param neighborLOD - LOD level of the neighbor chunk
+ * @param size - Chunk size in world units
+ * @returns Array of heights for each vertex on the requesting chunk's edge,
+ *          or null if chunks are not adjacent
+ */
+export function getSharedEdgeHeights(
+  chunkX: number, chunkZ: number,
+  neighborX: number, neighborZ: number,
+  chunkLOD: number, neighborLOD: number,
+  size: number
+): number[] | null {
+  const edge = getSharedEdge(chunkX, chunkZ, neighborX, neighborZ);
+  if (!edge) return null;
+  
+  const chunkRes = getResolutionForLOD(chunkLOD);
+  const chunkStep = size / (chunkRes - 1);
+  
+  // World position offset for this chunk
+  const worldOffsetX = chunkX * size;
+  const worldOffsetZ = chunkZ * size;
+  
+  // Determine the LOD to use for height sampling
+  // Use the LOWER LOD (coarser grid) - the higher LOD chunk interpolates onto it
+  const sampleLOD = Math.min(chunkLOD, neighborLOD);
+  const sampleRes = getResolutionForLOD(sampleLOD);
+  const sampleStep = size / (sampleRes - 1);
+  
+  const heights: number[] = [];
+  
+  // For each vertex on the chunk's edge
+  for (let i = 0; i < chunkRes; i++) {
+    const localPos = i * chunkStep;  // Position along edge [0, size]
+    
+    let worldX: number, worldZ: number;
+    
+    // Determine world coordinates based on which edge
+    switch (edge) {
+      case 'north':
+        worldX = worldOffsetX + localPos;
+        worldZ = worldOffsetZ + size;
+        break;
+      case 'south':
+        worldX = worldOffsetX + localPos;
+        worldZ = worldOffsetZ;
+        break;
+      case 'east':
+        worldX = worldOffsetX + size;
+        worldZ = worldOffsetZ + localPos;
+        break;
+      case 'west':
+        worldX = worldOffsetX;
+        worldZ = worldOffsetZ + localPos;
+        break;
+    }
+    
+    // If chunk has lower or equal LOD, sample directly at this LOD
+    if (chunkLOD <= neighborLOD) {
+      heights.push(getTerrainHeight(worldX, worldZ, chunkLOD));
+    } else {
+      // Chunk has higher LOD - must interpolate onto neighbor's coarser grid
+      // Find which segment of the coarser grid this vertex falls into
+      const segmentIndex = Math.floor(localPos / sampleStep);
+      const segmentStart = segmentIndex * sampleStep;
+      const segmentEnd = Math.min(segmentStart + sampleStep, size);
+      
+      // Interpolation factor within segment
+      const segmentLength = segmentEnd - segmentStart;
+      const t = segmentLength > 0 ? (localPos - segmentStart) / segmentLength : 0;
+      
+      // Sample heights at the coarser grid points
+      let h0: number, h1: number;
+      
+      if (edge === 'north' || edge === 'south') {
+        // Edge varies along X axis
+        const x0 = worldOffsetX + segmentStart;
+        const x1 = worldOffsetX + segmentEnd;
+        h0 = getTerrainHeight(x0, worldZ, sampleLOD);
+        h1 = getTerrainHeight(x1, worldZ, sampleLOD);
+      } else {
+        // Edge varies along Z axis
+        const z0 = worldOffsetZ + segmentStart;
+        const z1 = worldOffsetZ + segmentEnd;
+        h0 = getTerrainHeight(worldX, z0, sampleLOD);
+        h1 = getTerrainHeight(worldX, z1, sampleLOD);
+      }
+      
+      // Linear interpolation
+      heights.push(h0 + t * (h1 - h0));
+    }
+  }
+  
+  return heights;
 }
 
 /**
@@ -285,6 +355,21 @@ export function generateChunkMesh(
     southwest: lodLevel,
   };
 
+  // Pre-compute edge heights using getSharedEdgeHeights for consistency
+  // Only compute if neighbor has lower LOD (this chunk adapts to neighbor)
+  const northEdgeHeights = neighbors.north < lodLevel
+    ? getSharedEdgeHeights(chunkX, chunkZ, chunkX, chunkZ + 1, lodLevel, neighbors.north, size)
+    : null;
+  const southEdgeHeights = neighbors.south < lodLevel
+    ? getSharedEdgeHeights(chunkX, chunkZ, chunkX, chunkZ - 1, lodLevel, neighbors.south, size)
+    : null;
+  const eastEdgeHeights = neighbors.east < lodLevel
+    ? getSharedEdgeHeights(chunkX, chunkZ, chunkX + 1, chunkZ, lodLevel, neighbors.east, size)
+    : null;
+  const westEdgeHeights = neighbors.west < lodLevel
+    ? getSharedEdgeHeights(chunkX, chunkZ, chunkX - 1, chunkZ, lodLevel, neighbors.west, size)
+    : null;
+
   // Generate vertices with height
   // Key insight: vertex X/Z positions NEVER change, only height is interpolated for stitching
   let vertexIndex = 0;
@@ -306,7 +391,7 @@ export function generateChunkMesh(
       let nx: number, ny: number, nz: number;
       
       // For corners: use minimum LOD of all adjacent neighbors (corners always align)
-      // For edges: if neighbor has lower LOD, interpolate height along their edge
+      // For edges: use pre-computed heights from getSharedEdgeHeights
       // For interior: use this chunk's LOD
       
       if (isCorner) {
@@ -328,30 +413,22 @@ export function generateChunkMesh(
         
         height = getTerrainHeight(worldX, worldZ, cornerLOD);
         [nx, ny, nz] = computeNormal(worldX, worldZ, cornerLOD, normalSampleDist);
-      } else if (isWestEdge && neighbors.west < lodLevel) {
-        // West edge - interpolate height along lower-LOD neighbor's edge
-        [height, nx, ny, nz] = getStitchedEdgeData(
-          localZ, size, neighbors.west, worldX, false,
-          worldOffsetX, worldOffsetZ, normalSampleDist
-        );
-      } else if (isEastEdge && neighbors.east < lodLevel) {
-        // East edge - interpolate height along lower-LOD neighbor's edge
-        [height, nx, ny, nz] = getStitchedEdgeData(
-          localZ, size, neighbors.east, worldX, false,
-          worldOffsetX, worldOffsetZ, normalSampleDist
-        );
-      } else if (isSouthEdge && neighbors.south < lodLevel) {
-        // South edge - interpolate height along lower-LOD neighbor's edge
-        [height, nx, ny, nz] = getStitchedEdgeData(
-          localX, size, neighbors.south, worldZ, true,
-          worldOffsetX, worldOffsetZ, normalSampleDist
-        );
-      } else if (isNorthEdge && neighbors.north < lodLevel) {
-        // North edge - interpolate height along lower-LOD neighbor's edge
-        [height, nx, ny, nz] = getStitchedEdgeData(
-          localX, size, neighbors.north, worldZ, true,
-          worldOffsetX, worldOffsetZ, normalSampleDist
-        );
+      } else if (isWestEdge && westEdgeHeights) {
+        // West edge - use pre-computed heights (indexed by z)
+        height = westEdgeHeights[z];
+        [nx, ny, nz] = computeNormal(worldX, worldZ, neighbors.west, normalSampleDist);
+      } else if (isEastEdge && eastEdgeHeights) {
+        // East edge - use pre-computed heights (indexed by z)
+        height = eastEdgeHeights[z];
+        [nx, ny, nz] = computeNormal(worldX, worldZ, neighbors.east, normalSampleDist);
+      } else if (isSouthEdge && southEdgeHeights) {
+        // South edge - use pre-computed heights (indexed by x)
+        height = southEdgeHeights[x];
+        [nx, ny, nz] = computeNormal(worldX, worldZ, neighbors.south, normalSampleDist);
+      } else if (isNorthEdge && northEdgeHeights) {
+        // North edge - use pre-computed heights (indexed by x)
+        height = northEdgeHeights[x];
+        [nx, ny, nz] = computeNormal(worldX, worldZ, neighbors.north, normalSampleDist);
       } else {
         // Interior vertex or edge with same/higher LOD neighbor - sample normally
         height = getTerrainHeight(worldX, worldZ, lodLevel);
