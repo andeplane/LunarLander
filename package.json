@@ -9,11 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "three": "^0.169.0",
-    "simplex-noise": "^4.0.1"
+    "simplex-noise": "^4.0.1",
+    "three": "^0.182.0"
   },
   "devDependencies": {
-    "@types/three": "^0.169.0",
+    "@types/three": "^0.182.0",
     "typescript": "^5.2.2",
     "vite": "^5.4.0"
   }
