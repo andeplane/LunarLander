@@ -20,6 +20,9 @@ export class FlightController {
   // Current speed multiplier (adjusted by scroll wheel)
   private speedMultiplier: number = 1.0;
   
+  // Shift key speed boost multiplier
+  private readonly shiftSpeedMultiplier: number = 3.0;
+  
   // Euler angles for rotation (pitch, yaw only - no roll)
   private pitch: number = 0; // Up/down rotation
   private yaw: number = 0;   // Left/right rotation
@@ -122,11 +125,11 @@ export class FlightController {
       this.moveDirection.add(this.right);
     }
 
-    // Up/down (Space/Shift and Q/E)
-    if (this.inputManager.isKeyPressed(' ') || this.inputManager.isKeyPressed('e')) {
+    // Up/down (E for up, Q for down)
+    if (this.inputManager.isKeyPressed('e')) {
       this.moveDirection.add(this.up);
     }
-    if (this.inputManager.isKeyPressed('shift') || this.inputManager.isKeyPressed('q')) {
+    if (this.inputManager.isKeyPressed('q')) {
       this.moveDirection.sub(this.up);
     }
 
@@ -135,8 +138,9 @@ export class FlightController {
       this.moveDirection.normalize();
     }
 
-    // Calculate target velocity
-    const targetSpeed = this.config.baseSpeed * this.speedMultiplier;
+    // Calculate target velocity with shift speed boost
+    const shiftBoost = this.inputManager.isKeyPressed('shift') ? this.shiftSpeedMultiplier : 1.0;
+    const targetSpeed = this.config.baseSpeed * this.speedMultiplier * shiftBoost;
     const targetVelocity = this.moveDirection.multiplyScalar(targetSpeed);
 
     // Smooth acceleration/deceleration using exponential decay
