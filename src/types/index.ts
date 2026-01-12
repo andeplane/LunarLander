@@ -127,10 +127,16 @@ export interface Chunk {
  * -1 means neighbor doesn't exist (treat as same LOD)
  */
 export interface NeighborLODs {
+  // Cardinal neighbors (for edge stitching)
   north: number;  // +Z direction
   south: number;  // -Z direction
   east: number;   // +X direction
   west: number;   // -X direction
+  // Diagonal neighbors (for corner stitching)
+  northeast: number;  // +X, +Z
+  northwest: number;  // -X, +Z
+  southeast: number;  // +X, -Z
+  southwest: number;  // -X, -Z
 }
 
 /**

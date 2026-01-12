@@ -4,6 +4,7 @@
  */
 
 import { createNoise2D } from 'simplex-noise';
+import type { NeighborLODs } from '../types';
 
 // LOD level resolutions - must match LOD_LEVELS in types/index.ts
 export const LOD_RESOLUTIONS = [2, 4, 7, 9, 17];
@@ -175,15 +176,9 @@ function computeNormal(
   return [nx, ny, nz];
 }
 
-/**
- * Neighbor LOD information for edge stitching
- */
-export interface NeighborLODs {
-  north: number;  // +Z direction
-  south: number;  // -Z direction
-  east: number;   // +X direction
-  west: number;   // -X direction
-}
+// NeighborLODs interface is imported from types/index.ts
+// Re-export for convenience
+export type { NeighborLODs } from '../types';
 
 /**
  * Get interpolated height and normal for an edge vertex
@@ -283,7 +278,11 @@ export function generateChunkMesh(
     north: lodLevel,
     south: lodLevel,
     east: lodLevel,
-    west: lodLevel
+    west: lodLevel,
+    northeast: lodLevel,
+    northwest: lodLevel,
+    southeast: lodLevel,
+    southwest: lodLevel,
   };
 
   // Generate vertices with height
@@ -311,13 +310,21 @@ export function generateChunkMesh(
       // For interior: use this chunk's LOD
       
       if (isCorner) {
-        // Corner vertices always align with neighbor grid points
-        // Use minimum LOD to ensure all chunks agree on corner heights
+        // Corner vertices are shared by 4 chunks (this + 2 edge neighbors + 1 diagonal)
+        // Use minimum LOD of ALL 4 to ensure all chunks agree on corner heights
         let cornerLOD = lodLevel;
+        
+        // Include edge neighbors
         if (isWestEdge) cornerLOD = Math.min(cornerLOD, neighbors.west);
         if (isEastEdge) cornerLOD = Math.min(cornerLOD, neighbors.east);
         if (isSouthEdge) cornerLOD = Math.min(cornerLOD, neighbors.south);
         if (isNorthEdge) cornerLOD = Math.min(cornerLOD, neighbors.north);
+        
+        // Include diagonal neighbor for this corner
+        if (isWestEdge && isSouthEdge) cornerLOD = Math.min(cornerLOD, neighbors.southwest);
+        if (isWestEdge && isNorthEdge) cornerLOD = Math.min(cornerLOD, neighbors.northwest);
+        if (isEastEdge && isSouthEdge) cornerLOD = Math.min(cornerLOD, neighbors.southeast);
+        if (isEastEdge && isNorthEdge) cornerLOD = Math.min(cornerLOD, neighbors.northeast);
         
         height = getTerrainHeight(worldX, worldZ, cornerLOD);
         [nx, ny, nz] = computeNormal(worldX, worldZ, cornerLOD, normalSampleDist);

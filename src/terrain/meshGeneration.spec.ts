@@ -52,7 +52,7 @@ describe('adjacent chunk edge matching', () => {
   it('should have matching edges between horizontally adjacent chunks with same LOD', () => {
     const lodLevel = 2;
     const size = 64;
-    const neighborLODs: NeighborLODs = { north: lodLevel, south: lodLevel, east: lodLevel, west: lodLevel };
+    const neighborLODs: NeighborLODs = { north: lodLevel, south: lodLevel, east: lodLevel, west: lodLevel, northeast: lodLevel, northwest: lodLevel, southeast: lodLevel, southwest: lodLevel };
     
     // Chunk A at (0, 0) - its east edge
     const chunkA = generateChunkMesh(0, 0, lodLevel, size, neighborLODs);
@@ -72,7 +72,7 @@ describe('adjacent chunk edge matching', () => {
   it('should have matching edges between vertically adjacent chunks with same LOD', () => {
     const lodLevel = 2;
     const size = 64;
-    const neighborLODs: NeighborLODs = { north: lodLevel, south: lodLevel, east: lodLevel, west: lodLevel };
+    const neighborLODs: NeighborLODs = { north: lodLevel, south: lodLevel, east: lodLevel, west: lodLevel, northeast: lodLevel, northwest: lodLevel, southeast: lodLevel, southwest: lodLevel };
     
     // Chunk A at (0, 0) - its north edge
     const chunkA = generateChunkMesh(0, 0, lodLevel, size, neighborLODs);
@@ -98,12 +98,12 @@ describe('adjacent chunk edge matching', () => {
       
       // Chunk A is built first - no neighbors exist yet
       // So it gets neighborLODs = { east: 2, ... } (same as its own LOD)
-      const chunkANeighbors: NeighborLODs = { north: 2, south: 2, east: 2, west: 2 };
+      const chunkANeighbors: NeighborLODs = { north: 2, south: 2, east: 2, west: 2, northeast: 2, northwest: 2, southeast: 2, southwest: 2 };
       const chunkA = generateChunkMesh(0, 0, lodLevel, size, chunkANeighbors);
       
       // Chunk B is built second - chunk A exists with LOD 2
       // So it gets neighborLODs = { west: 2, ... }
-      const chunkBNeighbors: NeighborLODs = { north: 2, south: 2, east: 2, west: 2 };
+      const chunkBNeighbors: NeighborLODs = { north: 2, south: 2, east: 2, west: 2, northeast: 2, northwest: 2, southeast: 2, southwest: 2 };
       const chunkB = generateChunkMesh(1, 0, lodLevel, size, chunkBNeighbors);
       
       const resolution = getResolutionForLOD(lodLevel);
@@ -118,11 +118,11 @@ describe('adjacent chunk edge matching', () => {
       
       // Step 1: Both chunks built at LOD 0
       // Chunk B at (1,0) is built at LOD 0
-      const chunkB_lod0 = generateChunkMesh(1, 0, 0, size, { north: 0, south: 0, east: 0, west: 0 });
+      const chunkB_lod0 = generateChunkMesh(1, 0, 0, size, { north: 0, south: 0, east: 0, west: 0, northeast: 0, northwest: 0, southeast: 0, southwest: 0 });
       
       // Step 2: Chunk A at (0,0) upgrades to LOD 2
       // When built, it sees neighbor B at LOD 0, so it stitches to LOD 0
-      const chunkA_lod2 = generateChunkMesh(0, 0, 2, size, { north: 2, south: 2, east: 0, west: 2 });
+      const chunkA_lod2 = generateChunkMesh(0, 0, 2, size, { north: 2, south: 2, east: 0, west: 2, northeast: 2, northwest: 2, southeast: 0, southwest: 2 });
       
       // The east edge of chunk A (LOD 2, stitched to LOD 0) 
       // should match the west edge of chunk B (LOD 0)
@@ -401,7 +401,7 @@ describe(generateChunkMesh.name, () => {
 
     it('should produce identical results without neighborLODs parameter', () => {
       const meshWithout = generateChunkMesh(0, 0, 2, 64);
-      const meshWith = generateChunkMesh(0, 0, 2, 64, { north: 2, south: 2, east: 2, west: 2 });
+      const meshWith = generateChunkMesh(0, 0, 2, 64, { north: 2, south: 2, east: 2, west: 2, northeast: 2, northwest: 2, southeast: 2, southwest: 2 });
       
       // Should be identical when all neighbors have same LOD
       expect(meshWith.vertices).toEqual(meshWithout.vertices);
@@ -409,7 +409,7 @@ describe(generateChunkMesh.name, () => {
 
     it('should not modify edge heights when neighbor has same LOD', () => {
       const lodLevel = 2;
-      const neighborLODs: NeighborLODs = { north: lodLevel, south: lodLevel, east: lodLevel, west: lodLevel };
+      const neighborLODs: NeighborLODs = { north: lodLevel, south: lodLevel, east: lodLevel, west: lodLevel, northeast: lodLevel, northwest: lodLevel, southeast: lodLevel, southwest: lodLevel };
       
       const meshWithStitching = generateChunkMesh(0, 0, lodLevel, 64, neighborLODs);
       const meshWithoutStitching = generateChunkMesh(0, 0, lodLevel, 64);
@@ -419,7 +419,7 @@ describe(generateChunkMesh.name, () => {
 
     it('should NOT modify edge heights when neighbor has higher LOD (higher-res adapts to us)', () => {
       const lodLevel = 2;
-      const neighborLODs: NeighborLODs = { north: 4, south: 4, east: 4, west: 4 };
+      const neighborLODs: NeighborLODs = { north: 4, south: 4, east: 4, west: 4, northeast: 4, northwest: 4, southeast: 4, southwest: 4 };
       
       const meshWithStitching = generateChunkMesh(0, 0, lodLevel, 64, neighborLODs);
       const meshWithoutStitching = generateChunkMesh(0, 0, lodLevel, 64);
@@ -434,7 +434,7 @@ describe(generateChunkMesh.name, () => {
 
     it('should modify west edge heights when west neighbor has lower LOD', () => {
       const lodLevel = 3;  // 9 vertices
-      const neighborLODs: NeighborLODs = { north: 3, south: 3, east: 3, west: 1 }; // west has LOD 1 (4 vertices)
+      const neighborLODs: NeighborLODs = { north: 3, south: 3, east: 3, west: 1, northeast: 3, northwest: 3, southeast: 3, southwest: 3 }; // west has LOD 1 (4 vertices)
       
       const meshWithStitching = generateChunkMesh(0, 0, lodLevel, 64, neighborLODs);
       const meshWithoutStitching = generateChunkMesh(0, 0, lodLevel, 64);
@@ -454,7 +454,7 @@ describe(generateChunkMesh.name, () => {
 
     it('should modify east edge heights when east neighbor has lower LOD', () => {
       const lodLevel = 3;
-      const neighborLODs: NeighborLODs = { north: 3, south: 3, east: 1, west: 3 };
+      const neighborLODs: NeighborLODs = { north: 3, south: 3, east: 1, west: 3, northeast: 3, northwest: 3, southeast: 3, southwest: 3 };
       
       const meshWithStitching = generateChunkMesh(0, 0, lodLevel, 64, neighborLODs);
       const meshWithoutStitching = generateChunkMesh(0, 0, lodLevel, 64);
@@ -468,7 +468,7 @@ describe(generateChunkMesh.name, () => {
 
     it('should modify north edge heights when north neighbor has lower LOD', () => {
       const lodLevel = 3;
-      const neighborLODs: NeighborLODs = { north: 1, south: 3, east: 3, west: 3 };
+      const neighborLODs: NeighborLODs = { north: 1, south: 3, east: 3, west: 3, northeast: 3, northwest: 3, southeast: 3, southwest: 3 };
       
       const meshWithStitching = generateChunkMesh(0, 0, lodLevel, 64, neighborLODs);
       const meshWithoutStitching = generateChunkMesh(0, 0, lodLevel, 64);
@@ -482,7 +482,7 @@ describe(generateChunkMesh.name, () => {
 
     it('should modify south edge heights when south neighbor has lower LOD', () => {
       const lodLevel = 3;
-      const neighborLODs: NeighborLODs = { north: 3, south: 1, east: 3, west: 3 };
+      const neighborLODs: NeighborLODs = { north: 3, south: 1, east: 3, west: 3, northeast: 3, northwest: 3, southeast: 3, southwest: 3 };
       
       const meshWithStitching = generateChunkMesh(0, 0, lodLevel, 64, neighborLODs);
       const meshWithoutStitching = generateChunkMesh(0, 0, lodLevel, 64);
@@ -497,14 +497,14 @@ describe(generateChunkMesh.name, () => {
     it('should modify corner vertices to use minimum LOD of adjacent neighbors', () => {
       const lodLevel = 2;
       const size = 64;
-      const neighborLODs: NeighborLODs = { north: 0, south: 0, east: 0, west: 0 };
+      const neighborLODs: NeighborLODs = { north: 0, south: 0, east: 0, west: 0, northeast: 0, northwest: 0, southeast: 0, southwest: 0 };
       
       const meshWithStitching = generateChunkMesh(0, 0, lodLevel, size, neighborLODs);
       
       const resolution = getResolutionForLOD(lodLevel);
       
-      // Corners should be sampled at minimum LOD of adjacent edges
-      // Southwest corner (0,0): min(lodLevel, west, south) = min(2, 0, 0) = 0
+      // Corners should be sampled at minimum LOD of all 4 adjacent chunks (edges + diagonal)
+      // Southwest corner (0,0): min(lodLevel, west, south, southwest) = min(2, 0, 0, 0) = 0
       // Southeast corner (res-1,0): min(lodLevel, east, south) = min(2, 0, 0) = 0
       // Northwest corner (0,res-1): min(lodLevel, west, north) = min(2, 0, 0) = 0
       // Northeast corner (res-1,res-1): min(lodLevel, east, north) = min(2, 0, 0) = 0
@@ -524,7 +524,7 @@ describe(generateChunkMesh.name, () => {
 
     it('should not modify interior vertices', () => {
       const lodLevel = 3;  // 9x9 grid, has interior vertices
-      const neighborLODs: NeighborLODs = { north: 0, south: 0, east: 0, west: 0 };
+      const neighborLODs: NeighborLODs = { north: 0, south: 0, east: 0, west: 0, northeast: 0, northwest: 0, southeast: 0, southwest: 0 };
       
       const meshWithStitching = generateChunkMesh(0, 0, lodLevel, 64, neighborLODs);
       const meshWithoutStitching = generateChunkMesh(0, 0, lodLevel, 64);
@@ -545,7 +545,7 @@ describe(generateChunkMesh.name, () => {
       const lodLevel = 2;  // 7 vertices per edge
       const neighborLOD = 0;  // 2 vertices per edge
       const size = 64;
-      const neighborLODs: NeighborLODs = { north: lodLevel, south: lodLevel, east: lodLevel, west: neighborLOD };
+      const neighborLODs: NeighborLODs = { north: lodLevel, south: lodLevel, east: lodLevel, west: neighborLOD, northeast: lodLevel, northwest: lodLevel, southeast: lodLevel, southwest: lodLevel };
       
       const mesh = generateChunkMesh(0, 0, lodLevel, size, neighborLODs);
       const resolution = getResolutionForLOD(lodLevel);

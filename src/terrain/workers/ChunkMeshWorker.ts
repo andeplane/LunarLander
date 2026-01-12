@@ -14,10 +14,16 @@ const workerSelf = self as unknown as {
 
 // Worker message types - must match types/index.ts
 interface NeighborLODs {
+  // Cardinal neighbors (for edge stitching)
   north: number;
   south: number;
   east: number;
   west: number;
+  // Diagonal neighbors (for corner stitching)
+  northeast: number;
+  northwest: number;
+  southeast: number;
+  southwest: number;
 }
 
 interface ChunkBuildRequest {

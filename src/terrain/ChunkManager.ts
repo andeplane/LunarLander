@@ -410,16 +410,22 @@ export class ChunkManager {
       this.currentLODMap.set(key, 0);
     }
     
-    // Step 3: Collect all affected chunks (new chunks + their existing neighbors)
+    // Step 3: Collect all affected chunks (new chunks + their existing neighbors including diagonals)
     const affectedChunks = new Set<string>();
     for (const { coord, key } of newChunks) {
       affectedChunks.add(key);
-      // Add existing neighbors that need edge updates
+      // Add existing neighbors that need edge/corner updates (cardinal + diagonal)
       const neighbors = [
+        // Cardinal neighbors (share edges)
         { x: coord.x - 1, z: coord.z },
         { x: coord.x + 1, z: coord.z },
         { x: coord.x, z: coord.z - 1 },
         { x: coord.x, z: coord.z + 1 },
+        // Diagonal neighbors (share corners)
+        { x: coord.x - 1, z: coord.z - 1 },
+        { x: coord.x + 1, z: coord.z - 1 },
+        { x: coord.x - 1, z: coord.z + 1 },
+        { x: coord.x + 1, z: coord.z + 1 },
       ];
       for (const nc of neighbors) {
         const nkey = this.getChunkKey(nc);
@@ -485,15 +491,19 @@ export class ChunkManager {
       this.currentLODMap.set(this.getChunkKey(coord), newLOD);
     }
     
-    // Step 3: Collect all affected chunks (changed chunks + their neighbors)
+    // Step 3: Collect all affected chunks (changed chunks + their neighbors including diagonals)
     const affectedChunks = new Set<string>();
     for (const { coord } of lodChanges) {
       affectedChunks.add(this.getChunkKey(coord));
-      // Add all 4 neighbors
+      // Add all 8 neighbors (cardinal + diagonal for corner consistency)
       affectedChunks.add(this.getChunkKey({ x: coord.x - 1, z: coord.z }));
       affectedChunks.add(this.getChunkKey({ x: coord.x + 1, z: coord.z }));
       affectedChunks.add(this.getChunkKey({ x: coord.x, z: coord.z - 1 }));
       affectedChunks.add(this.getChunkKey({ x: coord.x, z: coord.z + 1 }));
+      affectedChunks.add(this.getChunkKey({ x: coord.x - 1, z: coord.z - 1 }));
+      affectedChunks.add(this.getChunkKey({ x: coord.x + 1, z: coord.z - 1 }));
+      affectedChunks.add(this.getChunkKey({ x: coord.x - 1, z: coord.z + 1 }));
+      affectedChunks.add(this.getChunkKey({ x: coord.x + 1, z: coord.z + 1 }));
     }
     
     // Step 4: Build/rebuild all affected chunks synchronously using consistent map
@@ -584,10 +594,16 @@ export class ChunkManager {
     };
 
     return {
-      north: getNeighborLOD(coord.x, coord.z + 1),  // +Z
-      south: getNeighborLOD(coord.x, coord.z - 1),  // -Z
-      east: getNeighborLOD(coord.x + 1, coord.z),   // +X
-      west: getNeighborLOD(coord.x - 1, coord.z),   // -X
+      // Cardinal neighbors (for edge stitching)
+      north: getNeighborLOD(coord.x, coord.z + 1),      // +Z
+      south: getNeighborLOD(coord.x, coord.z - 1),      // -Z
+      east: getNeighborLOD(coord.x + 1, coord.z),       // +X
+      west: getNeighborLOD(coord.x - 1, coord.z),       // -X
+      // Diagonal neighbors (for corner stitching)
+      northeast: getNeighborLOD(coord.x + 1, coord.z + 1),  // +X, +Z
+      northwest: getNeighborLOD(coord.x - 1, coord.z + 1),  // -X, +Z
+      southeast: getNeighborLOD(coord.x + 1, coord.z - 1),  // +X, -Z
+      southwest: getNeighborLOD(coord.x - 1, coord.z - 1),  // -X, -Z
     };
   }
 
