@@ -25,18 +25,37 @@ export interface MeshData {
 }
 
 /**
- * Calculate vertex count for a resolution
+ * Skirt depth in meters - how far down the skirt walls drop
+ */
+const SKIRT_DEPTH = 50;
+
+/**
+ * Calculate vertex count for a resolution (surface only)
  */
 export function calculateVertexCount(resolution: number): number {
   return resolution * resolution;
 }
 
 /**
- * Calculate index count for a resolution
+ * Calculate skirt vertex count - 4 edges, each with resolution vertices
+ */
+export function calculateSkirtVertexCount(resolution: number): number {
+  return 4 * resolution;
+}
+
+/**
+ * Calculate index count for a resolution (surface only)
  */
 export function calculateIndexCount(resolution: number): number {
   const quadCount = (resolution - 1) * (resolution - 1);
   return quadCount * 6;
+}
+
+/**
+ * Calculate skirt index count - 4 edges, each with (resolution-1) segments, 2 triangles each
+ */
+export function calculateSkirtIndexCount(resolution: number): number {
+  return 4 * (resolution - 1) * 6;
 }
 
 /**
@@ -186,8 +205,8 @@ export interface NeighborLODs {
 }
 
 /**
- * Snap an edge vertex to align with a lower-resolution neighbor's edge
- * Returns the interpolated height that matches the neighbor's edge
+ * Snap an edge vertex to align with neighbor's edge (works both directions)
+ * Interpolates height on neighbor's grid to ensure vertices lie on neighbor's surface
  */
 function getStitchedEdgeHeight(
   edgePosition: number,  // Position along edge [0, size]
@@ -199,15 +218,15 @@ function getStitchedEdgeHeight(
   chunkWorldOffsetX: number,
   chunkWorldOffsetZ: number
 ): number {
-  // If neighbor has same or higher LOD, no stitching needed
-  if (neighborLOD >= thisLOD) {
-    // Sample at original position
+  // If neighbor has same LOD, no stitching needed - sample at original position
+  if (neighborLOD === thisLOD) {
     const worldX = isXEdge ? (chunkWorldOffsetX + edgePosition) : edgeWorldCoord;
     const worldZ = isXEdge ? edgeWorldCoord : (chunkWorldOffsetZ + edgePosition);
     return getTerrainHeight(worldX, worldZ, thisLOD);
   }
 
-  // Neighbor has lower LOD - need to stitch
+  // Neighbor has different LOD - interpolate on neighbor's grid
+  // This works for both lower LOD (coarser) and higher LOD (finer) neighbors
   const neighborRes = getResolutionForLOD(neighborLOD);
   const neighborStep = size / (neighborRes - 1);
 
@@ -220,6 +239,7 @@ function getStitchedEdgeHeight(
   const t = (edgePosition - segmentStart) / (segmentEnd - segmentStart);
 
   // Get heights at segment endpoints (using neighbor's LOD for consistency)
+  // This ensures our vertex lies on the neighbor's surface
   let h0: number, h1: number;
   if (isXEdge) {
     h0 = getTerrainHeight(chunkWorldOffsetX + segmentStart, edgeWorldCoord, neighborLOD);
@@ -246,12 +266,17 @@ export function generateChunkMesh(
   neighborLODs?: NeighborLODs
 ): MeshData {
   const resolution = getResolutionForLOD(lodLevel);
-  const vertexCount = calculateVertexCount(resolution);
-  const indexCount = calculateIndexCount(resolution);
+  const surfaceVertexCount = calculateVertexCount(resolution);
+  const skirtVertexCount = calculateSkirtVertexCount(resolution);
+  const totalVertexCount = surfaceVertexCount + skirtVertexCount;
+  
+  const surfaceIndexCount = calculateIndexCount(resolution);
+  const skirtIndexCount = calculateSkirtIndexCount(resolution);
+  const totalIndexCount = surfaceIndexCount + skirtIndexCount;
 
-  const vertices = new Float32Array(vertexCount * 3);
-  const normals = new Float32Array(vertexCount * 3);
-  const indices = new Uint32Array(indexCount);
+  const vertices = new Float32Array(totalVertexCount * 3);
+  const normals = new Float32Array(totalVertexCount * 3);
+  const indices = new Uint32Array(totalIndexCount);
 
   // World position offset for this chunk
   const worldOffsetX = chunkX * size;
@@ -304,32 +329,32 @@ export function generateChunkMesh(
         if (isNorthEdge) cornerLOD = Math.min(cornerLOD, neighbors.north);
         
         height = getTerrainHeight(worldX, worldZ, cornerLOD);
-      } else if (isWestEdge && neighbors.west < lodLevel) {
-        // West edge (non-corner) - stitch along Z axis
+      } else if (isWestEdge && neighbors.west !== lodLevel) {
+        // West edge (non-corner) - stitch to neighbor's LOD (works both directions)
         height = getStitchedEdgeHeight(
           localZ, size, neighbors.west, lodLevel,
           worldX, false, worldOffsetX, worldOffsetZ
         );
-      } else if (isEastEdge && neighbors.east < lodLevel) {
-        // East edge (non-corner) - stitch along Z axis
+      } else if (isEastEdge && neighbors.east !== lodLevel) {
+        // East edge (non-corner) - stitch to neighbor's LOD (works both directions)
         height = getStitchedEdgeHeight(
           localZ, size, neighbors.east, lodLevel,
           worldX, false, worldOffsetX, worldOffsetZ
         );
-      } else if (isSouthEdge && neighbors.south < lodLevel) {
-        // South edge (non-corner) - stitch along X axis
+      } else if (isSouthEdge && neighbors.south !== lodLevel) {
+        // South edge (non-corner) - stitch to neighbor's LOD (works both directions)
         height = getStitchedEdgeHeight(
           localX, size, neighbors.south, lodLevel,
           worldZ, true, worldOffsetX, worldOffsetZ
         );
-      } else if (isNorthEdge && neighbors.north < lodLevel) {
-        // North edge (non-corner) - stitch along X axis
+      } else if (isNorthEdge && neighbors.north !== lodLevel) {
+        // North edge (non-corner) - stitch to neighbor's LOD (works both directions)
         height = getStitchedEdgeHeight(
           localX, size, neighbors.north, lodLevel,
           worldZ, true, worldOffsetX, worldOffsetZ
         );
       } else {
-        // Interior vertex or edge with same/higher LOD neighbor
+        // Interior vertex or edge with same LOD neighbor
         height = getTerrainHeight(worldX, worldZ, lodLevel);
       }
       
@@ -376,6 +401,124 @@ export function generateChunkMesh(
       indices[indexIndex++] = bottomRight;
     }
   }
+
+  // ==========================================
+  // Generate skirt geometry
+  // ==========================================
+  
+  // Skirt vertices start after surface vertices
+  let skirtVertexIndex = surfaceVertexCount;
+  
+  // Helper to add a skirt vertex (dropped version of surface vertex)
+  const addSkirtVertex = (surfaceIdx: number) => {
+    const sx = vertices[surfaceIdx * 3];
+    const sy = vertices[surfaceIdx * 3 + 1] - SKIRT_DEPTH;
+    const sz = vertices[surfaceIdx * 3 + 2];
+    
+    vertices[skirtVertexIndex * 3] = sx;
+    vertices[skirtVertexIndex * 3 + 1] = sy;
+    vertices[skirtVertexIndex * 3 + 2] = sz;
+    
+    // Skirt normals point outward from chunk (will be set per-edge)
+    normals[skirtVertexIndex * 3] = 0;
+    normals[skirtVertexIndex * 3 + 1] = 0;
+    normals[skirtVertexIndex * 3 + 2] = 0;
+    
+    return skirtVertexIndex++;
+  };
+  
+  // Track skirt vertex indices for each edge
+  const southSkirtStart = skirtVertexIndex;
+  // South edge (z = 0): vertices from x=0 to x=resolution-1
+  for (let x = 0; x < resolution; x++) {
+    const surfaceIdx = x; // z=0 row
+    addSkirtVertex(surfaceIdx);
+    // Normal points -Z (south, outward)
+    normals[(skirtVertexIndex - 1) * 3 + 2] = -1;
+  }
+  
+  const northSkirtStart = skirtVertexIndex;
+  // North edge (z = resolution-1): vertices from x=0 to x=resolution-1
+  for (let x = 0; x < resolution; x++) {
+    const surfaceIdx = (resolution - 1) * resolution + x;
+    addSkirtVertex(surfaceIdx);
+    // Normal points +Z (north, outward)
+    normals[(skirtVertexIndex - 1) * 3 + 2] = 1;
+  }
+  
+  const westSkirtStart = skirtVertexIndex;
+  // West edge (x = 0): vertices from z=0 to z=resolution-1
+  for (let z = 0; z < resolution; z++) {
+    const surfaceIdx = z * resolution;
+    addSkirtVertex(surfaceIdx);
+    // Normal points -X (west, outward)
+    normals[(skirtVertexIndex - 1) * 3] = -1;
+  }
+  
+  const eastSkirtStart = skirtVertexIndex;
+  // East edge (x = resolution-1): vertices from z=0 to z=resolution-1
+  for (let z = 0; z < resolution; z++) {
+    const surfaceIdx = z * resolution + (resolution - 1);
+    addSkirtVertex(surfaceIdx);
+    // Normal points +X (east, outward)
+    normals[(skirtVertexIndex - 1) * 3] = 1;
+  }
+
+  // ==========================================
+  // Generate skirt indices (triangles)
+  // ==========================================
+  
+  // Helper to add skirt triangles for an edge
+  // surfaceStart: first surface vertex index for this edge
+  // skirtStart: first skirt vertex index for this edge
+  // count: number of vertices along edge
+  // flip: whether to flip triangle winding (for consistent face orientation)
+  const addSkirtIndices = (
+    surfaceStart: number,
+    skirtStart: number,
+    count: number,
+    surfaceStride: number,
+    flip: boolean
+  ) => {
+    for (let i = 0; i < count - 1; i++) {
+      const s0 = surfaceStart + i * surfaceStride;      // surface vertex i
+      const s1 = surfaceStart + (i + 1) * surfaceStride; // surface vertex i+1
+      const k0 = skirtStart + i;                         // skirt vertex i
+      const k1 = skirtStart + i + 1;                     // skirt vertex i+1
+      
+      if (flip) {
+        // Triangle 1: s0, k0, s1
+        indices[indexIndex++] = s0;
+        indices[indexIndex++] = k0;
+        indices[indexIndex++] = s1;
+        // Triangle 2: s1, k0, k1
+        indices[indexIndex++] = s1;
+        indices[indexIndex++] = k0;
+        indices[indexIndex++] = k1;
+      } else {
+        // Triangle 1: s0, s1, k0
+        indices[indexIndex++] = s0;
+        indices[indexIndex++] = s1;
+        indices[indexIndex++] = k0;
+        // Triangle 2: s1, k1, k0
+        indices[indexIndex++] = s1;
+        indices[indexIndex++] = k1;
+        indices[indexIndex++] = k0;
+      }
+    }
+  };
+  
+  // South edge: surface vertices at z=0 (indices 0 to resolution-1), stride 1
+  addSkirtIndices(0, southSkirtStart, resolution, 1, true);
+  
+  // North edge: surface vertices at z=resolution-1 (indices (res-1)*res to res*res-1), stride 1
+  addSkirtIndices((resolution - 1) * resolution, northSkirtStart, resolution, 1, false);
+  
+  // West edge: surface vertices at x=0 (indices 0, res, 2*res, ...), stride resolution
+  addSkirtIndices(0, westSkirtStart, resolution, resolution, false);
+  
+  // East edge: surface vertices at x=resolution-1 (indices res-1, 2*res-1, ...), stride resolution
+  addSkirtIndices(resolution - 1, eastSkirtStart, resolution, resolution, true);
 
   return { vertices, normals, indices };
 }

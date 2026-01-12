@@ -35,6 +35,10 @@ export class ChunkManager {
   private edgeRebuildQueue: Array<{ coord: ChunkCoord; lodLevel: number }> = [];
   private pendingEdgeRebuilds: Set<string> = new Set();
 
+  // Target LODs - computed each frame before dispatching builds
+  // Used to ensure all chunks know what their neighbors WILL BE, not what they currently are
+  private targetLODs: Map<string, number> = new Map();
+
   // Frustum culling
   private readonly frustum = new THREE.Frustum();
   private readonly frustumMatrix = new THREE.Matrix4();
@@ -89,6 +93,10 @@ export class ChunkManager {
     // Calculate effective view distance based on altitude
     const effectiveViewDistance = this.calculateEffectiveViewDistance(cameraPosition.y);
 
+    // Compute target LODs for all chunks FIRST, before any build dispatching
+    // This ensures all chunks know what their neighbors WILL BE, not what they currently are
+    this.computeAllTargetLODs(cameraPosition, camera);
+
     // Determine which chunks should be loaded (frustum culled + altitude scaled)
     const chunksToLoad = this.getChunksToLoad(currentChunk, effectiveViewDistance);
 
@@ -131,6 +139,31 @@ export class ChunkManager {
     const baseViewDistance = this.config.viewDistance;
     const altitudeMultiplier = Math.max(1, altitude * (this.config.altitudeScale || 0.01));
     return baseViewDistance * altitudeMultiplier;
+  }
+
+  /**
+   * Compute target LODs for all chunks before dispatching any builds
+   * This ensures all chunks know what their neighbors WILL BE, not what they currently are
+   */
+  private computeAllTargetLODs(cameraPosition: THREE.Vector3, camera: THREE.PerspectiveCamera): void {
+    this.targetLODs.clear();
+    
+    // Compute for all active chunks
+    for (const [key, chunk] of this.activeChunks) {
+      const screenSize = this.calculateScreenSpaceSize(chunk.coord, cameraPosition, camera);
+      const targetLOD = getTargetLODForScreenSize(screenSize);
+      this.targetLODs.set(key, targetLOD);
+    }
+    
+    // Also compute for chunks in build queue (not yet active)
+    for (const coord of this.buildQueue) {
+      const key = this.getChunkKey(coord);
+      if (!this.targetLODs.has(key)) {
+        const screenSize = this.calculateScreenSpaceSize(coord, cameraPosition, camera);
+        const targetLOD = getTargetLODForScreenSize(screenSize);
+        this.targetLODs.set(key, targetLOD);
+      }
+    }
   }
 
   /**
@@ -558,21 +591,20 @@ export class ChunkManager {
 
   /**
    * Get LOD levels of neighboring chunks for edge stitching
-   * Returns -1 for neighbors that don't exist (treated as same LOD in mesh generation)
+   * Uses TARGET LODs (computed upfront) so chunks know what neighbors WILL BE
    */
   public getNeighborLODs(coord: ChunkCoord, targetLOD: number): NeighborLODs {
     const getNeighborLOD = (nx: number, nz: number): number => {
       const neighborKey = this.getChunkKey({ x: nx, z: nz });
-      const neighbor = this.activeChunks.get(neighborKey);
       
-      if (!neighbor || neighbor.state !== 'active') {
-        // Neighbor doesn't exist or isn't ready - use same LOD (no stitching needed)
-        return targetLOD;
+      // Use target LOD if available (preferred - tells us what neighbor WILL BE)
+      const target = this.targetLODs.get(neighborKey);
+      if (target !== undefined) {
+        return target;
       }
       
-      // Return the highest LOD the neighbor has generated
-      // This ensures we stitch to what the neighbor actually has
-      return neighbor.getHighestGeneratedLOD();
+      // Fallback: neighbor not in view, use same LOD as this chunk
+      return targetLOD;
     };
 
     return {

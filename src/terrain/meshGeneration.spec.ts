@@ -222,18 +222,24 @@ describe(generateChunkMesh.name, () => {
   describe('array sizes', () => {
     it('should generate correct sizes for LOD 0', () => {
       const mesh = generateChunkMesh(0, 0, 0, 64);
-      
-      expect(mesh.vertices.length).toBe(4 * 3);  // 4 vertices * 3 components
-      expect(mesh.normals.length).toBe(4 * 3);
-      expect(mesh.indices.length).toBe(6);       // 2 triangles * 3 indices
+      // LOD 0: resolution = 2
+      // Surface: 4 vertices, 6 indices
+      // Skirts: 4 edges * 2 verts = 8 verts, 4 edges * 1 segment * 6 = 24 indices
+      // Total: 12 verts * 3 = 36, 30 indices
+      expect(mesh.vertices.length).toBe(12 * 3);
+      expect(mesh.normals.length).toBe(12 * 3);
+      expect(mesh.indices.length).toBe(30);
     });
 
     it('should generate correct sizes for LOD 4', () => {
       const mesh = generateChunkMesh(0, 0, 4, 64);
-      
-      expect(mesh.vertices.length).toBe(289 * 3);
-      expect(mesh.normals.length).toBe(289 * 3);
-      expect(mesh.indices.length).toBe(1536);
+      // LOD 4: resolution = 17
+      // Surface: 289 vertices, 1536 indices
+      // Skirts: 4 edges * 17 verts = 68 verts, 4 edges * 16 segments * 6 = 384 indices
+      // Total: 357 verts * 3 = 1071, 1920 indices
+      expect(mesh.vertices.length).toBe(357 * 3);
+      expect(mesh.normals.length).toBe(357 * 3);
+      expect(mesh.indices.length).toBe(1920);
     });
   });
 
@@ -310,10 +316,13 @@ describe(generateChunkMesh.name, () => {
   });
 
   describe('normals', () => {
-    it('should be normalized unit vectors', () => {
+    it('should be normalized unit vectors (surface vertices)', () => {
       const mesh = generateChunkMesh(0, 0, 2, 64);
+      const resolution = getResolutionForLOD(2);
+      const surfaceVertexCount = resolution * resolution;
       
-      for (let i = 0; i < mesh.normals.length; i += 3) {
+      // Only check surface vertices (skirt normals point horizontally)
+      for (let i = 0; i < surfaceVertexCount * 3; i += 3) {
         const nx = mesh.normals[i];
         const ny = mesh.normals[i + 1];
         const nz = mesh.normals[i + 2];
@@ -324,10 +333,13 @@ describe(generateChunkMesh.name, () => {
       }
     });
 
-    it('should have positive Y component (pointing generally up)', () => {
+    it('should have positive Y component (pointing generally up) for surface vertices', () => {
       const mesh = generateChunkMesh(0, 0, 2, 64);
+      const resolution = getResolutionForLOD(2);
+      const surfaceVertexCount = resolution * resolution;
       
-      for (let i = 0; i < mesh.normals.length; i += 3) {
+      // Only check surface vertices (skirt normals have Y=0)
+      for (let i = 0; i < surfaceVertexCount * 3; i += 3) {
         const ny = mesh.normals[i + 1];
         // Normals should point generally upward (Y > 0)
         // Even steep terrain shouldn't have normals pointing down
@@ -409,14 +421,19 @@ describe(generateChunkMesh.name, () => {
       expect(meshWithStitching.vertices).toEqual(meshWithoutStitching.vertices);
     });
 
-    it('should not modify edge heights when neighbor has higher LOD', () => {
+    it('should modify edge heights when neighbor has higher LOD (bidirectional stitching)', () => {
       const lodLevel = 2;
       const neighborLODs: NeighborLODs = { north: 4, south: 4, east: 4, west: 4 };
       
       const meshWithStitching = generateChunkMesh(0, 0, lodLevel, 64, neighborLODs);
       const meshWithoutStitching = generateChunkMesh(0, 0, lodLevel, 64);
       
-      expect(meshWithStitching.vertices).toEqual(meshWithoutStitching.vertices);
+      const resolution = getResolutionForLOD(lodLevel);
+      
+      // All edges should be different (stitched to higher LOD neighbors)
+      const stitchedWest = getEdgeHeights(meshWithStitching, resolution, 'west');
+      const originalWest = getEdgeHeights(meshWithoutStitching, resolution, 'west');
+      expect(stitchedWest).not.toEqual(originalWest);
     });
 
     it('should modify west edge heights when west neighbor has lower LOD', () => {
