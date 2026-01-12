@@ -3,6 +3,7 @@ import type { ChunkCoord, ChunkConfig, NeighborLODs } from '../types';
 import { getTargetLODForScreenSize, LOD_LEVELS } from '../types';
 import { Chunk } from './Chunk';
 import { ChunkBuilder } from './ChunkBuilder';
+import { generateChunkMesh } from './meshGeneration';
 
 /**
  * LOD upgrade request in the queue
@@ -28,13 +29,6 @@ export class ChunkManager {
   private buildQueue: ChunkCoord[] = [];
   private lodUpgradeQueue: LODUpgradeRequest[] = [];
   private chunkBuilder: ChunkBuilder;
-  private pendingBuilds: Set<string> = new Set();
-  private pendingLODUpgrades: Set<string> = new Set();
-  
-  // Edge rebuild queue - for updating neighbor edges when LOD changes
-  private edgeRebuildQueue: Array<{ coord: ChunkCoord; lodLevel: number }> = [];
-  private pendingEdgeRebuilds: Set<string> = new Set();
-
   // Current LOD map - tracks what each chunk is ACTUALLY rendering
   // This is the single source of truth for neighbor LOD lookups
   private currentLODMap: Map<string, number> = new Map();
@@ -112,14 +106,11 @@ export class ChunkManager {
     // Sort build queue by priority (screen-space + direction-aware)
     this.sortBuildQueue(cameraPosition, camera);
 
-    // Process build queue (new chunks at LOD 0)
+    // Process build queue (new chunks at LOD 0) - atomic updates
     this.processBuildQueue();
 
-    // Process LOD upgrade queue
+    // Process LOD upgrade queue - atomic updates
     this.processLODUpgradeQueue();
-
-    // Process edge rebuild queue (neighbor edges after LOD changes)
-    this.processEdgeRebuildQueue();
 
     // Unload distant chunks (using effective view distance)
     // DEBUG: Don't unload chunks in debug mode
@@ -298,15 +289,15 @@ export class ChunkManager {
   }
 
   /**
-   * Queue new chunks that aren't already active or building
+   * Queue new chunks that aren't already active
    * New chunks always start at LOD 0 (lowest detail)
    */
   private queueNewChunks(chunksToLoad: ChunkCoord[], cameraPosition: THREE.Vector3, camera: THREE.PerspectiveCamera): void {
     for (const coord of chunksToLoad) {
       const key = this.getChunkKey(coord);
 
-      // Skip if already active or pending
-      if (this.activeChunks.has(key) || this.pendingBuilds.has(key)) {
+      // Skip if already active
+      if (this.activeChunks.has(key)) {
         continue;
       }
 
@@ -332,7 +323,7 @@ export class ChunkManager {
    * Queue LOD upgrades for chunks that need higher detail
    */
   private updateChunkLODs(cameraPosition: THREE.Vector3, camera: THREE.PerspectiveCamera): void {
-    for (const [key, chunk] of this.activeChunks) {
+    for (const [_key, chunk] of this.activeChunks) {
       if (chunk.state !== 'active') continue;
 
       // Calculate screen-space size
@@ -340,17 +331,6 @@ export class ChunkManager {
 
       // Determine target LOD based on screen size
       const targetLOD = getTargetLODForScreenSize(screenSize);
-
-      // Get best available LOD for rendering
-      const bestAvailableLOD = chunk.getBestAvailableLOD(targetLOD);
-      const currentLOD = chunk.getCurrentRenderingLOD();
-      if (bestAvailableLOD >= 0 && bestAvailableLOD !== currentLOD) {
-        chunk.switchToLOD(bestAvailableLOD);
-        // Queue THIS chunk for edge rebuild (its cached mesh may have stale neighbor info)
-        this.queueEdgeRebuild(chunk.coord, bestAvailableLOD);
-        // Queue neighbor edge rebuilds since our LOD changed
-        this.queueNeighborRebuilds(chunk.coord);
-      }
 
       // Check if we need to generate a higher LOD
       // Use progressive upgrades: go one level at a time (0→1→2→3→4)
@@ -361,24 +341,20 @@ export class ChunkManager {
         const maxLOD = LOD_LEVELS.length - 1;
         
         if (nextLOD <= maxLOD) {
-          // Queue upgrade to next LOD level (not target)
-          const upgradeKey = `${key}:${nextLOD}`;
-          if (!this.pendingLODUpgrades.has(upgradeKey)) {
-            // Check if already in queue
-            const alreadyQueued = this.lodUpgradeQueue.some(
-              req => req.coord.x === chunk.coord.x && 
-                     req.coord.z === chunk.coord.z && 
-                     req.targetLOD === nextLOD
-            );
-            
-            if (!alreadyQueued) {
-              const priority = this.calculateLODUpgradePriority(chunk.coord, cameraPosition);
-              this.lodUpgradeQueue.push({
-                coord: chunk.coord,
-                targetLOD: nextLOD,
-                priority
-              });
-            }
+          // Check if already in queue
+          const alreadyQueued = this.lodUpgradeQueue.some(
+            req => req.coord.x === chunk.coord.x && 
+                   req.coord.z === chunk.coord.z && 
+                   req.targetLOD === nextLOD
+          );
+          
+          if (!alreadyQueued) {
+            const priority = this.calculateLODUpgradePriority(chunk.coord, cameraPosition);
+            this.lodUpgradeQueue.push({
+              coord: chunk.coord,
+              targetLOD: nextLOD,
+              priority
+            });
           }
         }
       }
@@ -400,142 +376,148 @@ export class ChunkManager {
   }
 
   /**
-   * Process build queue for new chunks (always builds LOD 0)
+   * Process build queue for new chunks atomically:
+   * 1. Collect new chunks to build (within budget)
+   * 2. Create chunk objects and update LODMap for ALL
+   * 3. Build all meshes using consistent map
+   * 4. Add to scene
    */
   private processBuildQueue(): void {
     const budget = this.config.buildBudget;
-    let built = 0;
-
-    while (this.buildQueue.length > 0 && built < budget) {
+    
+    // Step 1: Collect new chunks to build (within budget)
+    const newChunks: Array<{coord: ChunkCoord, chunk: Chunk, key: string}> = [];
+    
+    while (this.buildQueue.length > 0 && newChunks.length < budget) {
       const coord = this.buildQueue.shift()!;
       const key = this.getChunkKey(coord);
-
-      // Double-check not already building
-      if (this.pendingBuilds.has(key)) {
-        continue;
-      }
-
-      // Create chunk and mark as building
+      
+      // Skip if already exists
+      if (this.activeChunks.has(key)) continue;
+      
+      // Create chunk object
       const chunk = new Chunk(coord);
       chunk.state = 'building';
       this.activeChunks.set(key, chunk);
-      this.pendingBuilds.add(key);
-
-      // Get neighbor LODs for edge stitching
-      const neighborLODs = this.getNeighborLODs(coord, 0);
-
-      // Request mesh from worker at LOD 0 (lowest detail first)
-      this.chunkBuilder.buildChunk(
-        coord,
-        0, // Start with LOD 0
-        this.config.size,
-        neighborLODs,
-        (resultCoord, lodLevel, vertices, normals, indices) => {
-          this.onChunkBuilt(resultCoord, lodLevel, vertices, normals, indices);
+      
+      newChunks.push({ coord, chunk, key });
+    }
+    
+    if (newChunks.length === 0) return;
+    
+    // Step 2: Update currentLODMap for ALL new chunks FIRST (all start at LOD 0)
+    for (const { key } of newChunks) {
+      this.currentLODMap.set(key, 0);
+    }
+    
+    // Step 3: Collect all affected chunks (new chunks + their existing neighbors)
+    const affectedChunks = new Set<string>();
+    for (const { coord, key } of newChunks) {
+      affectedChunks.add(key);
+      // Add existing neighbors that need edge updates
+      const neighbors = [
+        { x: coord.x - 1, z: coord.z },
+        { x: coord.x + 1, z: coord.z },
+        { x: coord.x, z: coord.z - 1 },
+        { x: coord.x, z: coord.z + 1 },
+      ];
+      for (const nc of neighbors) {
+        const nkey = this.getChunkKey(nc);
+        if (this.activeChunks.has(nkey) && this.activeChunks.get(nkey)!.state === 'active') {
+          affectedChunks.add(nkey);
         }
+      }
+    }
+    
+    // Step 4: Build all affected chunks synchronously
+    for (const key of affectedChunks) {
+      const chunk = this.activeChunks.get(key);
+      if (!chunk) continue;
+      
+      const lod = this.currentLODMap.get(key);
+      if (lod === undefined || lod < 0) continue;
+      
+      const neighborLODs = this.getNeighborLODs(chunk.coord, lod);
+      const meshData = generateChunkMesh(
+        chunk.coord.x, chunk.coord.z, lod, this.config.size, neighborLODs
       );
-
-      built++;
+      
+      const isNewChunk = chunk.state === 'building';
+      
+      if (isNewChunk) {
+        // New chunk - add LOD data and add to scene
+        chunk.addLODFromData(lod, meshData.vertices, meshData.normals, meshData.indices, this.config.debugMeshes);
+        chunk.addToScene(this.scene);
+      } else {
+        // Existing neighbor - replace mesh
+        chunk.replaceLODMesh(lod, meshData.vertices, meshData.normals, meshData.indices, this.config.debugMeshes);
+      }
     }
   }
 
   /**
-   * Process LOD upgrade queue
+   * Process LOD upgrades atomically:
+   * 1. Collect all LOD changes for this frame
+   * 2. Update currentLODMap for ALL of them upfront
+   * 3. Build all affected meshes using consistent map
    */
   private processLODUpgradeQueue(): void {
     const budget = this.config.lodUpgradeBudget || 2;
-    let upgraded = 0;
-
-    while (this.lodUpgradeQueue.length > 0 && upgraded < budget) {
+    
+    // Step 1: Collect LOD changes from queue (within budget)
+    const lodChanges: Array<{coord: ChunkCoord, chunk: Chunk, newLOD: number}> = [];
+    
+    while (this.lodUpgradeQueue.length > 0 && lodChanges.length < budget) {
       const request = this.lodUpgradeQueue.shift()!;
       const key = this.getChunkKey(request.coord);
-      const upgradeKey = `${key}:${request.targetLOD}`;
-
-      // Skip if already pending
-      if (this.pendingLODUpgrades.has(upgradeKey)) {
-        continue;
-      }
-
       const chunk = this.activeChunks.get(key);
-      if (!chunk || chunk.state !== 'active') {
-        continue;
-      }
-
-      // Skip if chunk already has this LOD
-      if (chunk.hasLOD(request.targetLOD)) {
-        continue;
-      }
-
-      // Mark as pending
-      this.pendingLODUpgrades.add(upgradeKey);
-
-      // Get neighbor LODs for edge stitching
-      const neighborLODs = this.getNeighborLODs(request.coord, request.targetLOD);
-
-      // Request higher LOD from worker
-      this.chunkBuilder.buildChunk(
-        request.coord,
-        request.targetLOD,
-        this.config.size,
-        neighborLODs,
-        (resultCoord, lodLevel, vertices, normals, indices) => {
-          this.onChunkBuilt(resultCoord, lodLevel, vertices, normals, indices);
-        }
+      
+      if (!chunk || chunk.state !== 'active') continue;
+      if (chunk.hasLOD(request.targetLOD)) continue;
+      
+      lodChanges.push({ coord: request.coord, chunk, newLOD: request.targetLOD });
+    }
+    
+    if (lodChanges.length === 0) return;
+    
+    // Step 2: Update currentLODMap for ALL changes FIRST
+    for (const { coord, newLOD } of lodChanges) {
+      this.currentLODMap.set(this.getChunkKey(coord), newLOD);
+    }
+    
+    // Step 3: Collect all affected chunks (changed chunks + their neighbors)
+    const affectedChunks = new Set<string>();
+    for (const { coord } of lodChanges) {
+      affectedChunks.add(this.getChunkKey(coord));
+      // Add all 4 neighbors
+      affectedChunks.add(this.getChunkKey({ x: coord.x - 1, z: coord.z }));
+      affectedChunks.add(this.getChunkKey({ x: coord.x + 1, z: coord.z }));
+      affectedChunks.add(this.getChunkKey({ x: coord.x, z: coord.z - 1 }));
+      affectedChunks.add(this.getChunkKey({ x: coord.x, z: coord.z + 1 }));
+    }
+    
+    // Step 4: Build/rebuild all affected chunks synchronously using consistent map
+    for (const key of affectedChunks) {
+      const chunk = this.activeChunks.get(key);
+      if (!chunk || chunk.state !== 'active') continue;
+      
+      const lod = this.currentLODMap.get(key);
+      if (lod === undefined || lod < 0) continue;
+      
+      // Generate mesh with consistent neighbor LODs
+      const neighborLODs = this.getNeighborLODs(chunk.coord, lod);
+      const meshData = generateChunkMesh(
+        chunk.coord.x, chunk.coord.z, lod, this.config.size, neighborLODs
       );
-
-      upgraded++;
+      
+      // Add or replace the LOD mesh
+      if (chunk.hasLOD(lod)) {
+        chunk.replaceLODMesh(lod, meshData.vertices, meshData.normals, meshData.indices, this.config.debugMeshes);
+      } else {
+        chunk.addLODFromData(lod, meshData.vertices, meshData.normals, meshData.indices, this.config.debugMeshes);
+      }
     }
   }
-
-  /**
-   * Callback when chunk mesh is built by worker
-   */
-  private onChunkBuilt(
-    coord: ChunkCoord,
-    lodLevel: number,
-    vertices: Float32Array,
-    normals: Float32Array,
-    indices: Uint32Array
-  ): void {
-    const key = this.getChunkKey(coord);
-    const chunk = this.activeChunks.get(key);
-
-    // Clear pending status
-    this.pendingBuilds.delete(key);
-    this.pendingLODUpgrades.delete(`${key}:${lodLevel}`);
-
-    if (!chunk) {
-      // Chunk was unloaded while building
-      return;
-    }
-
-    // Check if this is the first LOD (chunk just created) BEFORE adding data
-    const isFirstLOD = lodLevel === 0 && chunk.state === 'building';
-
-    // Track previous LOD to detect changes
-    const previousLOD = this.currentLODMap.get(key) ?? -1;
-
-    // Add LOD mesh data to chunk
-    chunk.addLODFromData(lodLevel, vertices, normals, indices, this.config.debugMeshes);
-
-    // If this is the first LOD, add to scene
-    if (isFirstLOD) {
-      chunk.addToScene(this.scene);
-    }
-
-    // Update currentLODMap with the chunk's actual rendered LOD
-    const newLOD = chunk.currentLOD;
-    if (newLOD >= 0) {
-      this.currentLODMap.set(key, newLOD);
-    }
-
-    // Queue neighbor rebuilds if LOD actually changed
-    // This ensures edge consistency when chunks are built or upgrade LOD
-    if (newLOD !== previousLOD) {
-      this.queueNeighborRebuilds(coord);
-    }
-  }
-
 
   /**
    * Unload chunks that are too far from camera (using effective view distance)
@@ -552,15 +534,14 @@ export class ChunkManager {
         chunk.removeFromScene(this.scene);
         chunk.dispose();
         this.activeChunks.delete(key);
-        this.pendingBuilds.delete(key);
         
         // Remove from currentLODMap
         this.currentLODMap.delete(key);
         
-        // Clear any pending LOD upgrades for this chunk
-        for (let lod = 0; lod < LOD_LEVELS.length; lod++) {
-          this.pendingLODUpgrades.delete(`${key}:${lod}`);
-        }
+        // Remove from LOD upgrade queue
+        this.lodUpgradeQueue = this.lodUpgradeQueue.filter(
+          req => req.coord.x !== chunk.coord.x || req.coord.z !== chunk.coord.z
+        );
       }
     }
   }
@@ -611,99 +592,6 @@ export class ChunkManager {
   }
 
   /**
-   * Queue all 4 neighbors for edge rebuild
-   * Called when a chunk finishes building to ensure neighbor edges are consistent
-   */
-  private queueNeighborRebuilds(coord: ChunkCoord): void {
-    const neighbors = [
-      { x: coord.x - 1, z: coord.z },  // west
-      { x: coord.x + 1, z: coord.z },  // east
-      { x: coord.x, z: coord.z - 1 },  // south
-      { x: coord.x, z: coord.z + 1 },  // north
-    ];
-
-    for (const neighborCoord of neighbors) {
-      const key = this.getChunkKey(neighborCoord);
-      const neighbor = this.activeChunks.get(key);
-      
-      if (neighbor && neighbor.state === 'active') {
-        // Use CURRENT RENDERING LOD, not highest generated!
-        const renderingLOD = neighbor.currentLOD;
-        if (renderingLOD >= 0) {
-          this.queueEdgeRebuild(neighborCoord, renderingLOD);
-        }
-      }
-    }
-  }
-
-  /**
-   * Queue a single chunk for edge rebuild at its current LOD
-   */
-  private queueEdgeRebuild(coord: ChunkCoord, lodLevel: number): void {
-    const key = `${this.getChunkKey(coord)}:${lodLevel}`;
-    if (!this.pendingEdgeRebuilds.has(key)) {
-      this.pendingEdgeRebuilds.add(key);
-      this.edgeRebuildQueue.push({ coord, lodLevel });
-    }
-  }
-
-  /**
-   * Process edge rebuild queue with budget-limited processing
-   */
-  private processEdgeRebuildQueue(): void {
-    const budget = 2;  // Process a few per frame
-    let processed = 0;
-
-
-    while (this.edgeRebuildQueue.length > 0 && processed < budget) {
-      const { coord, lodLevel } = this.edgeRebuildQueue.shift()!;
-      const key = `${this.getChunkKey(coord)}:${lodLevel}`;
-      this.pendingEdgeRebuilds.delete(key);
-
-      const chunk = this.activeChunks.get(this.getChunkKey(coord));
-      if (!chunk || chunk.state !== 'active') continue;
-
-      // Skip if chunk no longer has this LOD (might have been disposed/rebuilt)
-      if (!chunk.hasLOD(lodLevel)) continue;
-
-      // Request rebuild with fresh neighborLODs
-      const neighborLODs = this.getNeighborLODs(coord, lodLevel);
-      this.chunkBuilder.buildChunk(
-        coord,
-        lodLevel,
-        this.config.size,
-        neighborLODs,
-        (resultCoord, resultLOD, vertices, normals, indices) => {
-          this.onEdgeRebuildComplete(resultCoord, resultLOD, vertices, normals, indices);
-        }
-      );
-      processed++;
-    }
-  }
-
-  /**
-   * Callback when edge rebuild is complete
-   * Does NOT trigger further neighbor rebuilds (prevents infinite loops)
-   */
-  private onEdgeRebuildComplete(
-    coord: ChunkCoord,
-    lodLevel: number,
-    vertices: Float32Array,
-    normals: Float32Array,
-    indices: Uint32Array
-  ): void {
-    const key = this.getChunkKey(coord);
-    const chunk = this.activeChunks.get(key);
-    
-    if (!chunk || chunk.state !== 'active') {
-      return;
-    }
-
-    // Replace the LOD mesh data with the new edge-corrected version
-    chunk.replaceLODMesh(lodLevel, vertices, normals, indices, this.config.debugMeshes);
-  }
-
-  /**
    * Get active chunk count
    */
   getActiveChunkCount(): number {
@@ -711,10 +599,10 @@ export class ChunkManager {
   }
 
   /**
-   * Get pending build count
+   * Get pending build count (items in build queue)
    */
   getPendingBuildCount(): number {
-    return this.pendingBuilds.size;
+    return this.buildQueue.length;
   }
 
   /**
@@ -763,10 +651,9 @@ export class ChunkManager {
       chunk.dispose();
     }
     this.activeChunks.clear();
+    this.currentLODMap.clear();
     this.buildQueue = [];
     this.lodUpgradeQueue = [];
-    this.pendingBuilds.clear();
-    this.pendingLODUpgrades.clear();
     this.chunkBuilder.dispose();
   }
 }
