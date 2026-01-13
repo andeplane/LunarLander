@@ -4,21 +4,13 @@ import { Engine } from './core/Engine';
 import { InputManager } from './core/InputManager';
 import { FlightController } from './camera/FlightController';
 import { Skybox } from './environment/Skybox';
-import { ChunkManager } from './terrain/ChunkManager';
-import type { CameraConfig, ChunkConfig } from './types';
+import { TerrainManager, TerrainConfig } from './terrain/TerrainManager';
+import type { CameraConfig } from './types';
 
 /**
  * Main entry point for Lunar Explorer
  * Initializes the Three.js scene and starts the render loop
  */
-
-// Parse URL parameters
-const urlParams = new URLSearchParams(window.location.search);
-const debugMeshes = urlParams.get('debugMeshes') === 'true';
-
-if (debugMeshes) {
-  console.log('Debug mode enabled: Chunk meshes will show colored triangles');
-}
 
 // Get canvas element
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -43,17 +35,12 @@ const cameraConfig: CameraConfig = {
   mouseSensitivity: 0.002
 };
 
-// Chunk configuration (with progressive LOD system)
-const chunkConfig: ChunkConfig = {
-  size: 64,             // 64m per chunk
-  viewDistance: 50,      // Base chunks to load in each direction
-  buildBudget: 3,       // Max new chunks to build per frame
-  lodUpgradeBudget: 4,  // Max LOD upgrades per frame
-  disposeBuffer: 2,     // Extra chunks before disposal
-  debugMeshes,          // Use URL param for debug visualization
-  minScreenSize: 10,    // Minimum pixels on screen to load chunk
-  altitudeScale: 0.005, // How much altitude affects view distance (reduced for performance)
-  frustumMargin: 1.2    // Margin for frustum culling
+// Terrain configuration
+const terrainConfig: TerrainConfig = {
+  renderDistance: 5,    // Chunks to load in each direction
+  resolution: 128,      // Vertices per chunk edge
+  chunkWidth: 10,       // World units per chunk
+  chunkDepth: 10,       // World units per chunk
 };
 
 // Initialize flight controller
@@ -64,15 +51,18 @@ const flightController = new FlightController(
 );
 engine.setFlightController(flightController);
 
-// Initialize chunk manager
-const chunkManager = new ChunkManager(chunkConfig, engine.getScene());
-engine.setChunkManager(chunkManager);
+// Initialize terrain manager
+const terrainManager = new TerrainManager(engine.getScene(), terrainConfig);
+engine.setTerrainManager(terrainManager);
 
-// Set input manager in engine for debug toggle handling
+// Set input manager in engine
 engine.setInputManager(inputManager);
 
 // Set initial camera position above terrain
-engine.getCamera().position.set(0, 100, 0);
+engine.getCamera().position.set(-3, 4, 8);
+engine.getCamera().rotation.x -= 0.4;
+engine.getCamera().rotation.y -= 0.2;
+engine.getCamera().rotation.z -= 0.06;
 
 // Set up click to enable pointer lock
 canvas.addEventListener('click', () => {
@@ -91,6 +81,9 @@ engine.getScene().add(sunLight);
 // Subtle ambient light
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
 engine.getScene().add(ambientLight);
+
+// Add fog for depth
+engine.getScene().fog = new THREE.Fog(0xd3dde2, 4, terrainConfig.renderDistance * terrainConfig.chunkWidth - 2);
 
 // Start the render loop
 engine.start();
@@ -111,7 +104,3 @@ console.log('  Shift - Hold for speed boost (3x faster)');
 console.log('  Mouse - Look around');
 console.log('  Scroll - Adjust speed');
 console.log('  Escape - Release mouse');
-console.log('  O - Toggle debug meshes');
-console.log('');
-console.log('URL Parameters:');
-console.log('  ?debugMeshes=true - Show colored triangles for each chunk');

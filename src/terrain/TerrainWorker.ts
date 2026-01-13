@@ -1,0 +1,19 @@
+import { generateTerrain } from './terrain';
+
+self.onmessage = (m) => {
+    const geometry = generateTerrain(m.data.terrainArgs);
+
+    // Extract attributes into transferable objects
+    const index = geometry.index?.array; // keep full TypedArray, not just buffer
+
+    postMessage(
+      {
+          positions: geometry.attributes.position.array,
+          normals: geometry.attributes.normal.array,
+          uvs: geometry.attributes.uv?.array,
+          biome: geometry.attributes.biome?.array,
+          index,
+          gridKey: m.data.gridKey,
+      },
+    );
+};
