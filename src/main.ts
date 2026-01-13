@@ -6,6 +6,7 @@ import { FlightController } from './camera/FlightController';
 import { Skybox } from './environment/Skybox';
 import { TerrainManager, TerrainConfig } from './terrain/TerrainManager';
 import { LodDetailLevel } from './terrain/LodUtils';
+import { ShaderUIController } from './ui/ShaderUIController';
 import type { CameraConfig } from './types';
 
 /**
@@ -58,6 +59,9 @@ const terrainManager = new TerrainManager(engine.getScene(), terrainConfig);
 terrainManager.setCamera(engine.getCamera());
 engine.setTerrainManager(terrainManager);
 
+// Initialize shader UI controller
+const shaderUI = new ShaderUIController(terrainManager.getMaterial());
+
 // Set input manager in engine
 engine.setInputManager(inputManager);
 
@@ -93,6 +97,7 @@ engine.start();
 
 // Handle cleanup on page unload
 window.addEventListener('beforeunload', () => {
+  shaderUI.dispose();
   skybox.dispose();
   engine.dispose();
 });

@@ -650,6 +650,13 @@ export class TerrainManager {
   }
 
   /**
+   * Get the material instance (for UI control)
+   */
+  getMaterial(): MoonMaterial {
+    return this.material;
+  }
+
+  /**
    * Debug: Log distance and LOD information for all chunks
    * Helps identify distance calculation problems causing inconsistent LODs
    */

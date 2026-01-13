@@ -2,6 +2,46 @@ import { MeshStandardMaterial, Color } from 'three';
 import { glslCommon } from './glsl_common';
 
 /**
+ * Shader parameters interface for MoonMaterial
+ */
+export interface MoonMaterialParams {
+  // Toggles
+  enableCraters: boolean;
+  enableNoise: boolean;
+  enableBumpMapping: boolean;
+  enableColorVariation: boolean;
+
+  // Base parameters
+  scale: number; // Crater density (lower = larger craters)
+  distortion: number; // Crater "wobble" (0 = perfect circles)
+  bumpStrength: number; // Visual depth intensity
+  detailScale: number; // Fine detail scale
+
+  // Noise parameters
+  noiseFrequency: number; // Noise frequency multiplier
+  noiseAmplitude: number; // Noise amplitude
+  distortionFrequency: number; // Distortion frequency multiplier
+
+  // Crater parameters
+  largeCraterScale: number; // Large crater scale multiplier
+  mediumCraterScale: number; // Medium crater scale multiplier
+  largeCraterSmoothMin: number; // Large crater smoothstep min
+  largeCraterSmoothMax: number; // Large crater smoothstep max
+  mediumCraterSmoothMin: number; // Medium crater smoothstep min
+  mediumCraterSmoothMax: number; // Medium crater smoothstep max
+  largeCraterWeight: number; // Large crater blend weight
+  mediumCraterWeight: number; // Medium crater blend weight
+
+  // Bump mapping
+  bumpMultiplier: number; // Bump strength multiplier
+
+  // Color parameters
+  colorVariationFrequency: number; // Color variation frequency
+  baseColorBlend: number; // Base color blend factor
+  brightnessBoost: number; // Brightness boost multiplier
+}
+
+/**
  * MoonMaterial - Procedural lunar surface shader
  * 
  * Uses distorted Voronoi noise for crater patterns and procedural bump mapping
@@ -14,6 +54,9 @@ import { glslCommon } from './glsl_common';
  * - Gray lunar color palette with height-based variation
  */
 export class MoonMaterial extends MeshStandardMaterial {
+  private shaderUniforms: { [key: string]: { value: any } } | null = null;
+  private params: MoonMaterialParams;
+
   constructor() {
     super({
       color: new Color(0xaaaaaa),
@@ -22,12 +65,66 @@ export class MoonMaterial extends MeshStandardMaterial {
       flatShading: false,
     });
 
+    // Initialize default parameters
+    this.params = {
+      enableCraters: false,
+      enableNoise: true,
+      enableBumpMapping: true,
+      enableColorVariation: true,
+      scale: 0.05,
+      distortion: 0.35,
+      bumpStrength: 0.4,
+      detailScale: 0.5,
+      noiseFrequency: 8.0,
+      noiseAmplitude: 0.06,
+      distortionFrequency: 0.5,
+      largeCraterScale: 0.5,
+      mediumCraterScale: 1.5,
+      largeCraterSmoothMin: 0.15,
+      largeCraterSmoothMax: 0.85,
+      mediumCraterSmoothMin: 0.2,
+      mediumCraterSmoothMax: 0.8,
+      largeCraterWeight: 0.6,
+      mediumCraterWeight: 0.4,
+      bumpMultiplier: 80.0,
+      colorVariationFrequency: 0.005,
+      baseColorBlend: 0.6,
+      brightnessBoost: 2.5,
+    };
+
     this.onBeforeCompile = (shader) => {
-      // Add uniforms for tunability
-      shader.uniforms.uScale = { value: 0.05 }; // Controls crater density (lower = larger craters)
-      shader.uniforms.uDistortion = { value: 0.35 }; // Controls crater "wobble" (0 = perfect circles)
-      shader.uniforms.uBumpStrength = { value: 0.4 }; // Visual depth intensity
-      shader.uniforms.uDetailScale = { value: 0.5 }; // Fine detail scale
+      // Store reference to uniforms for later updates
+      this.shaderUniforms = shader.uniforms;
+
+      // Initialize all uniforms
+      shader.uniforms.uEnableCraters = { value: this.params.enableCraters ? 1.0 : 0.0 };
+      shader.uniforms.uEnableNoise = { value: this.params.enableNoise ? 1.0 : 0.0 };
+      shader.uniforms.uEnableBumpMapping = { value: this.params.enableBumpMapping ? 1.0 : 0.0 };
+      shader.uniforms.uEnableColorVariation = { value: this.params.enableColorVariation ? 1.0 : 0.0 };
+      
+      shader.uniforms.uScale = { value: this.params.scale };
+      shader.uniforms.uDistortion = { value: this.params.distortion };
+      shader.uniforms.uBumpStrength = { value: this.params.bumpStrength };
+      shader.uniforms.uDetailScale = { value: this.params.detailScale };
+      
+      shader.uniforms.uNoiseFrequency = { value: this.params.noiseFrequency };
+      shader.uniforms.uNoiseAmplitude = { value: this.params.noiseAmplitude };
+      shader.uniforms.uDistortionFrequency = { value: this.params.distortionFrequency };
+      
+      shader.uniforms.uLargeCraterScale = { value: this.params.largeCraterScale };
+      shader.uniforms.uMediumCraterScale = { value: this.params.mediumCraterScale };
+      shader.uniforms.uLargeCraterSmoothMin = { value: this.params.largeCraterSmoothMin };
+      shader.uniforms.uLargeCraterSmoothMax = { value: this.params.largeCraterSmoothMax };
+      shader.uniforms.uMediumCraterSmoothMin = { value: this.params.mediumCraterSmoothMin };
+      shader.uniforms.uMediumCraterSmoothMax = { value: this.params.mediumCraterSmoothMax };
+      shader.uniforms.uLargeCraterWeight = { value: this.params.largeCraterWeight };
+      shader.uniforms.uMediumCraterWeight = { value: this.params.mediumCraterWeight };
+      
+      shader.uniforms.uBumpMultiplier = { value: this.params.bumpMultiplier };
+      
+      shader.uniforms.uColorVariationFrequency = { value: this.params.colorVariationFrequency };
+      shader.uniforms.uBaseColorBlend = { value: this.params.baseColorBlend };
+      shader.uniforms.uBrightnessBoost = { value: this.params.brightnessBoost };
 
       // ==========================================
       // VERTEX SHADER MODIFICATIONS
@@ -55,10 +152,41 @@ export class MoonMaterial extends MeshStandardMaterial {
       // Add uniforms, varyings, and noise functions
       shader.fragmentShader = `
         varying vec3 vWorldPosition;
+        
+        // Toggle uniforms
+        uniform float uEnableCraters;
+        uniform float uEnableNoise;
+        uniform float uEnableBumpMapping;
+        uniform float uEnableColorVariation;
+        
+        // Base parameters
         uniform float uScale;
         uniform float uDistortion;
         uniform float uBumpStrength;
         uniform float uDetailScale;
+        
+        // Noise parameters
+        uniform float uNoiseFrequency;
+        uniform float uNoiseAmplitude;
+        uniform float uDistortionFrequency;
+        
+        // Crater parameters
+        uniform float uLargeCraterScale;
+        uniform float uMediumCraterScale;
+        uniform float uLargeCraterSmoothMin;
+        uniform float uLargeCraterSmoothMax;
+        uniform float uMediumCraterSmoothMin;
+        uniform float uMediumCraterSmoothMax;
+        uniform float uLargeCraterWeight;
+        uniform float uMediumCraterWeight;
+        
+        // Bump mapping
+        uniform float uBumpMultiplier;
+        
+        // Color parameters
+        uniform float uColorVariationFrequency;
+        uniform float uBaseColorBlend;
+        uniform float uBrightnessBoost;
 
         ${glslCommon}
 
@@ -98,31 +226,38 @@ export class MoonMaterial extends MeshStandardMaterial {
         // OPTIMIZED LUNAR SURFACE HEIGHT FUNCTION
         // ==========================================
         
-        // Simplified: 2 crater layers instead of 3, 2D cellular instead of 3D
         float getSurfaceHeight(vec2 pos) {
           float scale = uScale;
+          float height = 0.0;
           
-          // A. Single noise sample for micro detail
-          float noise = simplexNoise(pos * scale * 8.0) * 0.06;
+          // A. Noise detail (if enabled)
+          float noise = 0.0;
+          if (uEnableNoise > 0.5) {
+            noise = simplexNoise(pos * scale * uNoiseFrequency) * uNoiseAmplitude;
+            height += noise;
+          }
           
-          // B. Single distortion calculation (reused)
-          float distortion = simplexNoise(pos * scale * 0.5);
-          vec2 distortedPos = pos + vec2(distortion) * uDistortion;
+          // B. Craters (if enabled)
+          if (uEnableCraters > 0.5) {
+            // Distortion calculation
+            float distortion = simplexNoise(pos * scale * uDistortionFrequency);
+            vec2 distortedPos = pos + vec2(distortion) * uDistortion;
+            
+            // Large craters
+            float largeCraters = 1.0 - cellular2D(distortedPos * scale * uLargeCraterScale);
+            largeCraters = smoothstep(uLargeCraterSmoothMin, uLargeCraterSmoothMax, largeCraters);
+            
+            // Medium craters
+            vec2 distortedPos2 = pos + vec2(distortion * 0.7) + vec2(100.0);
+            float mediumCraters = 1.0 - cellular2D(distortedPos2 * scale * uMediumCraterScale);
+            mediumCraters = smoothstep(uMediumCraterSmoothMin, uMediumCraterSmoothMax, mediumCraters);
+            
+            // Combine crater layers
+            float craters = largeCraters * uLargeCraterWeight + mediumCraters * uMediumCraterWeight;
+            height += craters;
+          }
           
-          // C. Large craters (primary detail)
-          float largeCraters = 1.0 - cellular2D(distortedPos * scale * 0.5);
-          largeCraters = smoothstep(0.15, 0.85, largeCraters);
-          
-          // D. Medium craters (secondary detail) - reuse distortion with offset
-          vec2 distortedPos2 = pos + vec2(distortion * 0.7) + vec2(100.0);
-          float mediumCraters = 1.0 - cellular2D(distortedPos2 * scale * 1.5);
-          mediumCraters = smoothstep(0.2, 0.8, mediumCraters);
-          
-          // Combine crater layers
-          float craters = largeCraters * 0.6 + mediumCraters * 0.4;
-          
-          //return craters + noise;
-          return noise;
+          return height;
         }
 
         // ==========================================
@@ -145,10 +280,6 @@ export class MoonMaterial extends MeshStandardMaterial {
       `;
 
       // ==========================================
-      // INJECT NORMAL PERTURBATION
-      // ==========================================
-      
-      // ==========================================
       // INJECT HEIGHT CALCULATION EARLY (before color_fragment)
       // Uses screen-space derivatives for gradient - only 1 height sample!
       // ==========================================
@@ -169,20 +300,23 @@ export class MoonMaterial extends MeshStandardMaterial {
         vec3 darkMoon = vec3(0.08, 0.08, 0.10);    // Deep crater bottoms
         vec3 lightMoon = vec3(0.55, 0.53, 0.51);   // Crater rims / fresh ejecta
         
-        // Large-scale color variation (mare vs highlands) - cheap 2D noise
-        float largeVariation = simplexNoise(terrainPos * 0.005) * 0.5 + 0.5;
-        vec3 mareColor = vec3(0.12, 0.11, 0.13);   // Darker mare basalt
-        vec3 highlandsColor = vec3(0.35, 0.33, 0.31); // Lighter highlands
-        vec3 baseColor = mix(mareColor, highlandsColor, smoothstep(0.3, 0.7, largeVariation));
+        // Large-scale color variation (mare vs highlands) - if enabled
+        vec3 baseColor = vec3(0.25, 0.24, 0.23); // Default mid-tone
+        if (uEnableColorVariation > 0.5) {
+          float largeVariation = simplexNoise(terrainPos * uColorVariationFrequency) * 0.5 + 0.5;
+          vec3 mareColor = vec3(0.12, 0.11, 0.13);   // Darker mare basalt
+          vec3 highlandsColor = vec3(0.35, 0.33, 0.31); // Lighter highlands
+          baseColor = mix(mareColor, highlandsColor, smoothstep(0.3, 0.7, largeVariation));
+        }
         
         // Height-based coloring (craters are darker, rims are lighter)
         vec3 surfaceColor = mix(darkMoon, lightMoon, surfaceHeight);
         
         // Blend base color with height-based color
-        surfaceColor = mix(baseColor, surfaceColor, 0.6);
+        surfaceColor = mix(baseColor, surfaceColor, uBaseColorBlend);
         
-        // Apply to diffuse color
-        diffuseColor.rgb *= surfaceColor * 2.5; // Boost overall brightness
+        // Apply brightness boost
+        diffuseColor.rgb *= surfaceColor * uBrightnessBoost;
         `
       );
       
@@ -195,14 +329,89 @@ export class MoonMaterial extends MeshStandardMaterial {
         `
         #include <normal_fragment_begin>
 
-        // Use cached screen-space gradient for normal perturbation
-        vec2 dHdxy = heightGradient * uBumpStrength * 80.0; // Scale bump strength
-
-        // Perturb normal based on height gradient
-        float moonFaceDir = gl_FrontFacing ? 1.0 : -1.0;
-        normal = perturbNormalArb(vViewPosition, normal, dHdxy, moonFaceDir);
+        // Use cached screen-space gradient for normal perturbation (if enabled)
+        if (uEnableBumpMapping > 0.5) {
+          vec2 dHdxy = heightGradient * uBumpStrength * uBumpMultiplier;
+          float moonFaceDir = gl_FrontFacing ? 1.0 : -1.0;
+          normal = perturbNormalArb(vViewPosition, normal, dHdxy, moonFaceDir);
+        }
         `
       );
     };
+  }
+
+  /**
+   * Update a parameter and refresh uniforms
+   */
+  setParam<K extends keyof MoonMaterialParams>(key: K, value: MoonMaterialParams[K]): void {
+    this.params[key] = value;
+    this.updateUniforms();
+  }
+
+  /**
+   * Get a parameter value
+   */
+  getParam<K extends keyof MoonMaterialParams>(key: K): MoonMaterialParams[K] {
+    return this.params[key];
+  }
+
+  /**
+   * Get all parameters
+   */
+  getParams(): MoonMaterialParams {
+    return { ...this.params };
+  }
+
+  /**
+   * Set all parameters at once
+   */
+  setParams(params: Partial<MoonMaterialParams>): void {
+    Object.assign(this.params, params);
+    this.updateUniforms();
+  }
+
+  /**
+   * Update shader uniforms from current parameters
+   */
+  private updateUniforms(): void {
+    if (!this.shaderUniforms) return;
+
+    // Update toggle uniforms (convert boolean to float)
+    this.shaderUniforms.uEnableCraters.value = this.params.enableCraters ? 1.0 : 0.0;
+    this.shaderUniforms.uEnableNoise.value = this.params.enableNoise ? 1.0 : 0.0;
+    this.shaderUniforms.uEnableBumpMapping.value = this.params.enableBumpMapping ? 1.0 : 0.0;
+    this.shaderUniforms.uEnableColorVariation.value = this.params.enableColorVariation ? 1.0 : 0.0;
+
+    // Update base parameters
+    this.shaderUniforms.uScale.value = this.params.scale;
+    this.shaderUniforms.uDistortion.value = this.params.distortion;
+    this.shaderUniforms.uBumpStrength.value = this.params.bumpStrength;
+    this.shaderUniforms.uDetailScale.value = this.params.detailScale;
+
+    // Update noise parameters
+    this.shaderUniforms.uNoiseFrequency.value = this.params.noiseFrequency;
+    this.shaderUniforms.uNoiseAmplitude.value = this.params.noiseAmplitude;
+    this.shaderUniforms.uDistortionFrequency.value = this.params.distortionFrequency;
+
+    // Update crater parameters
+    this.shaderUniforms.uLargeCraterScale.value = this.params.largeCraterScale;
+    this.shaderUniforms.uMediumCraterScale.value = this.params.mediumCraterScale;
+    this.shaderUniforms.uLargeCraterSmoothMin.value = this.params.largeCraterSmoothMin;
+    this.shaderUniforms.uLargeCraterSmoothMax.value = this.params.largeCraterSmoothMax;
+    this.shaderUniforms.uMediumCraterSmoothMin.value = this.params.mediumCraterSmoothMin;
+    this.shaderUniforms.uMediumCraterSmoothMax.value = this.params.mediumCraterSmoothMax;
+    this.shaderUniforms.uLargeCraterWeight.value = this.params.largeCraterWeight;
+    this.shaderUniforms.uMediumCraterWeight.value = this.params.mediumCraterWeight;
+
+    // Update bump mapping
+    this.shaderUniforms.uBumpMultiplier.value = this.params.bumpMultiplier;
+
+    // Update color parameters
+    this.shaderUniforms.uColorVariationFrequency.value = this.params.colorVariationFrequency;
+    this.shaderUniforms.uBaseColorBlend.value = this.params.baseColorBlend;
+    this.shaderUniforms.uBrightnessBoost.value = this.params.brightnessBoost;
+
+    // Mark material as needing update
+    this.needsUpdate = true;
   }
 }
