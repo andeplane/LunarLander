@@ -9,6 +9,7 @@ import {
   type NeighborLods 
 } from './LodUtils';
 import { computeStitchedIndices } from './EdgeStitcher';
+import { ChunkRequestQueue } from './ChunkRequestQueue';
 
 export interface TerrainConfig {
   renderDistance: number;
@@ -21,6 +22,11 @@ export interface TerrainConfig {
   /** Debug mode: render wireframe triangles with different color per chunk */
   debugWireframe?: boolean;
 }
+
+/**
+ * Number of nearest chunks that get highest priority regardless of camera direction
+ */
+const NEAREST_CHUNKS_HIGH_PRIORITY = 10;
 
 /**
  * Entry for a chunk with LOD support
@@ -38,23 +44,17 @@ interface ChunkLodEntry {
   originalIndices: (Uint32Array | null)[];
 }
 
-/**
- * Pending mesh request tracking
- */
-interface PendingRequest {
-  gridKey: string;
-  lodLevel: number;
-}
-
 export class TerrainManager {
   private terrainGrid: Map<string, ChunkLodEntry> = new Map();
-  private pendingRequests: Map<string, PendingRequest> = new Map(); // requestKey -> request
+  private requestQueue: ChunkRequestQueue;
+  private workerBusy: boolean = false;
   private material: TerrainMaterial;
   private worker: Worker;
   private scene: Scene;
   private config: TerrainConfig;
   private baseTerrainArgs: Omit<TerrainArgs, 'resolution' | 'posX' | 'posZ'>;
   private camera: Camera | null = null;
+  private cameraForward: Vector3 = new Vector3();
   private debugMode: boolean = false;
 
   constructor(scene: Scene, config: TerrainConfig) {
@@ -92,6 +92,11 @@ export class TerrainManager {
       renderDistance: config.renderDistance,
     };
 
+    this.requestQueue = new ChunkRequestQueue({
+      chunkWidth: config.chunkWidth,
+      chunkDepth: config.chunkDepth,
+    });
+
     this.worker = this.setupTerrainWorker();
   }
 
@@ -120,10 +125,9 @@ export class TerrainManager {
    */
   private handleWorkerResult(result: TerrainWorkerResult): void {
     const { positions, normals, index, biome, gridKey, lodLevel } = result;
-    const requestKey = `${gridKey}:${lodLevel}`;
     
-    // Remove from pending
-    this.pendingRequests.delete(requestKey);
+    // Worker is no longer busy
+    this.workerBusy = false;
 
     // Get or create chunk entry
     let entry = this.terrainGrid.get(gridKey);
@@ -177,6 +181,9 @@ export class TerrainManager {
     if (!this.debugMode) {
       this.material.needsUpdate = true;
     }
+
+    // Dispatch next request from queue
+    this.dispatchNext();
   }
 
   /**
@@ -258,13 +265,11 @@ export class TerrainManager {
   }
 
   /**
-   * Request a specific LOD level for a chunk
+   * Request a specific LOD level for a chunk (adds to priority queue)
    */
   private requestChunkLod(gridKey: string, lodLevel: number): void {
-    const requestKey = `${gridKey}:${lodLevel}`;
-    
-    // Already pending?
-    if (this.pendingRequests.has(requestKey)) {
+    // Already in queue?
+    if (this.requestQueue.has(gridKey, lodLevel)) {
       return;
     }
 
@@ -284,8 +289,27 @@ export class TerrainManager {
       posZ: gridZ * this.config.chunkDepth / 25,
     };
 
-    this.pendingRequests.set(requestKey, { gridKey, lodLevel });
-    this.worker.postMessage({ terrainArgs: args, gridKey, lodLevel });
+    // Add to priority queue (will be sorted and dispatched in update())
+    this.requestQueue.add({ gridKey, lodLevel, terrainArgs: args });
+  }
+
+  /**
+   * Dispatch the next highest-priority request to the worker
+   */
+  private dispatchNext(): void {
+    if (this.workerBusy) {
+      return;
+    }
+
+    const request = this.requestQueue.shift();
+    if (request) {
+      this.workerBusy = true;
+      this.worker.postMessage({
+        terrainArgs: request.terrainArgs,
+        gridKey: request.gridKey,
+        lodLevel: request.lodLevel,
+      });
+    }
   }
 
   private getNearbyChunkPositionKeys(center: Vector3, radius: number): string[] {
@@ -335,6 +359,11 @@ export class TerrainManager {
    * Update terrain based on camera position
    */
   update(cameraPosition: Vector3): void {
+    // Get camera forward direction for priority calculation
+    if (this.camera) {
+      this.camera.getWorldDirection(this.cameraForward);
+    }
+
     // Convert camera position to grid coordinates for chunk selection
     const camPosInGrid = cameraPosition.clone();
     camPosInGrid.x /= this.config.chunkWidth;
@@ -346,6 +375,9 @@ export class TerrainManager {
     // Get chunks that should be loaded
     const nearbyKeys = this.getNearbyChunkPositionKeys(camPosInGrid, renderDistance);
     const nearbySet = new Set(nearbyKeys);
+
+    // Prune stale requests (chunks no longer in render distance)
+    this.requestQueue.pruneStale(nearbySet);
 
     // Request chunks and their appropriate LOD levels
     for (const gridKey of nearbyKeys) {
@@ -372,6 +404,17 @@ export class TerrainManager {
         this.requestChunkLod(gridKey, desiredLod + 1);
       }
     }
+
+    // Get nearest chunks for highest priority
+    const nearestHighPriorityKeys = new Set(
+      nearbyKeys.slice(0, NEAREST_CHUNKS_HIGH_PRIORITY)
+    );
+
+    // Sort queue by priority (nearest chunks first, then distance + direction)
+    this.requestQueue.sort(cameraPosition, this.cameraForward, nearestHighPriorityKeys);
+
+    // Dispatch next request if worker is idle
+    this.dispatchNext();
 
     // Update LOD objects (Three.js handles visibility switching)
     if (this.camera) {
@@ -491,10 +534,7 @@ export class TerrainManager {
       }
     }
 
-    // Clear pending requests for this chunk
-    for (let i = 0; i < this.config.lodLevels.length; i++) {
-      this.pendingRequests.delete(`${gridKey}:${i}`);
-    }
+    // Note: Queue pruning handles removing stale requests
 
     this.terrainGrid.delete(gridKey);
   }
@@ -510,7 +550,7 @@ export class TerrainManager {
    * Get build queue length
    */
   getBuildQueueLength(): number {
-    return this.pendingRequests.size;
+    return this.requestQueue.length + (this.workerBusy ? 1 : 0);
   }
 
   /**
@@ -524,7 +564,7 @@ export class TerrainManager {
     }
     
     this.terrainGrid.clear();
-    this.pendingRequests.clear();
+    this.requestQueue.clear();
     this.material.dispose();
   }
 }
