@@ -149,6 +149,9 @@ export function computeStitchedIndices(
   const cacheKey = getCacheKey(resolution, neighborLods, myLodLevel);
   const cached = stitchCache.get(cacheKey);
   if (cached) {
+    // #region agent log
+    fetch('http://127.0.0.1:7248/ingest/2514d39a-3d94-4487-980a-5421d6b147c9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EdgeStitcher.ts:computeStitchedIndices',message:'CACHE_HIT',data:{cacheKey,resolution,myLodLevel,neighborLods,cachedLength:cached.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
     return cached;
   }
 
@@ -161,6 +164,16 @@ export function computeStitchedIndices(
     east: calculateStepRatio(myResolution, getResolutionForLevel(neighborLods.east, lodLevels)),
     west: calculateStepRatio(myResolution, getResolutionForLevel(neighborLods.west, lodLevels)),
   };
+
+  // #region agent log
+  const neighborResolutions = {
+    north: getResolutionForLevel(neighborLods.north, lodLevels),
+    south: getResolutionForLevel(neighborLods.south, lodLevels),
+    east: getResolutionForLevel(neighborLods.east, lodLevels),
+    west: getResolutionForLevel(neighborLods.west, lodLevels),
+  };
+  fetch('http://127.0.0.1:7248/ingest/2514d39a-3d94-4487-980a-5421d6b147c9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EdgeStitcher.ts:computeStitchedIndices',message:'STEP_RATIOS_COMPUTED',data:{cacheKey,resolution,myLodLevel,myResolution,neighborLods,neighborResolutions,stepRatios,lodLevels},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+  // #endregion
 
   // If no stitching needed (all neighbors same or higher res), return standard indices
   if (stepRatios.north === 1 && stepRatios.south === 1 && 
@@ -234,8 +247,20 @@ function buildStitchedIndices(
 }
 
 /**
+ * Get the nearest snapped position for a given coordinate.
+ * Snaps to the nearest multiple of stepRatio.
+ * 
+ * @param pos - Position coordinate (0 to resolution)
+ * @param stepRatio - Step ratio for snapping
+ * @returns Nearest snapped position
+ */
+function getNearestSnappedPosition(pos: number, stepRatio: number): number {
+  return Math.round(pos / stepRatio) * stepRatio;
+}
+
+/**
  * Generate stitched triangles for one edge.
- * Creates fan triangles connecting interior row to snapped edge vertices.
+ * Creates triangles connecting interior row to nearest snapped edge vertices.
  */
 function generateStitchedEdge(
   indices: number[],
@@ -244,147 +269,161 @@ function generateStitchedEdge(
   stepRatio: number,
   allStepRatios: Record<CardinalDirection, number>
 ): void {
-  // For each "snapped" segment on the edge
-  for (let i = 0; i < resolution; i += stepRatio) {
-    const nextI = Math.min(i + stepRatio, resolution);
+  switch (edge) {
+    case 'north':
+      generateNorthEdgeNearestNeighbor(indices, resolution, stepRatio, allStepRatios);
+      break;
+    case 'south':
+      generateSouthEdgeNearestNeighbor(indices, resolution, stepRatio, allStepRatios);
+      break;
+    case 'west':
+      generateWestEdgeNearestNeighbor(indices, resolution, stepRatio, allStepRatios);
+      break;
+    case 'east':
+      generateEastEdgeNearestNeighbor(indices, resolution, stepRatio, allStepRatios);
+      break;
+  }
+}
+
+/**
+ * Generate triangles for north edge (z=0) using nearest-neighbor snapping.
+ * Each interior vertex connects to the nearest snapped edge vertex.
+ */
+function generateNorthEdgeNearestNeighbor(
+  indices: number[],
+  resolution: number,
+  stepRatio: number,
+  _allStepRatios: Record<CardinalDirection, number>
+): void {
+  // Process each interior edge segment (x, x+1)
+  for (let x = 0; x < resolution; x++) {
+    const interiorLeft = getVertexIndex(x, 1, resolution);
+    const interiorRight = getVertexIndex(x + 1, 1, resolution);
     
-    switch (edge) {
-      case 'north':
-        generateNorthEdgeFan(indices, resolution, i, nextI, stepRatio, allStepRatios);
-        break;
-      case 'south':
-        generateSouthEdgeFan(indices, resolution, i, nextI, stepRatio, allStepRatios);
-        break;
-      case 'west':
-        generateWestEdgeFan(indices, resolution, i, nextI, stepRatio, allStepRatios);
-        break;
-      case 'east':
-        generateEastEdgeFan(indices, resolution, i, nextI, stepRatio, allStepRatios);
-        break;
+    // Find nearest snapped edge vertices
+    const snapLeft = getNearestSnappedPosition(x, stepRatio);
+    const snapRight = getNearestSnappedPosition(x + 1, stepRatio);
+    
+    const edgeLeft = getVertexIndex(snapLeft, 0, resolution);
+    const edgeRight = getVertexIndex(snapRight, 0, resolution);
+    
+    if (snapLeft === snapRight) {
+      // Both interior vertices snap to the same edge vertex - one triangle
+      indices.push(edgeLeft, interiorLeft, interiorRight);
+    } else {
+      // Transition point - two triangles
+      // Triangle 1: edgeLeft to interiorLeft to interiorRight (CCW)
+      indices.push(edgeLeft, interiorLeft, interiorRight);
+      // Triangle 2: edgeLeft to interiorRight to edgeRight (CCW)
+      indices.push(edgeLeft, interiorRight, edgeRight);
     }
   }
 }
 
 /**
- * Generate fan triangles for north edge (z=0)
- * Connects edge vertices at z=0 to interior vertices at z=1
- * All triangles fan from edgeLeft, with closing triangle to edgeRight
+ * Generate triangles for south edge (z=resolution) using nearest-neighbor snapping.
+ * Each interior vertex connects to the nearest snapped edge vertex.
+ * South edge needs reversed winding for CCW (interior is above edge).
  */
-function generateNorthEdgeFan(
+function generateSouthEdgeNearestNeighbor(
   indices: number[],
   resolution: number,
-  startX: number,
-  endX: number,
-  _stepRatio: number,
+  stepRatio: number,
   _allStepRatios: Record<CardinalDirection, number>
 ): void {
-  // Edge vertices (at z=0): startX and endX are the "snapped" vertices
-  const edgeLeft = getVertexIndex(startX, 0, resolution);
-  const edgeRight = getVertexIndex(endX, 0, resolution);
-  
-  // Create fan from edgeLeft through all interior vertices
-  for (let x = startX; x < endX; x++) {
-    const interiorLeft = getVertexIndex(x, 1, resolution);
-    const interiorRight = getVertexIndex(x + 1, 1, resolution);
-    
-    // Fan triangle from edgeLeft through interior segment (CCW winding)
-    indices.push(edgeLeft, interiorLeft, interiorRight);
-  }
-  
-  // Closing triangle: edgeLeft to last interior to edgeRight (CCW winding)
-  const lastInterior = getVertexIndex(endX, 1, resolution);
-  indices.push(edgeLeft, lastInterior, edgeRight);
-}
-
-/**
- * Generate fan triangles for south edge (z=resolution)
- * Connects edge vertices at z=resolution to interior vertices at z=resolution-1
- * All triangles fan from edgeLeft, with closing triangle to edgeRight
- */
-function generateSouthEdgeFan(
-  indices: number[],
-  resolution: number,
-  startX: number,
-  endX: number,
-  _stepRatio: number,
-  _allStepRatios: Record<CardinalDirection, number>
-): void {
-  const edgeLeft = getVertexIndex(startX, resolution, resolution);
-  const edgeRight = getVertexIndex(endX, resolution, resolution);
-  
-  // Create fan from edgeLeft through all interior vertices
-  // South edge needs reversed winding for CCW (interior is above edge)
-  for (let x = startX; x < endX; x++) {
+  // Process each interior edge segment (x, x+1)
+  for (let x = 0; x < resolution; x++) {
     const interiorLeft = getVertexIndex(x, resolution - 1, resolution);
     const interiorRight = getVertexIndex(x + 1, resolution - 1, resolution);
     
-    // Fan triangle from edgeLeft through interior segment (CCW winding)
-    indices.push(interiorLeft, edgeLeft, interiorRight);
+    // Find nearest snapped edge vertices
+    const snapLeft = getNearestSnappedPosition(x, stepRatio);
+    const snapRight = getNearestSnappedPosition(x + 1, stepRatio);
+    
+    const edgeLeft = getVertexIndex(snapLeft, resolution, resolution);
+    const edgeRight = getVertexIndex(snapRight, resolution, resolution);
+    
+    if (snapLeft === snapRight) {
+      // Both interior vertices snap to the same edge vertex - one triangle (CCW winding)
+      indices.push(interiorLeft, edgeLeft, interiorRight);
+    } else {
+      // Transition point - two triangles (CCW winding)
+      // Triangle 1: interiorLeft to edgeLeft to interiorRight
+      indices.push(interiorLeft, edgeLeft, interiorRight);
+      // Triangle 2: interiorRight to edgeLeft to edgeRight
+      indices.push(interiorRight, edgeLeft, edgeRight);
+    }
   }
-  
-  // Closing triangle: last interior to edgeLeft to edgeRight (CCW winding)
-  const lastInterior = getVertexIndex(endX, resolution - 1, resolution);
-  indices.push(lastInterior, edgeLeft, edgeRight);
 }
 
 /**
- * Generate fan triangles for west edge (x=0)
- * Connects edge vertices at x=0 to interior vertices at x=1
- * All triangles fan from edgeTop, with closing triangle to edgeBottom
+ * Generate triangles for west edge (x=0) using nearest-neighbor snapping.
+ * Each interior vertex connects to the nearest snapped edge vertex.
  */
-function generateWestEdgeFan(
+function generateWestEdgeNearestNeighbor(
   indices: number[],
   resolution: number,
-  startZ: number,
-  endZ: number,
-  _stepRatio: number,
+  stepRatio: number,
   _allStepRatios: Record<CardinalDirection, number>
 ): void {
-  const edgeTop = getVertexIndex(0, startZ, resolution);
-  const edgeBottom = getVertexIndex(0, endZ, resolution);
-  
-  // Create fan from edgeTop through all interior vertices
-  for (let z = startZ; z < endZ; z++) {
+  // Process each interior edge segment (z, z+1)
+  for (let z = 0; z < resolution; z++) {
     const interiorTop = getVertexIndex(1, z, resolution);
     const interiorBottom = getVertexIndex(1, z + 1, resolution);
     
-    // Fan triangle from edgeTop through interior segment (CCW winding)
-    indices.push(edgeTop, interiorBottom, interiorTop);
+    // Find nearest snapped edge vertices
+    const snapTop = getNearestSnappedPosition(z, stepRatio);
+    const snapBottom = getNearestSnappedPosition(z + 1, stepRatio);
+    
+    const edgeTop = getVertexIndex(0, snapTop, resolution);
+    const edgeBottom = getVertexIndex(0, snapBottom, resolution);
+    
+    if (snapTop === snapBottom) {
+      // Both interior vertices snap to the same edge vertex - one triangle (CCW winding)
+      indices.push(edgeTop, interiorBottom, interiorTop);
+    } else {
+      // Transition point - two triangles (CCW winding)
+      // Triangle 1: edgeTop to interiorBottom to interiorTop
+      indices.push(edgeTop, interiorBottom, interiorTop);
+      // Triangle 2: edgeTop to edgeBottom to interiorBottom
+      indices.push(edgeTop, edgeBottom, interiorBottom);
+    }
   }
-  
-  // Closing triangle: edgeTop to edgeBottom to last interior (CCW winding)
-  const lastInterior = getVertexIndex(1, endZ, resolution);
-  indices.push(edgeTop, edgeBottom, lastInterior);
 }
 
 /**
- * Generate fan triangles for east edge (x=resolution)
- * Connects edge vertices at x=resolution to interior vertices at x=resolution-1
- * All triangles fan from edgeTop, with closing triangle to edgeBottom
+ * Generate triangles for east edge (x=resolution) using nearest-neighbor snapping.
+ * Each interior vertex connects to the nearest snapped edge vertex.
  */
-function generateEastEdgeFan(
+function generateEastEdgeNearestNeighbor(
   indices: number[],
   resolution: number,
-  startZ: number,
-  endZ: number,
-  _stepRatio: number,
+  stepRatio: number,
   _allStepRatios: Record<CardinalDirection, number>
 ): void {
-  const edgeTop = getVertexIndex(resolution, startZ, resolution);
-  const edgeBottom = getVertexIndex(resolution, endZ, resolution);
-  
-  // Create fan from edgeTop through all interior vertices
-  for (let z = startZ; z < endZ; z++) {
+  // Process each interior edge segment (z, z+1)
+  for (let z = 0; z < resolution; z++) {
     const interiorTop = getVertexIndex(resolution - 1, z, resolution);
     const interiorBottom = getVertexIndex(resolution - 1, z + 1, resolution);
     
-    // Fan triangle from edgeTop through interior segment (CCW winding)
-    indices.push(edgeTop, interiorTop, interiorBottom);
+    // Find nearest snapped edge vertices
+    const snapTop = getNearestSnappedPosition(z, stepRatio);
+    const snapBottom = getNearestSnappedPosition(z + 1, stepRatio);
+    
+    const edgeTop = getVertexIndex(resolution, snapTop, resolution);
+    const edgeBottom = getVertexIndex(resolution, snapBottom, resolution);
+    
+    if (snapTop === snapBottom) {
+      // Both interior vertices snap to the same edge vertex - one triangle (CCW winding)
+      indices.push(edgeTop, interiorTop, interiorBottom);
+    } else {
+      // Transition point - two triangles (CCW winding)
+      // Triangle 1: edgeTop to interiorTop to interiorBottom
+      indices.push(edgeTop, interiorTop, interiorBottom);
+      // Triangle 2: edgeTop to interiorBottom to edgeBottom
+      indices.push(edgeTop, interiorBottom, edgeBottom);
+    }
   }
-  
-  // Closing triangle: edgeTop to last interior to edgeBottom (CCW winding)
-  const lastInterior = getVertexIndex(resolution - 1, endZ, resolution);
-  indices.push(edgeTop, lastInterior, edgeBottom);
 }
 
 /**

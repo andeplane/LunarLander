@@ -263,9 +263,10 @@ describe(computeStitchedIndices.name, () => {
     });
   });
 
-  describe('edge fan structure', () => {
-    it('generates consistent fan pattern for north edge', () => {
+  describe('edge nearest-neighbor structure', () => {
+    it('generates nearest-neighbor pattern for north edge', () => {
       // Resolution 4, north neighbor has stepRatio 2
+      // Snapped edge vertices at x=0, 2, 4 (indices 0, 2, 4)
       const neighborLods: NeighborLods = { north: 1, south: 0, east: 0, west: 0 };
       const indices = computeStitchedIndices(4, neighborLods, 0, [4, 2, 1]);
       
@@ -284,18 +285,23 @@ describe(computeStitchedIndices.name, () => {
         tri.some(v => northEdgeVertices.has(v))
       );
       
-      // All north edge triangles should form a fan from edgeLeft (index 0)
-      // Each triangle should contain edgeLeft (0) or edgeRight (4)
-      const edgeLeft = 0;
-      const edgeRight = 4;
+      // With stepRatio=2, snapped positions are at x=0, 2, 4
+      // Interior vertices at x=0,1 should snap to edge x=0 (index 0)
+      // Interior vertices at x=2,3 should snap to edge x=2 (index 2)
+      // Interior vertices at x=4 should snap to edge x=4 (index 4)
+      const snappedEdgeVertices = new Set([0, 2, 4]); // x=0, x=2, x=4
       
-      // Verify fan structure: most triangles should share edgeLeft
-      const trianglesWithEdgeLeft = northEdgeTriangles.filter(tri => tri.includes(edgeLeft));
-      const trianglesWithEdgeRight = northEdgeTriangles.filter(tri => tri.includes(edgeRight));
+      // Verify nearest-neighbor: each triangle should connect to a snapped edge vertex
+      for (const tri of northEdgeTriangles) {
+        const hasSnappedEdge = tri.some(v => snappedEdgeVertices.has(v));
+        expect(hasSnappedEdge).toBe(true);
+      }
       
-      // Should have at least one triangle with each edge vertex
-      expect(trianglesWithEdgeLeft.length).toBeGreaterThan(0);
-      expect(trianglesWithEdgeRight.length).toBeGreaterThan(0);
+      // Verify triangles connect interior vertices to their nearest snapped edge
+      // Interior x=0,1 (indices 5,6) should connect to edge x=0 (index 0)
+      const trianglesWithEdge0 = northEdgeTriangles.filter(tri => tri.includes(0));
+      // Interior vertices 5,6 should connect to edge 0
+      expect(trianglesWithEdge0.length).toBeGreaterThan(0);
       
       // All triangles should be valid (no duplicate vertices in same triangle)
       for (const tri of triangles) {
@@ -303,7 +309,7 @@ describe(computeStitchedIndices.name, () => {
       }
     });
 
-    it('generates consistent fan pattern for all edges', () => {
+    it('generates nearest-neighbor pattern for all edges', () => {
       // Test all four edges with lower LOD neighbors
       const testCases: Array<{ neighborLods: NeighborLods; description: string }> = [
         { neighborLods: { north: 1, south: 0, east: 0, west: 0 }, description: 'north' },
@@ -329,6 +335,11 @@ describe(computeStitchedIndices.name, () => {
         
         // Should have generated triangles
         expect(triangles.length).toBeGreaterThan(0);
+        
+        // With stepRatio=2, snapped positions should be at multiples of 2
+        // Verify that edge triangles connect to snapped vertices (not all fan from one point)
+        // This is a basic sanity check - the detailed nearest-neighbor verification
+        // is done in the specific edge test above
       }
     });
   });
