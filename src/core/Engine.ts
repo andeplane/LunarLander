@@ -202,6 +202,11 @@ export class Engine {
       this.terrainManager.toggleDebugMode();
     }
 
+    // Check for chunk distance/LOD debug (I key)
+    if (this.inputManager?.isKeyJustPressed('i') && this.terrainManager) {
+      this.terrainManager.logChunkDistancesAndLods(this.camera.position);
+    }
+
     // Update flight controller
     if (this.flightController) {
       this.flightController.update(deltaTime);

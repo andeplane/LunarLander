@@ -123,83 +123,93 @@ describe(createGridKey.name, () => {
 describe(getChunkWorldCenter.name, () => {
   const chunkWidth = 50;
   const chunkDepth = 50;
+  // Chunks are CENTERED at gridX * chunkWidth, gridZ * chunkDepth
 
   it('returns correct center for origin chunk', () => {
+    // Chunk (0,0) is centered at (0, 0)
     const center = getChunkWorldCenter(0, 0, chunkWidth, chunkDepth);
 
-    expect(center.x).toBe(25);
-    expect(center.z).toBe(25);
+    expect(center.x).toBe(0);
+    expect(center.z).toBe(0);
   });
 
   it('returns correct center for chunk at (1, 1)', () => {
+    // Chunk (1,1) is centered at (50, 50)
     const center = getChunkWorldCenter(1, 1, chunkWidth, chunkDepth);
 
-    expect(center.x).toBe(75);
-    expect(center.z).toBe(75);
+    expect(center.x).toBe(50);
+    expect(center.z).toBe(50);
   });
 
   it('returns correct center for negative coordinates', () => {
+    // Chunk (-1,-1) is centered at (-50, -50)
     const center = getChunkWorldCenter(-1, -1, chunkWidth, chunkDepth);
 
-    expect(center.x).toBe(-25);
-    expect(center.z).toBe(-25);
+    expect(center.x).toBe(-50);
+    expect(center.z).toBe(-50);
   });
 
   it('handles non-square chunks', () => {
+    // Chunk (0,0) with 100x50 dimensions is centered at (0, 0)
     const center = getChunkWorldCenter(0, 0, 100, 50);
 
-    expect(center.x).toBe(50);
-    expect(center.z).toBe(25);
+    expect(center.x).toBe(0);
+    expect(center.z).toBe(0);
   });
 });
 
 describe(getDistanceToChunk.name, () => {
   const chunkWidth = 50;
   const chunkDepth = 50;
+  // Chunk (0,0) is CENTERED at origin, so bounds are X=[-25, 25], Z=[-25, 25]
 
-  it('returns 0 when point is inside chunk at ground level', () => {
-    // Chunk (0,0) bounds: X=[0,50], Z=[0,50]
-    // Point at (25, 0, 25) is inside chunk, nearest point is itself
-    const distance = getDistanceToChunk(25, 0, 25, 0, 0, chunkWidth, chunkDepth);
+  it('returns 0 when point is on chunk plane at ground level', () => {
+    // Chunk (0,0) bounds: X=[-25, 25], Z=[-25, 25] (centered)
+    // Point at (0, 0, 0) is at chunk center on ground, nearest point is itself
+    const distance = getDistanceToChunk(0, 0, 0, 0, 0, chunkWidth, chunkDepth);
     expect(distance).toBe(0);
   });
 
-  it('returns Y distance when point is directly above chunk', () => {
-    // Chunk (0,0) bounds: X=[0,50], Z=[0,50]
-    // Point at (25, 50, 25) is inside chunk horizontally, nearest point is (25, 0, 25)
-    const distance = getDistanceToChunk(25, 50, 25, 0, 0, chunkWidth, chunkDepth);
+  it('returns Y distance when point is directly above chunk center', () => {
+    // Chunk (0,0) bounds: X=[-25, 25], Z=[-25, 25] (centered)
+    // Point at (0, 50, 0) projects to (0, 0, 0) on chunk plane
+    // Distance = sqrt(0 + 50^2 + 0) = 50
+    const distance = getDistanceToChunk(0, 50, 0, 0, 0, chunkWidth, chunkDepth);
     expect(distance).toBe(50);
   });
 
-  it('returns distance to nearest edge when point is outside chunk', () => {
-    // Chunk (0,0) bounds: X=[0,50], Z=[0,50]
-    // Point at (25, 0, 75) is outside on Z axis
-    // Nearest point on chunk is (25, 0, 50) - the south edge
-    const distance = getDistanceToChunk(25, 0, 75, 0, 0, chunkWidth, chunkDepth);
-    expect(distance).toBe(25); // Distance from Z=75 to Z=50
+  it('returns 3D distance to nearest edge when point is outside chunk', () => {
+    // Chunk (0,0) bounds: X=[-25, 25], Z=[-25, 25] (centered)
+    // Point at (0, 10, 50) is outside on Z axis (Z > 25)
+    // Projects to (0, 0, 25) - the south edge
+    // Distance = sqrt((0-0)^2 + (10-0)^2 + (50-25)^2) = sqrt(0 + 100 + 625) = sqrt(725) ≈ 26.93
+    const distance = getDistanceToChunk(0, 10, 50, 0, 0, chunkWidth, chunkDepth);
+    expect(distance).toBeCloseTo(Math.sqrt(725), 5);
   });
 
-  it('returns distance to nearest corner when point is diagonally outside', () => {
-    // Chunk (0,0) bounds: X=[0,50], Z=[0,50]
-    // Point at (75, 0, 75) is outside on both axes
-    // Nearest point on chunk is corner (50, 0, 50)
-    const distance = getDistanceToChunk(75, 0, 75, 0, 0, chunkWidth, chunkDepth);
-    // Distance = sqrt((75-50)^2 + (75-50)^2) = sqrt(625 + 625) = sqrt(1250) ≈ 35.36
-    expect(distance).toBeCloseTo(Math.sqrt(1250), 5);
+  it('returns 3D distance to nearest corner when point is diagonally outside', () => {
+    // Chunk (0,0) bounds: X=[-25, 25], Z=[-25, 25] (centered)
+    // Point at (50, 20, 50) is outside on both axes
+    // Projects to corner (25, 0, 25)
+    // Distance = sqrt((50-25)^2 + (20-0)^2 + (50-25)^2) = sqrt(625 + 400 + 625) = sqrt(1650) ≈ 40.62
+    const distance = getDistanceToChunk(50, 20, 50, 0, 0, chunkWidth, chunkDepth);
+    expect(distance).toBeCloseTo(Math.sqrt(1650), 5);
   });
 
-  it('returns minimal distance when point is at chunk edge', () => {
-    // Chunk (0,0) bounds: X=[0,50], Z=[0,50]
-    // Point at (50, 10, 25) is on east edge, nearest point is (50, 0, 25)
-    const distance = getDistanceToChunk(50, 10, 25, 0, 0, chunkWidth, chunkDepth);
-    expect(distance).toBe(10); // Just the Y distance
+  it('returns Y distance when point is at chunk edge horizontally', () => {
+    // Chunk (0,0) bounds: X=[-25, 25], Z=[-25, 25] (centered)
+    // Point at (25, 10, 0) is on east edge, projects to (25, 0, 0)
+    // Distance = sqrt((25-25)^2 + (10-0)^2 + (0-0)^2) = 10
+    const distance = getDistanceToChunk(25, 10, 0, 0, 0, chunkWidth, chunkDepth);
+    expect(distance).toBe(10);
   });
 
-  it('handles point inside chunk near edge', () => {
-    // Chunk (0,0) bounds: X=[0,50], Z=[0,50]
-    // Point at (1, 5, 1) is inside chunk, nearest point is itself
+  it('returns Y distance when point is inside chunk horizontally', () => {
+    // Chunk (0,0) bounds: X=[-25, 25], Z=[-25, 25] (centered)
+    // Point at (1, 5, 1) is inside chunk, projects to (1, 0, 1)
+    // Distance = sqrt((1-1)^2 + (5-0)^2 + (1-1)^2) = 5
     const distance = getDistanceToChunk(1, 5, 1, 0, 0, chunkWidth, chunkDepth);
-    expect(distance).toBe(5); // Just the Y distance (nearest point is (1, 0, 1))
+    expect(distance).toBe(5);
   });
 });
 

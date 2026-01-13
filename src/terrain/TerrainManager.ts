@@ -649,6 +649,93 @@ export class TerrainManager {
   }
 
   /**
+   * Debug: Log distance and LOD information for all chunks
+   * Helps identify distance calculation problems causing inconsistent LODs
+   */
+  logChunkDistancesAndLods(cameraPosition: Vector3): void {
+    if (!this.camera) {
+      console.warn('Cannot log chunk distances: camera not set');
+      return;
+    }
+
+    // Pre-calculate camera parameters (same as in updateChunkVisibility)
+    const fov = (this.camera as PerspectiveCamera)?.fov ?? 70;
+    const fovRadians = (fov * Math.PI) / 180;
+    const screenHeight = window.innerHeight;
+
+    // Collect chunk data
+    const chunkData: Array<{
+      gridKey: string;
+      distance: number;
+      desiredLod: number;
+      currentLod: number;
+    }> = [];
+
+    for (const [gridKey, entry] of this.terrainGrid.entries()) {
+      const [gridX, gridZ] = parseGridKey(gridKey);
+      
+      // Calculate distance to nearest point on chunk
+      const distance = getDistanceToChunk(
+        cameraPosition.x,
+        cameraPosition.y,
+        cameraPosition.z,
+        gridX,
+        gridZ,
+        this.config.chunkWidth,
+        this.config.chunkDepth
+      );
+
+      // Calculate desired LOD level
+      const desiredLod = this.getLodLevelForChunkOptimized(
+        gridKey,
+        cameraPosition,
+        fovRadians,
+        screenHeight
+      );
+
+      // Get current LOD level
+      const currentLod = entry.currentLodLevel;
+
+      chunkData.push({
+        gridKey,
+        distance,
+        desiredLod,
+        currentLod,
+      });
+    }
+
+    // Sort by distance (closest first)
+    chunkData.sort((a, b) => a.distance - b.distance);
+
+    // Log formatted output
+    console.log('=== Chunk Distance & LOD Debug ===');
+    console.log('Grid Key | Distance (m) | Desired LOD | Current LOD | Match');
+    console.log('---------|--------------|-------------|-------------|------');
+    
+    for (const data of chunkData) {
+      const match = data.desiredLod === data.currentLod ? '✓' : '✗';
+      const matchColor = data.desiredLod === data.currentLod ? '' : 'color: orange';
+      console.log(
+        `%c${data.gridKey.padEnd(9)} | ${data.distance.toFixed(2).padStart(12)} | ${String(data.desiredLod).padStart(11)} | ${String(data.currentLod).padStart(11)} | ${match}`,
+        matchColor
+      );
+    }
+
+    // Summary statistics
+    const mismatches = chunkData.filter(d => d.desiredLod !== d.currentLod);
+    console.log(`\nTotal chunks: ${chunkData.length}`);
+    console.log(`Mismatches: ${mismatches.length}`);
+    if (mismatches.length > 0) {
+      console.log('\nChunks with LOD mismatches:');
+      for (const mismatch of mismatches) {
+        console.log(
+          `  ${mismatch.gridKey}: distance=${mismatch.distance.toFixed(2)}m, desired=${mismatch.desiredLod}, current=${mismatch.currentLod}`
+        );
+      }
+    }
+  }
+
+  /**
    * Clean up resources
    */
   dispose(): void {

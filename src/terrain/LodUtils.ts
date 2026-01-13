@@ -112,6 +112,7 @@ export function createGridKey(gridX: number, gridZ: number): string {
 
 /**
  * Calculate the world-space center position of a chunk.
+ * Chunks are centered around their grid position (gridX * chunkWidth, gridZ * chunkDepth).
  * 
  * @param gridX - Chunk grid X coordinate
  * @param gridZ - Chunk grid Z coordinate
@@ -125,24 +126,26 @@ export function getChunkWorldCenter(
   chunkWidth: number,
   chunkDepth: number
 ): { x: number; z: number } {
+  // Chunks are centered at gridX * chunkWidth, gridZ * chunkDepth
   return {
-    x: gridX * chunkWidth + chunkWidth / 2,
-    z: gridZ * chunkDepth + chunkDepth / 2,
+    x: gridX * chunkWidth,
+    z: gridZ * chunkDepth,
   };
 }
 
 /**
  * Calculate distance from a point to the nearest point on a chunk rectangle.
- * Chunks are assumed to be flat at Y=0.
+ * Projects the camera position onto the chunk's plane (clamps X/Z to chunk bounds),
+ * then calculates 3D distance from camera to that projected point.
  * 
- * @param pointX - Point X coordinate
- * @param pointY - Point Y coordinate (height)
- * @param pointZ - Point Z coordinate
+ * @param pointX - Camera X coordinate
+ * @param pointY - Camera Y coordinate (height)
+ * @param pointZ - Camera Z coordinate
  * @param gridX - Chunk grid X coordinate
  * @param gridZ - Chunk grid Z coordinate
  * @param chunkWidth - Width of each chunk
  * @param chunkDepth - Depth of each chunk
- * @returns Distance in world units to nearest point on chunk
+ * @returns 3D distance in world units from camera to nearest point on chunk plane
  */
 export function getDistanceToChunk(
   pointX: number,
@@ -154,17 +157,23 @@ export function getDistanceToChunk(
   chunkDepth: number
 ): number {
   // Calculate chunk bounds in world space
-  const minX = gridX * chunkWidth;
-  const maxX = (gridX + 1) * chunkWidth;
-  const minZ = gridZ * chunkDepth;
-  const maxZ = (gridZ + 1) * chunkDepth;
+  // Chunks are CENTERED around their grid position, not starting at the corner
+  const centerX = gridX * chunkWidth;
+  const centerZ = gridZ * chunkDepth;
+  const minX = centerX - chunkWidth / 2;
+  const maxX = centerX + chunkWidth / 2;
+  const minZ = centerZ - chunkDepth / 2;
+  const maxZ = centerZ + chunkDepth / 2;
   
-  // Clamp camera position to chunk bounds to find nearest point on chunk
+  // Project camera position onto chunk plane by clamping X and Z to chunk bounds
+  // This finds the nearest point on the chunk rectangle in the XZ plane
   const nearestX = Math.max(minX, Math.min(maxX, pointX));
   const nearestZ = Math.max(minZ, Math.min(maxZ, pointZ));
-  const nearestY = 0; // Chunks are flat at Y=0
   
-  // Calculate 3D distance from camera to nearest point on chunk
+  // The projected point is on the chunk plane at Y=0 (terrain height)
+  const nearestY = 0;
+  
+  // Calculate 3D distance from camera to the projected point on chunk plane
   const dx = pointX - nearestX;
   const dy = pointY - nearestY;
   const dz = pointZ - nearestZ;
