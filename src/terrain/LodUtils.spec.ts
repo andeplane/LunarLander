@@ -157,31 +157,49 @@ describe(getDistanceToChunk.name, () => {
   const chunkWidth = 50;
   const chunkDepth = 50;
 
-  it('returns 0 when point is at chunk center at ground level', () => {
-    // Chunk (0,0) center is at (25, 25), point at Y=0
+  it('returns 0 when point is inside chunk at ground level', () => {
+    // Chunk (0,0) bounds: X=[0,50], Z=[0,50]
+    // Point at (25, 0, 25) is inside chunk, nearest point is itself
     const distance = getDistanceToChunk(25, 0, 25, 0, 0, chunkWidth, chunkDepth);
     expect(distance).toBe(0);
   });
 
-  it('returns correct distance for point on Z axis', () => {
-    // Chunk (0,0) center is at (25, 25)
-    // Point at (25, 0, 75) is 50 units away on Z axis
-    const distance = getDistanceToChunk(25, 0, 75, 0, 0, chunkWidth, chunkDepth);
-    expect(distance).toBe(50);
-  });
-
-  it('returns correct distance for point above chunk', () => {
-    // Chunk (0,0) center is at (25, 25)
-    // Point directly above at Y=50 is 50 units away
+  it('returns Y distance when point is directly above chunk', () => {
+    // Chunk (0,0) bounds: X=[0,50], Z=[0,50]
+    // Point at (25, 50, 25) is inside chunk horizontally, nearest point is (25, 0, 25)
     const distance = getDistanceToChunk(25, 50, 25, 0, 0, chunkWidth, chunkDepth);
     expect(distance).toBe(50);
   });
 
-  it('returns correct 3D distance for diagonal', () => {
-    // Chunk (0,0) center is at (25, 25)
-    // Point at (25+30, 0, 25+40) = (55, 0, 65) is 50 units away horizontally (3-4-5 triangle)
-    const distance = getDistanceToChunk(55, 0, 65, 0, 0, chunkWidth, chunkDepth);
-    expect(distance).toBe(50);
+  it('returns distance to nearest edge when point is outside chunk', () => {
+    // Chunk (0,0) bounds: X=[0,50], Z=[0,50]
+    // Point at (25, 0, 75) is outside on Z axis
+    // Nearest point on chunk is (25, 0, 50) - the south edge
+    const distance = getDistanceToChunk(25, 0, 75, 0, 0, chunkWidth, chunkDepth);
+    expect(distance).toBe(25); // Distance from Z=75 to Z=50
+  });
+
+  it('returns distance to nearest corner when point is diagonally outside', () => {
+    // Chunk (0,0) bounds: X=[0,50], Z=[0,50]
+    // Point at (75, 0, 75) is outside on both axes
+    // Nearest point on chunk is corner (50, 0, 50)
+    const distance = getDistanceToChunk(75, 0, 75, 0, 0, chunkWidth, chunkDepth);
+    // Distance = sqrt((75-50)^2 + (75-50)^2) = sqrt(625 + 625) = sqrt(1250) ≈ 35.36
+    expect(distance).toBeCloseTo(Math.sqrt(1250), 5);
+  });
+
+  it('returns minimal distance when point is at chunk edge', () => {
+    // Chunk (0,0) bounds: X=[0,50], Z=[0,50]
+    // Point at (50, 10, 25) is on east edge, nearest point is (50, 0, 25)
+    const distance = getDistanceToChunk(50, 10, 25, 0, 0, chunkWidth, chunkDepth);
+    expect(distance).toBe(10); // Just the Y distance
+  });
+
+  it('handles point inside chunk near edge', () => {
+    // Chunk (0,0) bounds: X=[0,50], Z=[0,50]
+    // Point at (1, 5, 1) is inside chunk, nearest point is itself
+    const distance = getDistanceToChunk(1, 5, 1, 0, 0, chunkWidth, chunkDepth);
+    expect(distance).toBe(5); // Just the Y distance (nearest point is (1, 0, 1))
   });
 });
 

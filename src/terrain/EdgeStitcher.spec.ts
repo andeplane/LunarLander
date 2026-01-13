@@ -312,7 +312,7 @@ describe(computeStitchedIndices.name, () => {
         { neighborLods: { north: 0, south: 0, east: 0, west: 1 }, description: 'west' },
       ];
       
-      for (const { neighborLods, description } of testCases) {
+      for (const { neighborLods } of testCases) {
         const indices = computeStitchedIndices(4, neighborLods, 0, [4, 2, 1]);
         
         // Extract triangles

@@ -132,15 +132,17 @@ export function getChunkWorldCenter(
 }
 
 /**
- * Calculate distance from a point to a chunk's center.
+ * Calculate distance from a point to the nearest point on a chunk rectangle.
+ * Chunks are assumed to be flat at Y=0.
  * 
  * @param pointX - Point X coordinate
+ * @param pointY - Point Y coordinate (height)
  * @param pointZ - Point Z coordinate
  * @param gridX - Chunk grid X coordinate
  * @param gridZ - Chunk grid Z coordinate
  * @param chunkWidth - Width of each chunk
  * @param chunkDepth - Depth of each chunk
- * @returns Distance in world units
+ * @returns Distance in world units to nearest point on chunk
  */
 export function getDistanceToChunk(
   pointX: number,
@@ -151,10 +153,21 @@ export function getDistanceToChunk(
   chunkWidth: number,
   chunkDepth: number
 ): number {
-  const center = getChunkWorldCenter(gridX, gridZ, chunkWidth, chunkDepth);
-  const dx = pointX - center.x;
-  const dy = pointY; // Chunks are at Y=0
-  const dz = pointZ - center.z;
+  // Calculate chunk bounds in world space
+  const minX = gridX * chunkWidth;
+  const maxX = (gridX + 1) * chunkWidth;
+  const minZ = gridZ * chunkDepth;
+  const maxZ = (gridZ + 1) * chunkDepth;
+  
+  // Clamp camera position to chunk bounds to find nearest point on chunk
+  const nearestX = Math.max(minX, Math.min(maxX, pointX));
+  const nearestZ = Math.max(minZ, Math.min(maxZ, pointZ));
+  const nearestY = 0; // Chunks are flat at Y=0
+  
+  // Calculate 3D distance from camera to nearest point on chunk
+  const dx = pointX - nearestX;
+  const dy = pointY - nearestY;
+  const dz = pointZ - nearestZ;
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
