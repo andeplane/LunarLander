@@ -370,9 +370,15 @@ export class TerrainManager {
   }
 
   /**
-   * Determine which LOD level a chunk should use based on screen-space triangle size
+   * Determine which LOD level a chunk should use based on screen-space triangle size.
+   * Optimized version that accepts pre-calculated camera parameters.
    */
-  private getLodLevelForChunk(gridKey: string, cameraWorldPos: Vector3): number {
+  private getLodLevelForChunkOptimized(
+    gridKey: string,
+    cameraWorldPos: Vector3,
+    fovRadians: number,
+    screenHeight: number
+  ): number {
     const [gridX, gridZ] = parseGridKey(gridKey);
     const distance = getDistanceToChunk(
       cameraWorldPos.x,
@@ -383,11 +389,6 @@ export class TerrainManager {
       this.config.chunkWidth,
       this.config.chunkDepth
     );
-
-    // Get camera FOV and screen height for screen-space calculation
-    const fov = (this.camera as PerspectiveCamera)?.fov ?? 70;
-    const fovRadians = (fov * Math.PI) / 180;
-    const screenHeight = window.innerHeight;
 
     const desiredLod = getLodLevelForScreenSize(
       distance,
@@ -425,10 +426,20 @@ export class TerrainManager {
     // Prune stale requests (chunks no longer in render distance)
     this.requestQueue.pruneStale(nearbySet);
 
+    // Pre-calculate camera parameters once (don't recalculate thousands of times!)
+    const fov = (this.camera as PerspectiveCamera)?.fov ?? 70;
+    const fovRadians = (fov * Math.PI) / 180;
+    const screenHeight = window.innerHeight;
+
     // Request chunks and their appropriate LOD levels
     for (const gridKey of nearbyKeys) {
-      const desiredLod = this.getLodLevelForChunk(gridKey, cameraPosition);
-      
+      const desiredLod = this.getLodLevelForChunkOptimized(
+        gridKey,
+        cameraPosition,
+        fovRadians,
+        screenHeight
+      );
+
       // Ensure chunk entry exists
       if (!this.terrainGrid.has(gridKey)) {
         const entry = this.createChunkEntry(gridKey);
@@ -463,10 +474,11 @@ export class TerrainManager {
     this.dispatchNext();
 
     // Manually control mesh visibility (bypasses Three.js LOD auto-switching)
-    this.updateChunkVisibility(cameraPosition);
+    // Also returns actual LOD levels for reuse in edge stitching
+    const chunkLodLevels = this.updateChunkVisibility(cameraPosition, fovRadians, screenHeight);
 
-    // Track current LOD levels and update edge stitching
-    this.updateEdgeStitching(cameraPosition);
+    // Track current LOD levels and update edge stitching (reuses LOD levels from visibility update)
+    this.updateEdgeStitching(chunkLodLevels);
 
     // Remove distant chunks
     for (const gridKey of this.terrainGrid.keys()) {
@@ -474,17 +486,28 @@ export class TerrainManager {
         this.removeChunk(gridKey);
       }
     }
-    
   }
 
   /**
    * Update mesh visibility for all chunks.
    * Manually controls which LOD mesh is visible, bypassing Three.js LOD auto-switching.
    * Shows the best available LOD (desired or next coarser if not built).
+   * Returns a map of chunk keys to their actual LOD levels for reuse.
    */
-  private updateChunkVisibility(cameraPosition: Vector3): void {
+  private updateChunkVisibility(
+    cameraPosition: Vector3,
+    fovRadians: number,
+    screenHeight: number
+  ): Map<string, number> {
+    const chunkLodLevels = new Map<string, number>();
+    
     for (const [gridKey, entry] of this.terrainGrid.entries()) {
-      const desiredLod = this.getLodLevelForChunk(gridKey, cameraPosition);
+      const desiredLod = this.getLodLevelForChunkOptimized(
+        gridKey,
+        cameraPosition,
+        fovRadians,
+        screenHeight
+      );
       
       // Find best available LOD (desired or next coarser)
       let actualLod = desiredLod;
@@ -507,6 +530,10 @@ export class TerrainManager {
         actualLod = entry.builtLevels.values().next().value ?? 0;
       }
       
+      // Store actual LOD level for reuse
+      entry.currentLodLevel = actualLod;
+      chunkLodLevels.set(gridKey, actualLod);
+      
       // Set visibility: only the actual LOD mesh is visible
       for (let i = 0; i < entry.meshes.length; i++) {
         const mesh = entry.meshes[i];
@@ -515,35 +542,20 @@ export class TerrainManager {
         }
       }
     }
+    
+    return chunkLodLevels;
   }
 
   /**
-   * Update edge stitching for chunks that have LOD mismatches with neighbors
+   * Update edge stitching for chunks that have LOD mismatches with neighbors.
+   * Reuses LOD levels from updateChunkVisibility to avoid recalculating.
    */
-  private updateEdgeStitching(cameraPosition: Vector3): void {
-    // First pass: determine current LOD level for each chunk
-    const chunkLodLevels = new Map<string, number>();
-    
+  private updateEdgeStitching(chunkLodLevels: Map<string, number>): void {
+    // Update edge stitching where needed
     for (const [gridKey, entry] of this.terrainGrid.entries()) {
-      const desiredLod = this.getLodLevelForChunk(gridKey, cameraPosition);
-      // Use the best available LOD that's closest to desired
-      let actualLod = desiredLod;
-      while (actualLod < this.config.lodLevels.length && !entry.builtLevels.has(actualLod)) {
-        actualLod++;
-      }
-      if (actualLod >= this.config.lodLevels.length) {
-        // Fall back to any available LOD
-        actualLod = entry.builtLevels.values().next().value ?? 0;
-      }
-      entry.currentLodLevel = actualLod;
-      chunkLodLevels.set(gridKey, actualLod);
-    }
-
-    // Second pass: update edge stitching where needed
-    for (const [gridKey, entry] of this.terrainGrid.entries()) {
+      const myLod = entry.currentLodLevel;
       const [gridX, gridZ] = parseGridKey(gridKey);
       const neighbors = getNeighborKeys(gridX, gridZ);
-      const myLod = entry.currentLodLevel;
 
       // Get neighbor LOD levels (default to same level if neighbor doesn't exist)
       const neighborLods: NeighborLods = {

@@ -94,6 +94,7 @@ const defaultDependencies: ChunkRequestQueueDependencies = {
  */
 export class ChunkRequestQueue {
   private queue: QueuedRequest[] = [];
+  private queuedSet: Set<string> = new Set(); // O(1) lookup: "gridKey:lodLevel"
   private dependencies: ChunkRequestQueueDependencies;
   private chunkConfig: ChunkConfig;
 
@@ -106,14 +107,23 @@ export class ChunkRequestQueue {
   }
 
   /**
+   * Generate a unique key for a chunk+LOD combination
+   */
+  private getRequestKey(gridKey: string, lodLevel: number): string {
+    return `${gridKey}:${lodLevel}`;
+  }
+
+  /**
    * Add a request to the queue if not already present.
    * @returns true if added, false if duplicate
    */
   add(request: QueuedRequest): boolean {
-    if (this.has(request.gridKey, request.lodLevel)) {
+    const key = this.getRequestKey(request.gridKey, request.lodLevel);
+    if (this.queuedSet.has(key)) {
       return false;
     }
     this.queue.push(request);
+    this.queuedSet.add(key);
     return true;
   }
 
@@ -121,9 +131,8 @@ export class ChunkRequestQueue {
    * Check if a request for the given chunk and LOD level is already queued.
    */
   has(gridKey: string, lodLevel: number): boolean {
-    return this.queue.some(
-      (req) => req.gridKey === gridKey && req.lodLevel === lodLevel
-    );
+    const key = this.getRequestKey(gridKey, lodLevel);
+    return this.queuedSet.has(key);
   }
 
   /**
@@ -131,7 +140,14 @@ export class ChunkRequestQueue {
    * Call this to prune chunks that are no longer in render distance.
    */
   pruneStale(validKeys: Set<string>): void {
-    this.queue = this.queue.filter((req) => validKeys.has(req.gridKey));
+    this.queue = this.queue.filter((req) => {
+      const isValid = validKeys.has(req.gridKey);
+      if (!isValid) {
+        const key = this.getRequestKey(req.gridKey, req.lodLevel);
+        this.queuedSet.delete(key);
+      }
+      return isValid;
+    });
   }
 
   /**
@@ -170,7 +186,12 @@ export class ChunkRequestQueue {
    * Remove and return the highest priority request (first in queue).
    */
   shift(): QueuedRequest | undefined {
-    return this.queue.shift();
+    const request = this.queue.shift();
+    if (request) {
+      const key = this.getRequestKey(request.gridKey, request.lodLevel);
+      this.queuedSet.delete(key);
+    }
+    return request;
   }
 
   /**
@@ -185,5 +206,6 @@ export class ChunkRequestQueue {
    */
   clear(): void {
     this.queue = [];
+    this.queuedSet.clear();
   }
 }
