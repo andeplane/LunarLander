@@ -40,8 +40,8 @@ const terrainConfig: TerrainConfig = {
   renderDistance: 10,    // Chunks to load in each direction
   chunkWidth: 50,       // World units per chunk
   chunkDepth: 50,       // World units per chunk
-  lodLevels: [512, 256, 128, 64],      // Resolution levels (highest to lowest)
-  lodDistances: [0, 100, 200, 400],    // Distance thresholds for each LOD
+  lodLevels: [512, 256, 128, 64, 32, 16, 4],      // Resolution levels (highest to lowest)
+  lodDistances: [0, 50, 100, 200, 400, 800, 1600],    // Distance thresholds for each LOD
 };
 
 // Initialize flight controller
