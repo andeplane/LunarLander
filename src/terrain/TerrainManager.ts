@@ -1,5 +1,5 @@
 import { BufferAttribute, BufferGeometry, LOD, Mesh, Scene, Vector3, Camera, MeshBasicMaterial, Color, PerspectiveCamera } from 'three';
-import { TerrainMaterial } from '../shaders/TerrainMaterial';
+import { MoonMaterial } from '../shaders/MoonMaterial';
 import type { TerrainArgs } from './terrain';
 import type { TerrainWorkerResult } from './TerrainWorker';
 import { 
@@ -50,7 +50,7 @@ export class TerrainManager {
   private terrainGrid: Map<string, ChunkLodEntry> = new Map();
   private requestQueue: ChunkRequestQueue;
   private workerBusy: boolean = false;
-  private material: TerrainMaterial;
+  private material: MoonMaterial;
   private worker: Worker;
   private scene: Scene;
   private config: TerrainConfig;
@@ -63,7 +63,8 @@ export class TerrainManager {
     this.scene = scene;
     this.config = config;
     this.debugMode = config.debugWireframe ?? false;
-    this.material = new TerrainMaterial();
+    // Single shared material instance for all chunks (critical for performance)
+    this.material = new MoonMaterial();
 
     // Base terrain args (without position/resolution - those are per-request)
     this.baseTerrainArgs = {
@@ -261,7 +262,7 @@ export class TerrainManager {
         const mesh = entry.meshes[lodLevel];
         if (mesh) {
           // Dispose old material
-          if (mesh.material instanceof MeshBasicMaterial || mesh.material instanceof TerrainMaterial) {
+          if (mesh.material instanceof MeshBasicMaterial || mesh.material instanceof MoonMaterial) {
             (mesh.material as any).dispose?.();
           }
           

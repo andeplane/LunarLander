@@ -207,6 +207,14 @@ export class Engine {
       this.terrainManager.logChunkDistancesAndLods(this.camera.position);
     }
 
+    // Check for camera position debug (C key)
+    if (this.inputManager?.isKeyJustPressed('c')) {
+      const pos = this.camera.position;
+      const rot = this.camera.rotation;
+      console.log(`Camera Position: x=${pos.x.toFixed(2)}, y=${pos.y.toFixed(2)}, z=${pos.z.toFixed(2)}`);
+      console.log(`Camera Rotation: x=${rot.x.toFixed(4)}, y=${rot.y.toFixed(4)}, z=${rot.z.toFixed(4)}`);
+    }
+
     // Update flight controller
     if (this.flightController) {
       this.flightController.update(deltaTime);
