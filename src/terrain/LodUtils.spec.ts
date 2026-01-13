@@ -157,23 +157,30 @@ describe(getDistanceToChunk.name, () => {
   const chunkWidth = 50;
   const chunkDepth = 50;
 
-  it('returns 0 when point is at chunk center', () => {
-    // Chunk (0,0) center is at (25, 25)
-    const distance = getDistanceToChunk(25, 25, 0, 0, chunkWidth, chunkDepth);
+  it('returns 0 when point is at chunk center at ground level', () => {
+    // Chunk (0,0) center is at (25, 25), point at Y=0
+    const distance = getDistanceToChunk(25, 0, 25, 0, 0, chunkWidth, chunkDepth);
     expect(distance).toBe(0);
   });
 
-  it('returns correct distance for point on axis', () => {
+  it('returns correct distance for point on Z axis', () => {
     // Chunk (0,0) center is at (25, 25)
-    // Point at (25, 75) is 50 units away on Z axis
-    const distance = getDistanceToChunk(25, 75, 0, 0, chunkWidth, chunkDepth);
+    // Point at (25, 0, 75) is 50 units away on Z axis
+    const distance = getDistanceToChunk(25, 0, 75, 0, 0, chunkWidth, chunkDepth);
     expect(distance).toBe(50);
   });
 
-  it('returns correct distance for diagonal', () => {
+  it('returns correct distance for point above chunk', () => {
     // Chunk (0,0) center is at (25, 25)
-    // Point at (25+30, 25+40) = (55, 65) is 50 units away (3-4-5 triangle)
-    const distance = getDistanceToChunk(55, 65, 0, 0, chunkWidth, chunkDepth);
+    // Point directly above at Y=50 is 50 units away
+    const distance = getDistanceToChunk(25, 50, 25, 0, 0, chunkWidth, chunkDepth);
+    expect(distance).toBe(50);
+  });
+
+  it('returns correct 3D distance for diagonal', () => {
+    // Chunk (0,0) center is at (25, 25)
+    // Point at (25+30, 0, 25+40) = (55, 0, 65) is 50 units away horizontally (3-4-5 triangle)
+    const distance = getDistanceToChunk(55, 0, 65, 0, 0, chunkWidth, chunkDepth);
     expect(distance).toBe(50);
   });
 });

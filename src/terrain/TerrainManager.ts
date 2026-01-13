@@ -104,6 +104,40 @@ export class TerrainManager {
     this.camera = camera;
   }
 
+  /**
+   * Compute the distance threshold for a given LOD level.
+   * 
+   * Traditional LOD: finest detail when close, coarser when far.
+   * - LOD 0 (finest) at distance 0
+   * - Coarser LODs at increasing distances
+   */
+  private computeLodDistance(lodLevel: number): number {
+    // Finest LOD shows at distance 0
+    if (lodLevel === 0) {
+      return 0;
+    }
+
+    // For coarser LODs: compute distance where the PREVIOUS FINER LOD's
+    // triangles fall below target pixels (time to switch to coarser)
+    const finerLodIndex = lodLevel - 1;
+    const finerResolution = this.config.lodLevels[finerLodIndex];
+    const edgeLength = this.config.chunkWidth / (finerResolution - 1);
+    
+    // Get camera parameters
+    const fov = (this.camera as PerspectiveCamera)?.fov ?? 70;
+    const fovRadians = (fov * Math.PI) / 180;
+    const screenHeight = window.innerHeight;
+    const tanHalfFov = Math.tan(fovRadians / 2);
+    const tiltFactor = Math.cos(Math.PI / 12); // 15 degrees
+
+    // Solve for distance where finer LOD's triangles = targetPixels
+    // At this distance, we can switch to the coarser LOD
+    const targetPixels = this.config.lodDetailLevel;
+    const distance = (edgeLength * screenHeight * tiltFactor) / (2 * targetPixels * tanHalfFov);
+
+    return distance;
+  }
+
   private setupTerrainWorker(): Worker {
     const worker = new Worker(
       new URL('./TerrainWorker.ts', import.meta.url),
@@ -155,6 +189,9 @@ export class TerrainManager {
       entry.originalIndices[lodLevel] = new Uint32Array(index);
     }
 
+    // Compute bounding sphere for correct frustum culling
+    geometry.computeBoundingSphere();
+
     // Create mesh with appropriate material
     const material = this.debugMode 
       ? this.createDebugMaterial(gridKey)
@@ -171,8 +208,9 @@ export class TerrainManager {
     entry.meshes[lodLevel] = mesh;
     entry.builtLevels.add(lodLevel);
 
-    // Add to LOD object with threshold 0 - we manually control visibility
-    entry.lod.addLevel(mesh, 0);
+    // Add to LOD object with computed distance threshold
+    const distance = this.computeLodDistance(lodLevel);
+    entry.lod.addLevel(mesh, distance);
 
     if (!this.debugMode) {
       this.material.needsUpdate = true;
@@ -247,6 +285,9 @@ export class TerrainManager {
     const lod = new LOD();
     lod.position.x = gridX * this.config.chunkWidth;
     lod.position.z = gridZ * this.config.chunkDepth;
+    
+    // Disable Three.js LOD auto-update - we manually control mesh visibility
+    lod.autoUpdate = false;
     
     // Add LOD to scene
     this.scene.add(lod);
@@ -335,6 +376,7 @@ export class TerrainManager {
     const [gridX, gridZ] = parseGridKey(gridKey);
     const distance = getDistanceToChunk(
       cameraWorldPos.x,
+      cameraWorldPos.y,
       cameraWorldPos.z,
       gridX,
       gridZ,
@@ -347,7 +389,7 @@ export class TerrainManager {
     const fovRadians = (fov * Math.PI) / 180;
     const screenHeight = window.innerHeight;
 
-    return getLodLevelForScreenSize(
+    const desiredLod = getLodLevelForScreenSize(
       distance,
       this.config.lodLevels,
       this.config.chunkWidth,
@@ -355,6 +397,8 @@ export class TerrainManager {
       screenHeight,
       this.config.lodDetailLevel
     );
+
+    return desiredLod;
   }
 
   /**
@@ -430,6 +474,7 @@ export class TerrainManager {
         this.removeChunk(gridKey);
       }
     }
+    
   }
 
   /**
@@ -443,16 +488,23 @@ export class TerrainManager {
       
       // Find best available LOD (desired or next coarser)
       let actualLod = desiredLod;
-      while (actualLod < this.config.lodLevels.length && !entry.builtLevels.has(actualLod)) {
-        actualLod++;
+      if (!entry.builtLevels.has(actualLod)) {
+        // Try coarser
+        while (actualLod < this.config.lodLevels.length && !entry.builtLevels.has(actualLod)) {
+          actualLod++;
+        }
+        
+        // If no coarser LOD available, try finer
+        if (actualLod >= this.config.lodLevels.length) {
+          actualLod = desiredLod - 1;
+          while (actualLod >= 0 && !entry.builtLevels.has(actualLod)) {
+            actualLod--;
+          }
+        }
       }
       
-      // If no coarser LOD available, try finer
-      if (actualLod >= this.config.lodLevels.length) {
-        actualLod = desiredLod - 1;
-        while (actualLod >= 0 && !entry.builtLevels.has(actualLod)) {
-          actualLod--;
-        }
+      if (actualLod < 0 || actualLod >= this.config.lodLevels.length) {
+        actualLod = entry.builtLevels.values().next().value ?? 0;
       }
       
       // Set visibility: only the actual LOD mesh is visible

@@ -144,6 +144,7 @@ export function getChunkWorldCenter(
  */
 export function getDistanceToChunk(
   pointX: number,
+  pointY: number,
   pointZ: number,
   gridX: number,
   gridZ: number,
@@ -152,8 +153,9 @@ export function getDistanceToChunk(
 ): number {
   const center = getChunkWorldCenter(gridX, gridZ, chunkWidth, chunkDepth);
   const dx = pointX - center.x;
+  const dy = pointY; // Chunks are at Y=0
   const dz = pointZ - center.z;
-  return Math.sqrt(dx * dx + dz * dz);
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
 // ============================================================================
