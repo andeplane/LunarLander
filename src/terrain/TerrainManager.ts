@@ -104,40 +104,6 @@ export class TerrainManager {
     this.camera = camera;
   }
 
-  /**
-   * Compute the distance threshold for a given LOD level.
-   * 
-   * Traditional LOD: finest detail when close, coarser when far.
-   * - LOD 0 (finest) at distance 0
-   * - Coarser LODs at increasing distances
-   */
-  private computeLodDistance(lodLevel: number): number {
-    // Finest LOD shows at distance 0
-    if (lodLevel === 0) {
-      return 0;
-    }
-
-    // For coarser LODs: compute distance where the PREVIOUS FINER LOD's
-    // triangles fall below target pixels (time to switch to coarser)
-    const finerLodIndex = lodLevel - 1;
-    const finerResolution = this.config.lodLevels[finerLodIndex];
-    const edgeLength = this.config.chunkWidth / (finerResolution - 1);
-    
-    // Get camera parameters
-    const fov = (this.camera as PerspectiveCamera)?.fov ?? 70;
-    const fovRadians = (fov * Math.PI) / 180;
-    const screenHeight = window.innerHeight;
-    const tanHalfFov = Math.tan(fovRadians / 2);
-    const tiltFactor = Math.cos(Math.PI / 12); // 15 degrees
-
-    // Solve for distance where finer LOD's triangles = targetPixels
-    // At this distance, we can switch to the coarser LOD
-    const targetPixels = this.config.lodDetailLevel;
-    const distance = (edgeLength * screenHeight * tiltFactor) / (2 * targetPixels * tanHalfFov);
-
-    return distance;
-  }
-
   private setupTerrainWorker(): Worker {
     const worker = new Worker(
       new URL('./TerrainWorker.ts', import.meta.url),
@@ -205,9 +171,8 @@ export class TerrainManager {
     entry.meshes[lodLevel] = mesh;
     entry.builtLevels.add(lodLevel);
 
-    // Add to LOD object with computed distance threshold
-    const distance = this.computeLodDistance(lodLevel);
-    entry.lod.addLevel(mesh, distance);
+    // Add to LOD object with threshold 0 - we manually control visibility
+    entry.lod.addLevel(mesh, 0);
 
     if (!this.debugMode) {
       this.material.needsUpdate = true;
@@ -453,12 +418,8 @@ export class TerrainManager {
     // Dispatch next request if worker is idle
     this.dispatchNext();
 
-    // Update LOD objects (Three.js handles visibility switching)
-    if (this.camera) {
-      for (const entry of this.terrainGrid.values()) {
-        entry.lod.update(this.camera);
-      }
-    }
+    // Manually control mesh visibility (bypasses Three.js LOD auto-switching)
+    this.updateChunkVisibility(cameraPosition);
 
     // Track current LOD levels and update edge stitching
     this.updateEdgeStitching(cameraPosition);
@@ -467,6 +428,39 @@ export class TerrainManager {
     for (const gridKey of this.terrainGrid.keys()) {
       if (!nearbySet.has(gridKey)) {
         this.removeChunk(gridKey);
+      }
+    }
+  }
+
+  /**
+   * Update mesh visibility for all chunks.
+   * Manually controls which LOD mesh is visible, bypassing Three.js LOD auto-switching.
+   * Shows the best available LOD (desired or next coarser if not built).
+   */
+  private updateChunkVisibility(cameraPosition: Vector3): void {
+    for (const [gridKey, entry] of this.terrainGrid.entries()) {
+      const desiredLod = this.getLodLevelForChunk(gridKey, cameraPosition);
+      
+      // Find best available LOD (desired or next coarser)
+      let actualLod = desiredLod;
+      while (actualLod < this.config.lodLevels.length && !entry.builtLevels.has(actualLod)) {
+        actualLod++;
+      }
+      
+      // If no coarser LOD available, try finer
+      if (actualLod >= this.config.lodLevels.length) {
+        actualLod = desiredLod - 1;
+        while (actualLod >= 0 && !entry.builtLevels.has(actualLod)) {
+          actualLod--;
+        }
+      }
+      
+      // Set visibility: only the actual LOD mesh is visible
+      for (let i = 0; i < entry.meshes.length; i++) {
+        const mesh = entry.meshes[i];
+        if (mesh) {
+          mesh.visible = (i === actualLod);
+        }
       }
     }
   }
