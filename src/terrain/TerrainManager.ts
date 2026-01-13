@@ -1,35 +1,71 @@
-import { BufferAttribute, BufferGeometry, Mesh, Scene, Vector3 } from 'three';
+import { BufferAttribute, BufferGeometry, LOD, Mesh, Scene, Vector3, Camera } from 'three';
 import { TerrainMaterial } from '../shaders/TerrainMaterial';
 import type { TerrainArgs } from './terrain';
+import type { TerrainWorkerResult } from './TerrainWorker';
+import { 
+  getNeighborKeys, 
+  parseGridKey,
+  getDistanceToChunk,
+  type NeighborLods 
+} from './LodUtils';
+import { computeStitchedIndices } from './EdgeStitcher';
 
 export interface TerrainConfig {
   renderDistance: number;
-  resolution: number;
   chunkWidth: number;
   chunkDepth: number;
+  /** Resolution levels from highest to lowest, e.g. [512, 256, 128, 64] */
+  lodLevels: number[];
+  /** Distance thresholds for each LOD level (in world units), e.g. [0, 100, 200, 400] */
+  lodDistances: number[];
 }
 
-interface ChunkEntry {
-  mesh: Mesh;
-  resolution: number;
+/**
+ * Entry for a chunk with LOD support
+ */
+interface ChunkLodEntry {
+  /** THREE.LOD object containing all mesh levels */
+  lod: LOD;
+  /** Meshes at each LOD level (index matches lodLevels) */
+  meshes: (Mesh | null)[];
+  /** Track which LOD levels have been built */
+  builtLevels: Set<number>;
+  /** Current active LOD level (for edge stitching) */
+  currentLodLevel: number;
+  /** Original index buffers before stitching (for restoration) */
+  originalIndices: (Uint32Array | null)[];
+}
+
+/**
+ * Pending mesh request tracking
+ */
+interface PendingRequest {
+  gridKey: string;
+  lodLevel: number;
 }
 
 export class TerrainManager {
-  private terrainGrid: Map<string, ChunkEntry> = new Map();
-  private scheduledKeys: Set<string> = new Set();
+  private terrainGrid: Map<string, ChunkLodEntry> = new Map();
+  private pendingRequests: Map<string, PendingRequest> = new Map(); // requestKey -> request
   private material: TerrainMaterial;
   private worker: Worker;
   private scene: Scene;
   private config: TerrainConfig;
-  private terrainArgs: TerrainArgs;
+  private baseTerrainArgs: Omit<TerrainArgs, 'resolution' | 'posX' | 'posZ'>;
+  private camera: Camera | null = null;
 
   constructor(scene: Scene, config: TerrainConfig) {
     this.scene = scene;
     this.config = config;
     this.material = new TerrainMaterial();
 
-    // Default terrain args (Earth-like terrain)
-    this.terrainArgs = {
+    // Validate config
+    if (config.lodLevels.length !== config.lodDistances.length) {
+      console.warn('TerrainManager: lodLevels and lodDistances arrays should have same length');
+    }
+
+    // Base terrain args (without position/resolution - those are per-request)
+    this.baseTerrainArgs = {
       seed: 0,
       gain: 0.5,
       lacunarity: 2,
@@ -47,15 +83,19 @@ export class TerrainManager {
       riversFrequency: 0.13,
       smoothLowerPlanes: 0,
       octaves: 10,
-      resolution: config.resolution,
       width: config.chunkWidth,
       depth: config.chunkDepth,
-      posX: 0,
-      posZ: 0,
       renderDistance: config.renderDistance,
     };
 
     this.worker = this.setupTerrainWorker();
+  }
+
+  /**
+   * Set camera reference for LOD updates
+   */
+  setCamera(camera: Camera): void {
+    this.camera = camera;
   }
 
   private setupTerrainWorker(): Worker {
@@ -64,46 +104,123 @@ export class TerrainManager {
       { type: 'module' }
     );
 
-    worker.onmessage = (e) => {
-      const { positions, normals, index, biome, gridKey } = e.data;
-
-      // Remove old mesh if it exists
-      if (this.terrainGrid.has(gridKey)) {
-        const old = this.terrainGrid.get(gridKey)!;
-        this.scene.remove(old.mesh);
-        old.mesh.geometry.dispose();
-        this.terrainGrid.delete(gridKey);
-      }
-
-      // Create new geometry
-      const terrainGeometry = new BufferGeometry();
-      terrainGeometry.setAttribute(
-        'position',
-        new BufferAttribute(new Float32Array(positions), 3)
-      );
-      terrainGeometry.setAttribute(
-        'normal',
-        new BufferAttribute(new Float32Array(normals), 3)
-      );
-      terrainGeometry.setAttribute(
-        'biome',
-        new BufferAttribute(new Float32Array(biome), 3)
-      );
-      terrainGeometry.setIndex(new BufferAttribute(new Uint32Array(index), 1));
-
-      // Create mesh and position it
-      const newTerrain = new Mesh(terrainGeometry, this.material);
-      const [gridX, gridZ] = gridKey.split(',').map(Number);
-      newTerrain.position.x = gridX * this.config.chunkWidth;
-      newTerrain.position.z = gridZ * this.config.chunkDepth;
-
-      this.terrainGrid.set(gridKey, { mesh: newTerrain, resolution: this.terrainArgs.resolution });
-      this.scene.add(newTerrain);
-      this.scheduledKeys.delete(gridKey);
-      this.material.needsUpdate = true;
+    worker.onmessage = (e: MessageEvent<TerrainWorkerResult>) => {
+      this.handleWorkerResult(e.data);
     };
 
     return worker;
+  }
+
+  /**
+   * Handle mesh data from worker
+   */
+  private handleWorkerResult(result: TerrainWorkerResult): void {
+    const { positions, normals, index, biome, gridKey, lodLevel } = result;
+    const requestKey = `${gridKey}:${lodLevel}`;
+    
+    // Remove from pending
+    this.pendingRequests.delete(requestKey);
+
+    // Get or create chunk entry
+    let entry = this.terrainGrid.get(gridKey);
+    if (!entry) {
+      entry = this.createChunkEntry(gridKey);
+      this.terrainGrid.set(gridKey, entry);
+    }
+
+    // Create geometry
+    const geometry = new BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new BufferAttribute(new Float32Array(positions), 3)
+    );
+    geometry.setAttribute(
+      'normal',
+      new BufferAttribute(new Float32Array(normals), 3)
+    );
+    if (biome) {
+      geometry.setAttribute(
+        'biome',
+        new BufferAttribute(new Float32Array(biome), 3)
+      );
+    }
+    if (index) {
+      geometry.setIndex(new BufferAttribute(new Uint32Array(index), 1));
+      // Store original indices for stitching restoration
+      entry.originalIndices[lodLevel] = new Uint32Array(index);
+    }
+
+    // Create mesh
+    const mesh = new Mesh(geometry, this.material);
+    
+    // Store mesh at this LOD level
+    if (entry.meshes[lodLevel]) {
+      // Dispose old mesh at this level
+      entry.meshes[lodLevel]!.geometry.dispose();
+      entry.lod.remove(entry.meshes[lodLevel]!);
+    }
+    
+    entry.meshes[lodLevel] = mesh;
+    entry.builtLevels.add(lodLevel);
+
+    // Add to LOD object with distance threshold
+    const distance = this.config.lodDistances[lodLevel] ?? 0;
+    entry.lod.addLevel(mesh, distance);
+
+    this.material.needsUpdate = true;
+  }
+
+  /**
+   * Create a new chunk entry with LOD object
+   */
+  private createChunkEntry(gridKey: string): ChunkLodEntry {
+    const [gridX, gridZ] = parseGridKey(gridKey);
+    
+    const lod = new LOD();
+    lod.position.x = gridX * this.config.chunkWidth;
+    lod.position.z = gridZ * this.config.chunkDepth;
+    
+    // Add LOD to scene
+    this.scene.add(lod);
+
+    return {
+      lod,
+      meshes: new Array(this.config.lodLevels.length).fill(null),
+      builtLevels: new Set(),
+      currentLodLevel: 0,
+      originalIndices: new Array(this.config.lodLevels.length).fill(null),
+    };
+  }
+
+  /**
+   * Request a specific LOD level for a chunk
+   */
+  private requestChunkLod(gridKey: string, lodLevel: number): void {
+    const requestKey = `${gridKey}:${lodLevel}`;
+    
+    // Already pending?
+    if (this.pendingRequests.has(requestKey)) {
+      return;
+    }
+
+    // Already built?
+    const entry = this.terrainGrid.get(gridKey);
+    if (entry?.builtLevels.has(lodLevel)) {
+      return;
+    }
+
+    const [gridX, gridZ] = parseGridKey(gridKey);
+    const resolution = this.config.lodLevels[lodLevel] ?? this.config.lodLevels[0];
+
+    const args: TerrainArgs = {
+      ...this.baseTerrainArgs,
+      resolution,
+      posX: gridX * this.config.chunkWidth / 25,
+      posZ: gridZ * this.config.chunkDepth / 25,
+    };
+
+    this.pendingRequests.set(requestKey, { gridKey, lodLevel });
+    this.worker.postMessage({ terrainArgs: args, gridKey, lodLevel });
   }
 
   private getNearbyChunkPositionKeys(center: Vector3, radius: number): string[] {
@@ -127,10 +244,33 @@ export class TerrainManager {
   }
 
   /**
+   * Determine which LOD level a chunk should use based on distance
+   */
+  private getLodLevelForChunk(gridKey: string, cameraWorldPos: Vector3): number {
+    const [gridX, gridZ] = parseGridKey(gridKey);
+    const distance = getDistanceToChunk(
+      cameraWorldPos.x,
+      cameraWorldPos.z,
+      gridX,
+      gridZ,
+      this.config.chunkWidth,
+      this.config.chunkDepth
+    );
+
+    // Find appropriate LOD level based on distance thresholds
+    for (let i = this.config.lodDistances.length - 1; i >= 0; i--) {
+      if (distance >= this.config.lodDistances[i]) {
+        return i;
+      }
+    }
+    return 0;
+  }
+
+  /**
    * Update terrain based on camera position
    */
   update(cameraPosition: Vector3): void {
-    // Convert camera position to grid coordinates
+    // Convert camera position to grid coordinates for chunk selection
     const camPosInGrid = cameraPosition.clone();
     camPosInGrid.x /= this.config.chunkWidth;
     camPosInGrid.z /= this.config.chunkDepth;
@@ -138,32 +278,160 @@ export class TerrainManager {
 
     const renderDistance = Math.floor(this.config.renderDistance);
 
-    // Generate nearby chunks
-    for (const gridKey of this.getNearbyChunkPositionKeys(camPosInGrid, renderDistance)) {
-      if (!this.terrainGrid.has(gridKey) && !this.scheduledKeys.has(gridKey)) {
-        this.scheduledKeys.add(gridKey);
-        const [gridX, gridZ] = gridKey.split(',').map(Number);
+    // Get chunks that should be loaded
+    const nearbyKeys = this.getNearbyChunkPositionKeys(camPosInGrid, renderDistance);
+    const nearbySet = new Set(nearbyKeys);
 
-        // Update terrain args with chunk position
-        const args = { ...this.terrainArgs };
-        args.posX = gridX * this.config.chunkWidth / 25;
-        args.posZ = gridZ * this.config.chunkDepth / 25;
+    // Request chunks and their appropriate LOD levels
+    for (const gridKey of nearbyKeys) {
+      const desiredLod = this.getLodLevelForChunk(gridKey, cameraPosition);
+      
+      // Ensure chunk entry exists
+      if (!this.terrainGrid.has(gridKey)) {
+        const entry = this.createChunkEntry(gridKey);
+        this.terrainGrid.set(gridKey, entry);
+      }
 
-        this.worker.postMessage({ terrainArgs: args, gridKey });
+      // Request the desired LOD level if not built
+      const entry = this.terrainGrid.get(gridKey)!;
+      if (!entry.builtLevels.has(desiredLod)) {
+        this.requestChunkLod(gridKey, desiredLod);
+      }
+
+      // Also request adjacent LOD levels for smooth transitions
+      // Request one level higher detail (lower index) and one lower detail (higher index)
+      if (desiredLod > 0 && !entry.builtLevels.has(desiredLod - 1)) {
+        this.requestChunkLod(gridKey, desiredLod - 1);
+      }
+      if (desiredLod < this.config.lodLevels.length - 1 && !entry.builtLevels.has(desiredLod + 1)) {
+        this.requestChunkLod(gridKey, desiredLod + 1);
       }
     }
+
+    // Update LOD objects (Three.js handles visibility switching)
+    if (this.camera) {
+      for (const entry of this.terrainGrid.values()) {
+        entry.lod.update(this.camera);
+      }
+    }
+
+    // Track current LOD levels and update edge stitching
+    this.updateEdgeStitching(cameraPosition);
 
     // Remove distant chunks
     for (const gridKey of this.terrainGrid.keys()) {
-      const [iX, iZ] = gridKey.split(',').map(Number);
-      const distanceToCamera = camPosInGrid.distanceTo(new Vector3(iX, 0, iZ));
-      if (distanceToCamera > renderDistance) {
-        const entry = this.terrainGrid.get(gridKey)!;
-        this.scene.remove(entry.mesh);
-        entry.mesh.geometry.dispose();
-        this.terrainGrid.delete(gridKey);
+      if (!nearbySet.has(gridKey)) {
+        this.removeChunk(gridKey);
       }
     }
+  }
+
+  /**
+   * Update edge stitching for chunks that have LOD mismatches with neighbors
+   */
+  private updateEdgeStitching(cameraPosition: Vector3): void {
+    // First pass: determine current LOD level for each chunk
+    const chunkLodLevels = new Map<string, number>();
+    
+    for (const [gridKey, entry] of this.terrainGrid.entries()) {
+      const desiredLod = this.getLodLevelForChunk(gridKey, cameraPosition);
+      // Use the best available LOD that's closest to desired
+      let actualLod = desiredLod;
+      while (actualLod < this.config.lodLevels.length && !entry.builtLevels.has(actualLod)) {
+        actualLod++;
+      }
+      if (actualLod >= this.config.lodLevels.length) {
+        // Fall back to any available LOD
+        actualLod = entry.builtLevels.values().next().value ?? 0;
+      }
+      entry.currentLodLevel = actualLod;
+      chunkLodLevels.set(gridKey, actualLod);
+    }
+
+    // Second pass: update edge stitching where needed
+    for (const [gridKey, entry] of this.terrainGrid.entries()) {
+      const [gridX, gridZ] = parseGridKey(gridKey);
+      const neighbors = getNeighborKeys(gridX, gridZ);
+      const myLod = entry.currentLodLevel;
+
+      // Get neighbor LOD levels (default to same level if neighbor doesn't exist)
+      const neighborLods: NeighborLods = {
+        north: chunkLodLevels.get(neighbors.north) ?? myLod,
+        south: chunkLodLevels.get(neighbors.south) ?? myLod,
+        east: chunkLodLevels.get(neighbors.east) ?? myLod,
+        west: chunkLodLevels.get(neighbors.west) ?? myLod,
+      };
+
+      // Update stitching for the current LOD mesh
+      this.applyEdgeStitching(entry, myLod, neighborLods);
+    }
+  }
+
+  /**
+   * Apply edge stitching to a specific LOD level of a chunk
+   */
+  private applyEdgeStitching(
+    entry: ChunkLodEntry,
+    lodLevel: number,
+    neighborLods: NeighborLods
+  ): void {
+    const mesh = entry.meshes[lodLevel];
+    if (!mesh) return;
+
+    const resolution = this.config.lodLevels[lodLevel];
+    if (!resolution) return;
+
+    // Check if stitching is needed (any neighbor has lower resolution = higher LOD index)
+    const needsStitching = 
+      neighborLods.north > lodLevel ||
+      neighborLods.south > lodLevel ||
+      neighborLods.east > lodLevel ||
+      neighborLods.west > lodLevel;
+
+    if (!needsStitching) {
+      // Restore original indices if we have them
+      const original = entry.originalIndices[lodLevel];
+      if (original && mesh.geometry.index) {
+        mesh.geometry.setIndex(new BufferAttribute(original.slice(), 1));
+      }
+      return;
+    }
+
+    // Compute stitched indices
+    const stitchedIndices = computeStitchedIndices(
+      resolution,
+      neighborLods,
+      lodLevel,
+      this.config.lodLevels
+    );
+
+    // Apply to geometry
+    mesh.geometry.setIndex(new BufferAttribute(stitchedIndices, 1));
+  }
+
+  /**
+   * Remove a chunk and clean up its resources
+   */
+  private removeChunk(gridKey: string): void {
+    const entry = this.terrainGrid.get(gridKey);
+    if (!entry) return;
+
+    // Remove LOD from scene
+    this.scene.remove(entry.lod);
+
+    // Dispose all mesh geometries
+    for (const mesh of entry.meshes) {
+      if (mesh) {
+        mesh.geometry.dispose();
+      }
+    }
+
+    // Clear pending requests for this chunk
+    for (let i = 0; i < this.config.lodLevels.length; i++) {
+      this.pendingRequests.delete(`${gridKey}:${i}`);
+    }
+
+    this.terrainGrid.delete(gridKey);
   }
 
   /**
@@ -177,7 +445,7 @@ export class TerrainManager {
    * Get build queue length
    */
   getBuildQueueLength(): number {
-    return this.scheduledKeys.size;
+    return this.pendingRequests.size;
   }
 
   /**
@@ -185,11 +453,13 @@ export class TerrainManager {
    */
   dispose(): void {
     this.worker.terminate();
-    for (const entry of this.terrainGrid.values()) {
-      this.scene.remove(entry.mesh);
-      entry.mesh.geometry.dispose();
+    
+    for (const gridKey of this.terrainGrid.keys()) {
+      this.removeChunk(gridKey);
     }
+    
     this.terrainGrid.clear();
+    this.pendingRequests.clear();
     this.material.dispose();
   }
 }

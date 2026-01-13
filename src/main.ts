@@ -38,9 +38,10 @@ const cameraConfig: CameraConfig = {
 // Terrain configuration
 const terrainConfig: TerrainConfig = {
   renderDistance: 10,    // Chunks to load in each direction
-  resolution: 512,      // Vertices per chunk edge
   chunkWidth: 50,       // World units per chunk
   chunkDepth: 50,       // World units per chunk
+  lodLevels: [512, 256, 128, 64],      // Resolution levels (highest to lowest)
+  lodDistances: [0, 100, 200, 400],    // Distance thresholds for each LOD
 };
 
 // Initialize flight controller
@@ -53,6 +54,7 @@ engine.setFlightController(flightController);
 
 // Initialize terrain manager
 const terrainManager = new TerrainManager(engine.getScene(), terrainConfig);
+terrainManager.setCamera(engine.getCamera());
 engine.setTerrainManager(terrainManager);
 
 // Set input manager in engine
