@@ -146,8 +146,8 @@ export class TerrainManager {
 
         // Update terrain args with chunk position
         const args = { ...this.terrainArgs };
-        args.posX = gridX * 0.4;
-        args.posZ = gridZ * 0.4;
+        args.posX = gridX * this.config.chunkWidth / 25;
+        args.posZ = gridZ * this.config.chunkDepth / 25;
 
         this.worker.postMessage({ terrainArgs: args, gridKey });
       }
