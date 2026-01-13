@@ -30,6 +30,7 @@ export class Engine {
   private frameCount: number = 0;
   private fpsUpdateTime: number = 0;
   private currentFPS: number = 0;
+  private lastTriangleCount: number = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     // Initialize renderer
@@ -107,7 +108,7 @@ export class Engine {
       <strong>Render Stats</strong><br>
       FPS: ${this.currentFPS}<br>
       Draw Calls: ${render.calls}<br>
-      Triangles: ${render.triangles.toLocaleString()}<br>
+      Triangles: ${this.lastTriangleCount.toLocaleString()}<br>
       <br>
       <strong>Memory</strong><br>
       Geometries: ${memory.geometries}<br>
@@ -225,6 +226,8 @@ export class Engine {
    */
   private render(): void {
     this.renderer.render(this.scene, this.camera);
+    // Read triangle count after rendering (renderer.info is populated during render)
+    this.lastTriangleCount = this.renderer.info.render.triangles;
   }
 
   /**
