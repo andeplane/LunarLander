@@ -37,10 +37,10 @@ const cameraConfig: CameraConfig = {
 
 // Terrain configuration
 const terrainConfig: TerrainConfig = {
-  renderDistance: 5,    // Chunks to load in each direction
-  resolution: 128,      // Vertices per chunk edge
-  chunkWidth: 10,       // World units per chunk
-  chunkDepth: 10,       // World units per chunk
+  renderDistance: 10,    // Chunks to load in each direction
+  resolution: 512,      // Vertices per chunk edge
+  chunkWidth: 50,       // World units per chunk
+  chunkDepth: 50,       // World units per chunk
 };
 
 // Initialize flight controller
