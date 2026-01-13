@@ -268,6 +268,7 @@ function generateStitchedEdge(
 /**
  * Generate fan triangles for north edge (z=0)
  * Connects edge vertices at z=0 to interior vertices at z=1
+ * All triangles fan from edgeLeft, with closing triangle to edgeRight
  */
 function generateNorthEdgeFan(
   indices: number[],
@@ -281,39 +282,24 @@ function generateNorthEdgeFan(
   const edgeLeft = getVertexIndex(startX, 0, resolution);
   const edgeRight = getVertexIndex(endX, 0, resolution);
   
-  // Create fan from interior row (z=1) to the two edge vertices
+  // Create fan from edgeLeft through all interior vertices
   for (let x = startX; x < endX; x++) {
     const interiorLeft = getVertexIndex(x, 1, resolution);
     const interiorRight = getVertexIndex(x + 1, 1, resolution);
     
-    if (x === startX) {
-      // First triangle connects to left edge vertex
-      indices.push(edgeLeft, interiorLeft, interiorRight);
-    }
-    
-    if (x === endX - 1) {
-      // Last triangle connects to right edge vertex
-      indices.push(interiorLeft, interiorRight, edgeRight);
-      // Also need triangle from left to right edge through last interior
-      if (endX - startX > 1) {
-        indices.push(edgeLeft, interiorRight, edgeRight);
-      }
-    } else if (x > startX) {
-      // Middle triangles connect interior vertices to left edge
-      indices.push(edgeLeft, interiorLeft, interiorRight);
-    }
+    // Fan triangle from edgeLeft through interior segment (CCW winding)
+    indices.push(edgeLeft, interiorLeft, interiorRight);
   }
   
-  // If step is exactly 1 cell, simpler case
-  if (endX - startX === 1) {
-    // Already handled above, but need to add the quad completion
-    const interiorRight = getVertexIndex(endX, 1, resolution);
-    indices.push(edgeLeft, interiorRight, edgeRight);
-  }
+  // Closing triangle: edgeLeft to last interior to edgeRight (CCW winding)
+  const lastInterior = getVertexIndex(endX, 1, resolution);
+  indices.push(edgeLeft, lastInterior, edgeRight);
 }
 
 /**
  * Generate fan triangles for south edge (z=resolution)
+ * Connects edge vertices at z=resolution to interior vertices at z=resolution-1
+ * All triangles fan from edgeLeft, with closing triangle to edgeRight
  */
 function generateSouthEdgeFan(
   indices: number[],
@@ -326,32 +312,25 @@ function generateSouthEdgeFan(
   const edgeLeft = getVertexIndex(startX, resolution, resolution);
   const edgeRight = getVertexIndex(endX, resolution, resolution);
   
+  // Create fan from edgeLeft through all interior vertices
+  // South edge needs reversed winding for CCW (interior is above edge)
   for (let x = startX; x < endX; x++) {
     const interiorLeft = getVertexIndex(x, resolution - 1, resolution);
     const interiorRight = getVertexIndex(x + 1, resolution - 1, resolution);
     
-    if (x === startX) {
-      indices.push(interiorLeft, edgeLeft, interiorRight);
-    }
-    
-    if (x === endX - 1) {
-      indices.push(interiorRight, edgeLeft, edgeRight);
-      if (endX - startX > 1) {
-        indices.push(interiorLeft, edgeRight, interiorRight);
-      }
-    } else if (x > startX) {
-      indices.push(interiorLeft, edgeLeft, interiorRight);
-    }
+    // Fan triangle from edgeLeft through interior segment (CCW winding)
+    indices.push(interiorLeft, edgeLeft, interiorRight);
   }
   
-  if (endX - startX === 1) {
-    const interiorRight = getVertexIndex(endX, resolution - 1, resolution);
-    indices.push(interiorRight, edgeLeft, edgeRight);
-  }
+  // Closing triangle: last interior to edgeLeft to edgeRight (CCW winding)
+  const lastInterior = getVertexIndex(endX, resolution - 1, resolution);
+  indices.push(lastInterior, edgeLeft, edgeRight);
 }
 
 /**
  * Generate fan triangles for west edge (x=0)
+ * Connects edge vertices at x=0 to interior vertices at x=1
+ * All triangles fan from edgeTop, with closing triangle to edgeBottom
  */
 function generateWestEdgeFan(
   indices: number[],
@@ -364,32 +343,24 @@ function generateWestEdgeFan(
   const edgeTop = getVertexIndex(0, startZ, resolution);
   const edgeBottom = getVertexIndex(0, endZ, resolution);
   
+  // Create fan from edgeTop through all interior vertices
   for (let z = startZ; z < endZ; z++) {
     const interiorTop = getVertexIndex(1, z, resolution);
     const interiorBottom = getVertexIndex(1, z + 1, resolution);
     
-    if (z === startZ) {
-      indices.push(edgeTop, interiorBottom, interiorTop);
-    }
-    
-    if (z === endZ - 1) {
-      indices.push(edgeTop, edgeBottom, interiorBottom);
-      if (endZ - startZ > 1) {
-        indices.push(interiorTop, interiorBottom, edgeBottom);
-      }
-    } else if (z > startZ) {
-      indices.push(edgeTop, interiorBottom, interiorTop);
-    }
+    // Fan triangle from edgeTop through interior segment (CCW winding)
+    indices.push(edgeTop, interiorBottom, interiorTop);
   }
   
-  if (endZ - startZ === 1) {
-    const interiorBottom = getVertexIndex(1, endZ, resolution);
-    indices.push(edgeTop, edgeBottom, interiorBottom);
-  }
+  // Closing triangle: edgeTop to edgeBottom to last interior (CCW winding)
+  const lastInterior = getVertexIndex(1, endZ, resolution);
+  indices.push(edgeTop, edgeBottom, lastInterior);
 }
 
 /**
  * Generate fan triangles for east edge (x=resolution)
+ * Connects edge vertices at x=resolution to interior vertices at x=resolution-1
+ * All triangles fan from edgeTop, with closing triangle to edgeBottom
  */
 function generateEastEdgeFan(
   indices: number[],
@@ -402,28 +373,18 @@ function generateEastEdgeFan(
   const edgeTop = getVertexIndex(resolution, startZ, resolution);
   const edgeBottom = getVertexIndex(resolution, endZ, resolution);
   
+  // Create fan from edgeTop through all interior vertices
   for (let z = startZ; z < endZ; z++) {
     const interiorTop = getVertexIndex(resolution - 1, z, resolution);
     const interiorBottom = getVertexIndex(resolution - 1, z + 1, resolution);
     
-    if (z === startZ) {
-      indices.push(edgeTop, interiorTop, interiorBottom);
-    }
-    
-    if (z === endZ - 1) {
-      indices.push(edgeTop, interiorBottom, edgeBottom);
-      if (endZ - startZ > 1) {
-        indices.push(interiorTop, edgeBottom, interiorBottom);
-      }
-    } else if (z > startZ) {
-      indices.push(edgeTop, interiorTop, interiorBottom);
-    }
+    // Fan triangle from edgeTop through interior segment (CCW winding)
+    indices.push(edgeTop, interiorTop, interiorBottom);
   }
   
-  if (endZ - startZ === 1) {
-    const interiorBottom = getVertexIndex(resolution - 1, endZ, resolution);
-    indices.push(edgeTop, interiorBottom, edgeBottom);
-  }
+  // Closing triangle: edgeTop to last interior to edgeBottom (CCW winding)
+  const lastInterior = getVertexIndex(resolution - 1, endZ, resolution);
+  indices.push(edgeTop, lastInterior, edgeBottom);
 }
 
 /**

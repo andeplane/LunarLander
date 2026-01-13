@@ -262,6 +262,76 @@ describe(computeStitchedIndices.name, () => {
       expect(indices.length % 3).toBe(0);
     });
   });
+
+  describe('edge fan structure', () => {
+    it('generates consistent fan pattern for north edge', () => {
+      // Resolution 4, north neighbor has stepRatio 2
+      const neighborLods: NeighborLods = { north: 1, south: 0, east: 0, west: 0 };
+      const indices = computeStitchedIndices(4, neighborLods, 0, [4, 2, 1]);
+      
+      // Extract triangles (groups of 3)
+      const triangles: number[][] = [];
+      for (let i = 0; i < indices.length; i += 3) {
+        triangles.push([indices[i], indices[i + 1], indices[i + 2]]);
+      }
+      
+      // North edge vertices are at z=0: indices 0, 1, 2, 3, 4
+      // Interior vertices are at z=1: indices 5, 6, 7, 8, 9
+      const northEdgeVertices = new Set([0, 1, 2, 3, 4]);
+      
+      // Find triangles that touch the north edge (contain a north edge vertex)
+      const northEdgeTriangles = triangles.filter(tri => 
+        tri.some(v => northEdgeVertices.has(v))
+      );
+      
+      // All north edge triangles should form a fan from edgeLeft (index 0)
+      // Each triangle should contain edgeLeft (0) or edgeRight (4)
+      const edgeLeft = 0;
+      const edgeRight = 4;
+      
+      // Verify fan structure: most triangles should share edgeLeft
+      const trianglesWithEdgeLeft = northEdgeTriangles.filter(tri => tri.includes(edgeLeft));
+      const trianglesWithEdgeRight = northEdgeTriangles.filter(tri => tri.includes(edgeRight));
+      
+      // Should have at least one triangle with each edge vertex
+      expect(trianglesWithEdgeLeft.length).toBeGreaterThan(0);
+      expect(trianglesWithEdgeRight.length).toBeGreaterThan(0);
+      
+      // All triangles should be valid (no duplicate vertices in same triangle)
+      for (const tri of triangles) {
+        expect(new Set(tri).size).toBe(3); // All 3 vertices should be unique
+      }
+    });
+
+    it('generates consistent fan pattern for all edges', () => {
+      // Test all four edges with lower LOD neighbors
+      const testCases: Array<{ neighborLods: NeighborLods; description: string }> = [
+        { neighborLods: { north: 1, south: 0, east: 0, west: 0 }, description: 'north' },
+        { neighborLods: { north: 0, south: 1, east: 0, west: 0 }, description: 'south' },
+        { neighborLods: { north: 0, south: 0, east: 1, west: 0 }, description: 'east' },
+        { neighborLods: { north: 0, south: 0, east: 0, west: 1 }, description: 'west' },
+      ];
+      
+      for (const { neighborLods, description } of testCases) {
+        const indices = computeStitchedIndices(4, neighborLods, 0, [4, 2, 1]);
+        
+        // Extract triangles
+        const triangles: number[][] = [];
+        for (let i = 0; i < indices.length; i += 3) {
+          triangles.push([indices[i], indices[i + 1], indices[i + 2]]);
+        }
+        
+        // Verify all triangles are valid (no degenerate triangles)
+        for (const tri of triangles) {
+          expect(new Set(tri).size).toBe(3); // All vertices unique
+          expect(tri.every(v => v >= 0 && v < 25)).toBe(true); // Valid vertex indices (5x5 grid)
+        }
+        
+        // Should have generated triangles
+        expect(triangles.length).toBeGreaterThan(0);
+      }
+    });
+  });
 });
 
 describe('clearStitchCache', () => {
