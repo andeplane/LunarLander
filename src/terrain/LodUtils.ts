@@ -155,3 +155,111 @@ export function getDistanceToChunk(
   const dz = pointZ - center.z;
   return Math.sqrt(dx * dx + dz * dz);
 }
+
+// ============================================================================
+// Screen-space LOD selection
+// ============================================================================
+
+/**
+ * Default terrain tilt angle for screen-space projection (15 degrees in radians)
+ */
+const DEFAULT_TERRAIN_TILT_RADIANS = Math.PI / 12;
+
+/**
+ * Target screen-space triangle size for LOD selection.
+ * Lower values = more detail, higher values = better performance.
+ */
+export enum LodDetailLevel {
+  /** Maximum detail - ~1 pixel triangles */
+  Maximum = 1,
+  /** High detail - ~2 pixel triangles */
+  High = 2,
+  /** Balanced detail/performance - ~4 pixel triangles */
+  Balanced = 4,
+  /** Performance focused - ~8 pixel triangles */
+  Performance = 8,
+}
+
+/**
+ * Calculate triangle edge length for a given LOD resolution.
+ * For a grid with `resolution` vertices over `chunkWidth`, each triangle
+ * edge spans chunkWidth / (resolution - 1).
+ * 
+ * @param resolution - Number of vertices per edge (e.g., 512, 256, 128, 64)
+ * @param chunkWidth - Width of the chunk in world units
+ * @returns Triangle edge length in world units
+ */
+export function getTriangleEdgeLength(
+  resolution: number,
+  chunkWidth: number
+): number {
+  if (resolution <= 1) {
+    return chunkWidth;
+  }
+  return chunkWidth / (resolution - 1);
+}
+
+/**
+ * Calculate screen-space size of a world-space length at a given distance.
+ * Uses perspective projection with optional terrain tilt factor.
+ * 
+ * @param worldSize - Size in world units
+ * @param distance - Distance from camera in world units
+ * @param fovRadians - Camera field of view in radians
+ * @param screenHeight - Screen height in pixels
+ * @param tiltAngleRadians - Terrain tilt angle (default 15°)
+ * @returns Size in screen pixels
+ */
+export function projectToScreenSpace(
+  worldSize: number,
+  distance: number,
+  fovRadians: number,
+  screenHeight: number,
+  tiltAngleRadians: number = DEFAULT_TERRAIN_TILT_RADIANS
+): number {
+  if (distance <= 0) {
+    return screenHeight; // Very close = full screen
+  }
+  const tanHalfFov = Math.tan(fovRadians / 2);
+  return (worldSize * screenHeight * Math.cos(tiltAngleRadians)) /
+         (2 * distance * tanHalfFov);
+}
+
+/**
+ * Get LOD level based on screen-space triangle size.
+ * Traditional LOD: finest detail when close, coarser when far.
+ * Uses screen-space calculation to determine when triangles are "good enough".
+ * 
+ * @param distance - Distance from camera in world units
+ * @param lodLevels - Array of resolutions (highest to lowest, e.g., [512, 256, 128, 64])
+ * @param chunkWidth - Width of chunk in world units
+ * @param fovRadians - Camera FOV in radians
+ * @param screenHeight - Screen height in pixels
+ * @param targetPixels - Target minimum triangle size (from LodDetailLevel)
+ * @returns LOD level index (0 = highest detail)
+ */
+export function getLodLevelForScreenSize(
+  distance: number,
+  lodLevels: readonly number[],
+  chunkWidth: number,
+  fovRadians: number,
+  screenHeight: number,
+  targetPixels: LodDetailLevel
+): number {
+  if (lodLevels.length === 0) {
+    return 0;
+  }
+
+  // Traditional LOD: use finest detail when close, coarser when far
+  // Iterate from finest (0) to coarsest, return finest where triangles >= target
+  for (let i = 0; i < lodLevels.length; i++) {
+    const edgeLength = getTriangleEdgeLength(lodLevels[i], chunkWidth);
+    const screenSize = projectToScreenSpace(edgeLength, distance, fovRadians, screenHeight);
+    if (screenSize >= targetPixels) {
+      return i;
+    }
+  }
+
+  // At far distances, no LOD meets target - use coarsest (saves triangles)
+  return lodLevels.length - 1;
+}

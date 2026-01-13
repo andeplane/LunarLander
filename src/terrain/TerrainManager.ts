@@ -1,4 +1,4 @@
-import { BufferAttribute, BufferGeometry, LOD, Mesh, Scene, Vector3, Camera, MeshBasicMaterial, Color } from 'three';
+import { BufferAttribute, BufferGeometry, LOD, Mesh, Scene, Vector3, Camera, MeshBasicMaterial, Color, PerspectiveCamera } from 'three';
 import { TerrainMaterial } from '../shaders/TerrainMaterial';
 import type { TerrainArgs } from './terrain';
 import type { TerrainWorkerResult } from './TerrainWorker';
@@ -6,6 +6,8 @@ import {
   getNeighborKeys, 
   parseGridKey,
   getDistanceToChunk,
+  getLodLevelForScreenSize,
+  LodDetailLevel,
   type NeighborLods 
 } from './LodUtils';
 import { computeStitchedIndices } from './EdgeStitcher';
@@ -17,8 +19,8 @@ export interface TerrainConfig {
   chunkDepth: number;
   /** Resolution levels from highest to lowest, e.g. [512, 256, 128, 64] */
   lodLevels: number[];
-  /** Distance thresholds for each LOD level (in world units), e.g. [0, 100, 200, 400] */
-  lodDistances: number[];
+  /** Target screen-space triangle size for LOD selection */
+  lodDetailLevel: LodDetailLevel;
   /** Debug mode: render wireframe triangles with different color per chunk */
   debugWireframe?: boolean;
 }
@@ -63,11 +65,6 @@ export class TerrainManager {
     this.debugMode = config.debugWireframe ?? false;
     this.material = new TerrainMaterial();
 
-    // Validate config
-    if (config.lodLevels.length !== config.lodDistances.length) {
-      console.warn('TerrainManager: lodLevels and lodDistances arrays should have same length');
-    }
-
     // Base terrain args (without position/resolution - those are per-request)
     this.baseTerrainArgs = {
       seed: 0,
@@ -105,6 +102,40 @@ export class TerrainManager {
    */
   setCamera(camera: Camera): void {
     this.camera = camera;
+  }
+
+  /**
+   * Compute the distance threshold for a given LOD level.
+   * 
+   * Traditional LOD: finest detail when close, coarser when far.
+   * - LOD 0 (finest) at distance 0
+   * - Coarser LODs at increasing distances
+   */
+  private computeLodDistance(lodLevel: number): number {
+    // Finest LOD shows at distance 0
+    if (lodLevel === 0) {
+      return 0;
+    }
+
+    // For coarser LODs: compute distance where the PREVIOUS FINER LOD's
+    // triangles fall below target pixels (time to switch to coarser)
+    const finerLodIndex = lodLevel - 1;
+    const finerResolution = this.config.lodLevels[finerLodIndex];
+    const edgeLength = this.config.chunkWidth / (finerResolution - 1);
+    
+    // Get camera parameters
+    const fov = (this.camera as PerspectiveCamera)?.fov ?? 70;
+    const fovRadians = (fov * Math.PI) / 180;
+    const screenHeight = window.innerHeight;
+    const tanHalfFov = Math.tan(fovRadians / 2);
+    const tiltFactor = Math.cos(Math.PI / 12); // 15 degrees
+
+    // Solve for distance where finer LOD's triangles = targetPixels
+    // At this distance, we can switch to the coarser LOD
+    const targetPixels = this.config.lodDetailLevel;
+    const distance = (edgeLength * screenHeight * tiltFactor) / (2 * targetPixels * tanHalfFov);
+
+    return distance;
   }
 
   private setupTerrainWorker(): Worker {
@@ -174,8 +205,8 @@ export class TerrainManager {
     entry.meshes[lodLevel] = mesh;
     entry.builtLevels.add(lodLevel);
 
-    // Add to LOD object with distance threshold
-    const distance = this.config.lodDistances[lodLevel] ?? 0;
+    // Add to LOD object with computed distance threshold
+    const distance = this.computeLodDistance(lodLevel);
     entry.lod.addLevel(mesh, distance);
 
     if (!this.debugMode) {
@@ -333,7 +364,7 @@ export class TerrainManager {
   }
 
   /**
-   * Determine which LOD level a chunk should use based on distance
+   * Determine which LOD level a chunk should use based on screen-space triangle size
    */
   private getLodLevelForChunk(gridKey: string, cameraWorldPos: Vector3): number {
     const [gridX, gridZ] = parseGridKey(gridKey);
@@ -346,13 +377,19 @@ export class TerrainManager {
       this.config.chunkDepth
     );
 
-    // Find appropriate LOD level based on distance thresholds
-    for (let i = this.config.lodDistances.length - 1; i >= 0; i--) {
-      if (distance >= this.config.lodDistances[i]) {
-        return i;
-      }
-    }
-    return 0;
+    // Get camera FOV and screen height for screen-space calculation
+    const fov = (this.camera as PerspectiveCamera)?.fov ?? 70;
+    const fovRadians = (fov * Math.PI) / 180;
+    const screenHeight = window.innerHeight;
+
+    return getLodLevelForScreenSize(
+      distance,
+      this.config.lodLevels,
+      this.config.chunkWidth,
+      fovRadians,
+      screenHeight,
+      this.config.lodDetailLevel
+    );
   }
 
   /**

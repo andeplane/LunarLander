@@ -5,6 +5,7 @@ import { InputManager } from './core/InputManager';
 import { FlightController } from './camera/FlightController';
 import { Skybox } from './environment/Skybox';
 import { TerrainManager, TerrainConfig } from './terrain/TerrainManager';
+import { LodDetailLevel } from './terrain/LodUtils';
 import type { CameraConfig } from './types';
 
 /**
@@ -40,8 +41,8 @@ const terrainConfig: TerrainConfig = {
   renderDistance: 10,    // Chunks to load in each direction
   chunkWidth: 50,       // World units per chunk
   chunkDepth: 50,       // World units per chunk
-  lodLevels: [512, 256, 128, 64, 32, 16, 4],      // Resolution levels (highest to lowest)
-  lodDistances: [0, 50, 100, 200, 400, 800, 1600],    // Distance thresholds for each LOD
+  lodLevels: [1024, 512, 256, 128, 64, 32, 16, 4], // Resolution levels (highest to lowest)
+  lodDetailLevel: LodDetailLevel.Balanced,   // Target screen-space triangle size
 };
 
 // Initialize flight controller
@@ -106,3 +107,4 @@ console.log('  Shift - Hold for speed boost (3x faster)');
 console.log('  Mouse - Look around');
 console.log('  Scroll - Adjust speed');
 console.log('  Escape - Release mouse');
+console.log('  O - Toggle debug wireframe (shows LOD chunks)');
