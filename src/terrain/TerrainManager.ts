@@ -1,4 +1,4 @@
-import { BufferAttribute, BufferGeometry, LOD, Mesh, Scene, Vector3, Camera } from 'three';
+import { BufferAttribute, BufferGeometry, LOD, Mesh, Scene, Vector3, Camera, MeshBasicMaterial, Color } from 'three';
 import { TerrainMaterial } from '../shaders/TerrainMaterial';
 import type { TerrainArgs } from './terrain';
 import type { TerrainWorkerResult } from './TerrainWorker';
@@ -18,6 +18,8 @@ export interface TerrainConfig {
   lodLevels: number[];
   /** Distance thresholds for each LOD level (in world units), e.g. [0, 100, 200, 400] */
   lodDistances: number[];
+  /** Debug mode: render wireframe triangles with different color per chunk */
+  debugWireframe?: boolean;
 }
 
 /**
@@ -53,10 +55,12 @@ export class TerrainManager {
   private config: TerrainConfig;
   private baseTerrainArgs: Omit<TerrainArgs, 'resolution' | 'posX' | 'posZ'>;
   private camera: Camera | null = null;
+  private debugMode: boolean = false;
 
   constructor(scene: Scene, config: TerrainConfig) {
     this.scene = scene;
     this.config = config;
+    this.debugMode = config.debugWireframe ?? false;
     this.material = new TerrainMaterial();
 
     // Validate config
@@ -150,8 +154,11 @@ export class TerrainManager {
       entry.originalIndices[lodLevel] = new Uint32Array(index);
     }
 
-    // Create mesh
-    const mesh = new Mesh(geometry, this.material);
+    // Create mesh with appropriate material
+    const material = this.debugMode 
+      ? this.createDebugMaterial(gridKey)
+      : this.material;
+    const mesh = new Mesh(geometry, material);
     
     // Store mesh at this LOD level
     if (entry.meshes[lodLevel]) {
@@ -167,7 +174,65 @@ export class TerrainManager {
     const distance = this.config.lodDistances[lodLevel] ?? 0;
     entry.lod.addLevel(mesh, distance);
 
-    this.material.needsUpdate = true;
+    if (!this.debugMode) {
+      this.material.needsUpdate = true;
+    }
+  }
+
+  /**
+   * Generate a color from a grid key (for debug visualization)
+   */
+  private generateChunkColor(gridKey: string): Color {
+    // Simple hash function to generate consistent color from grid key
+    let hash = 0;
+    for (let i = 0; i < gridKey.length; i++) {
+      hash = gridKey.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    
+    // Convert to RGB values (avoid too dark colors for visibility)
+    const r = ((hash & 0xFF0000) >> 16) % 200 + 55;
+    const g = ((hash & 0x00FF00) >> 8) % 200 + 55;
+    const b = (hash & 0x0000FF) % 200 + 55;
+    
+    return new Color(r / 255, g / 255, b / 255);
+  }
+
+  /**
+   * Create a debug material for a specific chunk
+   */
+  private createDebugMaterial(gridKey: string): MeshBasicMaterial {
+    const color = this.generateChunkColor(gridKey);
+    return new MeshBasicMaterial({ 
+      wireframe: true, 
+      color: color 
+    });
+  }
+
+  /**
+   * Toggle debug wireframe mode
+   */
+  toggleDebugMode(): void {
+    this.debugMode = !this.debugMode;
+    
+    // Update all existing meshes
+    for (const [gridKey, entry] of this.terrainGrid.entries()) {
+      for (let lodLevel = 0; lodLevel < entry.meshes.length; lodLevel++) {
+        const mesh = entry.meshes[lodLevel];
+        if (mesh) {
+          // Dispose old material
+          if (mesh.material instanceof MeshBasicMaterial || mesh.material instanceof TerrainMaterial) {
+            (mesh.material as any).dispose?.();
+          }
+          
+          // Create new material
+          mesh.material = this.debugMode 
+            ? this.createDebugMaterial(gridKey)
+            : this.material;
+        }
+      }
+    }
+    
+    console.log(`Debug wireframe mode: ${this.debugMode ? 'ON' : 'OFF'}`);
   }
 
   /**

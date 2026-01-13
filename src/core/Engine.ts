@@ -196,6 +196,11 @@ export class Engine {
    * Update loop (called every frame)
    */
   private update(deltaTime: number): void {
+    // Check for debug toggle (O key)
+    if (this.inputManager?.isKeyJustPressed('o') && this.terrainManager) {
+      this.terrainManager.toggleDebugMode();
+    }
+
     // Update flight controller
     if (this.flightController) {
       this.flightController.update(deltaTime);
