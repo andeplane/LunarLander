@@ -1,6 +1,11 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { FlightController } from '../camera/FlightController';
 import { TerrainManager } from '../terrain/TerrainManager';
+import { CelestialSystem } from '../environment/CelestialSystem';
 import { InputManager } from './InputManager';
 
 /**
@@ -19,11 +24,17 @@ export class Engine {
   private animationId: number | null = null;
   private flightController: FlightController | null = null;
   private terrainManager: TerrainManager | null = null;
+  private celestialSystem: CelestialSystem | null = null;
   private inputManager: InputManager | null = null;
+  
+  // Post-processing
+  private composer: EffectComposer;
+  private bloomPass: UnrealBloomPass;
   
   // Time tracking
   private clock: THREE.Clock = new THREE.Clock();
   private lastTime: number = 0;
+  private deltaTime: number = 0;
   
   // Stats display
   private statsElement: HTMLDivElement | null = null;
@@ -37,7 +48,8 @@ export class Engine {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.toneMapping = THREE.AgXToneMapping;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.0;
 
     // Initialize scene
     this.scene = new THREE.Scene();
@@ -51,6 +63,27 @@ export class Engine {
       100000
     );
     this.camera.position.set(0, 100, 200);
+
+    // Initialize post-processing
+    this.composer = new EffectComposer(this.renderer);
+    
+    // Render pass - renders the scene
+    const renderPass = new RenderPass(this.scene, this.camera);
+    this.composer.addPass(renderPass);
+    
+    // Bloom pass - creates glow effect on bright objects
+    const resolution = new THREE.Vector2(window.innerWidth, window.innerHeight);
+    this.bloomPass = new UnrealBloomPass(
+      resolution,
+      0.5,   // strength - intensity of bloom
+      0.4,   // radius - spread of bloom
+      0.85   // threshold - brightness cutoff for bloom
+    );
+    this.composer.addPass(this.bloomPass);
+    
+    // Output pass - applies tone mapping and color space conversion
+    const outputPass = new OutputPass();
+    this.composer.addPass(outputPass);
 
     // Handle window resize
     window.addEventListener('resize', () => this.handleResize());
@@ -97,37 +130,42 @@ export class Engine {
       this.fpsUpdateTime = 0;
     }
     
-    const info = this.renderer.info;
-    const memory = info.memory;
-    const render = info.render;
-    
     const chunks = this.terrainManager?.getActiveChunkCount() ?? 0;
     const buildQueue = this.terrainManager?.getBuildQueueLength() ?? 0;
-    const workerCount = this.terrainManager?.getWorkerCount() ?? 0;
-    const activeWorkers = this.terrainManager?.getActiveWorkerCount() ?? 0;
     
     const cameraPos = this.camera.position;
     const terrainHeight = this.terrainManager?.getHeightAt(cameraPos.x, cameraPos.z) ?? null;
     const agl = terrainHeight !== null ? (cameraPos.y - terrainHeight).toFixed(2) : 'N/A';
     const terrainH = terrainHeight !== null ? terrainHeight.toFixed(2) : 'N/A';
     
+    // Curvature debug info
+    const planetRadius = this.celestialSystem?.getPlanetRadius() ?? 5000;
+    const d = Math.sqrt(cameraPos.x * cameraPos.x + cameraPos.z * cameraPos.z);
+    const theta = d / planetRadius;
+    const thetaDeg = (theta * 180 / Math.PI).toFixed(1);
+    const phi = Math.atan2(cameraPos.z, cameraPos.x);
+    const phiDeg = (phi * 180 / Math.PI).toFixed(1);
+    
     this.statsElement.innerHTML = `
-      <strong>Render Stats</strong><br>
+      <strong>Camera Position</strong><br>
+      X: ${cameraPos.x.toFixed(1)}m<br>
+      Y: ${cameraPos.y.toFixed(1)}m<br>
+      Z: ${cameraPos.z.toFixed(1)}m<br>
+      <br>
+      <strong>Curvature</strong><br>
+      Distance: ${d.toFixed(1)}m<br>
+      θ (tilt): ${thetaDeg}°<br>
+      φ (dir): ${phiDeg}°<br>
+      Radius: ${planetRadius}m<br>
+      <br>
+      <strong>Render</strong><br>
       FPS: ${this.currentFPS}<br>
-      Draw Calls: ${render.calls}<br>
       Triangles: ${this.lastTriangleCount.toLocaleString()}<br>
       <br>
-      <strong>Memory</strong><br>
-      Geometries: ${memory.geometries}<br>
-      Textures: ${memory.textures}<br>
-      <br>
       <strong>Terrain</strong><br>
-      Active Chunks: ${chunks}<br>
-      Build Queue: ${buildQueue}<br>
-      Workers: ${activeWorkers} / ${workerCount}<br>
-      Cam Y: ${cameraPos.y.toFixed(2)}m<br>
+      Chunks: ${chunks} (queue: ${buildQueue})<br>
       Terrain Y: ${terrainH}m<br>
-      Altitude AGL: ${agl}m
+      AGL: ${agl}m
     `;
   }
 
@@ -143,6 +181,13 @@ export class Engine {
    */
   setTerrainManager(manager: TerrainManager): void {
     this.terrainManager = manager;
+  }
+
+  /**
+   * Set the celestial system for sun/Earth updates
+   */
+  setCelestialSystem(system: CelestialSystem): void {
+    this.celestialSystem = system;
   }
 
   /**
@@ -208,6 +253,8 @@ export class Engine {
    * Update loop (called every frame)
    */
   private update(deltaTime: number): void {
+    this.deltaTime = deltaTime;
+    
     // Check for debug toggle (O key)
     if (this.inputManager?.isKeyJustPressed('o') && this.terrainManager) {
       this.terrainManager.toggleDebugMode();
@@ -236,6 +283,11 @@ export class Engine {
       this.terrainManager.update(this.camera.position);
     }
 
+    // Update celestial system (sun, Earth, curvature)
+    if (this.celestialSystem) {
+      this.celestialSystem.update(this.camera.position, deltaTime);
+    }
+
     // Update input manager (clear just-pressed keys)
     if (this.inputManager) {
       this.inputManager.update();
@@ -249,7 +301,9 @@ export class Engine {
    * Render loop (called every frame)
    */
   private render(): void {
-    this.renderer.render(this.scene, this.camera);
+    // Use post-processing composer instead of direct rendering
+    this.composer.render(this.deltaTime);
+    
     // Read triangle count after rendering (renderer.info is populated during render)
     // In wireframe mode, Three.js counts lines instead of triangles.
     // We add render.lines / 3 to account for triangles rendered as wireframes.
@@ -260,9 +314,16 @@ export class Engine {
    * Handle window resize
    */
   private handleResize(): void {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    
+    this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setSize(width, height);
+    this.composer.setSize(width, height);
+    
+    // Update bloom pass resolution
+    this.bloomPass.resolution.set(width, height);
   }
 
   /**
@@ -273,9 +334,13 @@ export class Engine {
     if (this.terrainManager) {
       this.terrainManager.dispose();
     }
+    if (this.celestialSystem) {
+      this.celestialSystem.dispose();
+    }
     if (this.statsElement) {
       this.statsElement.remove();
     }
+    this.composer.dispose();
     this.renderer.dispose();
   }
 }

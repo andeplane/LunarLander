@@ -1,5 +1,6 @@
 import { GUI } from 'lil-gui';
 import { MoonMaterial, type MoonMaterialParams } from '../shaders/MoonMaterial';
+import { CelestialSystem } from '../environment/CelestialSystem';
 
 /**
  * UI Controller for MoonMaterial shader parameters
@@ -9,11 +10,18 @@ export class ShaderUIController {
   private gui: GUI;
   private material: MoonMaterial;
   private params: MoonMaterialParams;
+  private celestialSystem: CelestialSystem | null = null;
 
-  constructor(material: MoonMaterial) {
+  constructor(material: MoonMaterial, celestialSystem?: CelestialSystem) {
     this.material = material;
+    this.celestialSystem = celestialSystem ?? null;
     // Get initial params - we'll use onChange handlers instead of Proxy
     this.params = material.getParams();
+    
+    // Sync initial planetRadius to celestial system
+    if (this.celestialSystem) {
+      this.celestialSystem.setPlanetRadius(this.params.planetRadius);
+    }
     
     // Create GUI instance
     this.gui = new GUI();
@@ -171,9 +179,16 @@ export class ShaderUIController {
       .name('Enable Curvature')
       .onChange((value: boolean) => this.material.setParam('enableCurvature', value));
 
-    folder.add(this.params, 'planetRadius', 5000, 30000, 1000)
+    folder.add(this.params, 'planetRadius', 1000, 50000, 500)
       .name('Planet Radius (m)')
-      .onChange((value: number) => this.material.setParam('planetRadius', value));
+      .onChange((value: number) => {
+        // Update terrain shader
+        this.material.setParam('planetRadius', value);
+        // Sync to celestial system (sun, Earth, stars rotation)
+        if (this.celestialSystem) {
+          this.celestialSystem.setPlanetRadius(value);
+        }
+      });
     
     folder.open();
   }

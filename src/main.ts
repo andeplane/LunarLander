@@ -1,9 +1,9 @@
 import './style.css';
-import * as THREE from 'three';
 import { Engine } from './core/Engine';
 import { InputManager } from './core/InputManager';
 import { FlightController } from './camera/FlightController';
 import { Skybox } from './environment/Skybox';
+import { CelestialSystem } from './environment/CelestialSystem';
 import { TerrainManager, TerrainConfig } from './terrain/TerrainManager';
 import { LodDetailLevel } from './terrain/LodUtils';
 import { ShaderUIController } from './ui/ShaderUIController';
@@ -64,9 +64,6 @@ const flightController = new FlightController(
 );
 engine.setFlightController(flightController);
 
-// Initialize shader UI controller
-const shaderUI = new ShaderUIController(terrainManager.getMaterial());
-
 // Set input manager in engine
 engine.setInputManager(inputManager);
 
@@ -92,17 +89,22 @@ canvas.addEventListener('click', () => {
 const skybox = new Skybox(engine.getScene());
 skybox.loadTexture('/textures/8k_stars_milky_way.jpg');
 
-// Add directional light (sun)
-const sunLight = new THREE.DirectionalLight(0xffffff, 2);
-sunLight.position.set(100, 100, 50);
-engine.getScene().add(sunLight);
+// Initialize celestial system (sun, Earth, lighting with Moon curvature)
+const celestialSystem = new CelestialSystem(engine.getScene(), {
+  // Sun position - high in the sky, slightly to the side
+  sunAzimuth: Math.PI * 0.3,      // 54 degrees from north
+  sunElevation: Math.PI * 0.35,   // 63 degrees above horizon
+  sunIntensity: 2.5,
+  
+  // Earth position - visible in the lunar sky
+  earthAzimuth: Math.PI * 1.15,   // Opposite side from sun
+  earthElevation: Math.PI * 0.25, // 45 degrees above horizon
+});
+engine.setCelestialSystem(celestialSystem);
 
-// Subtle ambient light
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
-engine.getScene().add(ambientLight);
-
-// Add fog for depth
-engine.getScene().fog = new THREE.Fog(0xd3dde2, 4, terrainConfig.renderDistance * terrainConfig.chunkWidth - 2);
+// Initialize shader UI controller (after celestial system so they can be synced)
+// Changes to planetRadius will update both terrain shader and celestial system
+const shaderUI = new ShaderUIController(terrainManager.getMaterial(), celestialSystem);
 
 // Start the render loop
 engine.start();
