@@ -149,9 +149,6 @@ export function computeStitchedIndices(
   const cacheKey = getCacheKey(resolution, neighborLods, myLodLevel);
   const cached = stitchCache.get(cacheKey);
   if (cached) {
-    // #region agent log
-    fetch('http://127.0.0.1:7248/ingest/2514d39a-3d94-4487-980a-5421d6b147c9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EdgeStitcher.ts:computeStitchedIndices',message:'CACHE_HIT',data:{cacheKey,resolution,myLodLevel,neighborLods,cachedLength:cached.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
-    // #endregion
     return cached;
   }
 
@@ -164,16 +161,6 @@ export function computeStitchedIndices(
     east: calculateStepRatio(myResolution, getResolutionForLevel(neighborLods.east, lodLevels)),
     west: calculateStepRatio(myResolution, getResolutionForLevel(neighborLods.west, lodLevels)),
   };
-
-  // #region agent log
-  const neighborResolutions = {
-    north: getResolutionForLevel(neighborLods.north, lodLevels),
-    south: getResolutionForLevel(neighborLods.south, lodLevels),
-    east: getResolutionForLevel(neighborLods.east, lodLevels),
-    west: getResolutionForLevel(neighborLods.west, lodLevels),
-  };
-  fetch('http://127.0.0.1:7248/ingest/2514d39a-3d94-4487-980a-5421d6b147c9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'EdgeStitcher.ts:computeStitchedIndices',message:'STEP_RATIOS_COMPUTED',data:{cacheKey,resolution,myLodLevel,myResolution,neighborLods,neighborResolutions,stepRatios,lodLevels},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
-  // #endregion
 
   // If no stitching needed (all neighbors same or higher res), return standard indices
   if (stepRatios.north === 1 && stepRatios.south === 1 && 
