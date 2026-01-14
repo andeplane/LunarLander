@@ -99,8 +99,8 @@ export class TerrainManager {
 
     this.worker = this.setupTerrainWorker();
 
-    // Identify the LOD level closest to resolution 8 for collision detection
-    this.collisionLodLevel = this.findCollisionLodLevel(8);
+    // Identify the LOD level closest to resolution 32 for collision detection
+    this.collisionLodLevel = this.findCollisionLodLevel(32);
   }
 
   /**
