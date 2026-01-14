@@ -248,7 +248,9 @@ export class Engine {
   private render(): void {
     this.renderer.render(this.scene, this.camera);
     // Read triangle count after rendering (renderer.info is populated during render)
-    this.lastTriangleCount = this.renderer.info.render.triangles;
+    // In wireframe mode, Three.js counts lines instead of triangles.
+    // We add render.lines / 3 to account for triangles rendered as wireframes.
+    this.lastTriangleCount = Math.round(this.renderer.info.render.triangles + this.renderer.info.render.lines / 3);
   }
 
   /**

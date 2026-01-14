@@ -283,9 +283,11 @@ export class TerrainManager {
       for (let lodLevel = 0; lodLevel < entry.meshes.length; lodLevel++) {
         const mesh = entry.meshes[lodLevel];
         if (mesh) {
-          // Dispose old material
-          if (mesh.material instanceof MeshBasicMaterial || mesh.material instanceof MoonMaterial) {
-            (mesh.material as any).dispose?.();
+          const oldMaterial = mesh.material;
+          
+          // Only dispose debug materials (MeshBasicMaterial), never the shared MoonMaterial
+          if (oldMaterial instanceof MeshBasicMaterial) {
+            oldMaterial.dispose();
           }
           
           // Create new material
