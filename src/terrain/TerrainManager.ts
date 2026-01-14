@@ -23,12 +23,22 @@ export interface TerrainConfig {
   lodDetailLevel: LodDetailLevel;
   /** Debug mode: render wireframe triangles with different color per chunk */
   debugWireframe?: boolean;
+  /** Number of terrain generation workers (default: 3) */
+  workerCount?: number;
 }
 
 /**
  * Number of nearest chunks that get highest priority regardless of camera direction
  */
-const NEAREST_CHUNKS_HIGH_PRIORITY = 10;
+const NEAREST_CHUNKS_HIGH_PRIORITY = 30;
+
+/**
+ * State for a single terrain worker
+ */
+interface WorkerState {
+  worker: Worker;
+  busy: boolean;
+}
 
 /**
  * Entry for a chunk with LOD support
@@ -49,9 +59,9 @@ interface ChunkLodEntry {
 export class TerrainManager {
   private terrainGrid: Map<string, ChunkLodEntry> = new Map();
   private requestQueue: ChunkRequestQueue;
-  private workerBusy: boolean = false;
+  private workers: WorkerState[] = [];
+  private inFlight: Set<string> = new Set(); // "gridKey:lodLevel"
   private material: MoonMaterial;
-  private worker: Worker;
   private scene: Scene;
   private config: TerrainConfig;
   private baseTerrainArgs: Omit<TerrainArgs, 'resolution' | 'posX' | 'posZ'>;
@@ -97,7 +107,7 @@ export class TerrainManager {
       chunkDepth: config.chunkDepth,
     });
 
-    this.worker = this.setupTerrainWorker();
+    this.setupWorkers();
 
     // Identify the LOD level closest to resolution 32 for collision detection
     this.collisionLodLevel = this.findCollisionLodLevel(32);
@@ -161,27 +171,38 @@ export class TerrainManager {
     return distance;
   }
 
-  private setupTerrainWorker(): Worker {
-    const worker = new Worker(
-      new URL('./TerrainWorker.ts', import.meta.url),
-      { type: 'module' }
-    );
+  private setupWorkers(): void {
+    const count = Math.max(1, this.config.workerCount ?? 3);
+    
+    for (let i = 0; i < count; i++) {
+      const worker = new Worker(
+        new URL('./TerrainWorker.ts', import.meta.url),
+        { type: 'module' }
+      );
 
-    worker.onmessage = (e: MessageEvent<TerrainWorkerResult>) => {
-      this.handleWorkerResult(e.data);
-    };
+      worker.onmessage = (e: MessageEvent<TerrainWorkerResult>) => {
+        this.handleWorkerResult(e.data, i);
+      };
 
-    return worker;
+      this.workers.push({
+        worker,
+        busy: false,
+      });
+    }
   }
 
   /**
    * Handle mesh data from worker
    */
-  private handleWorkerResult(result: TerrainWorkerResult): void {
+  private handleWorkerResult(result: TerrainWorkerResult, workerIndex: number): void {
     const { positions, normals, index, biome, gridKey, lodLevel } = result;
     
     // Worker is no longer busy
-    this.workerBusy = false;
+    this.workers[workerIndex].busy = false;
+    
+    // Clear from in-flight
+    const requestKey = `${gridKey}:${lodLevel}`;
+    this.inFlight.delete(requestKey);
 
     // Get or create chunk entry
     let entry = this.terrainGrid.get(gridKey);
@@ -356,21 +377,26 @@ export class TerrainManager {
   }
 
   /**
-   * Dispatch the next highest-priority request to the worker
+   * Dispatch next highest-priority requests to idle workers
    */
   private dispatchNext(): void {
-    if (this.workerBusy) {
-      return;
-    }
+    for (const workerState of this.workers) {
+      if (workerState.busy) {
+        continue;
+      }
 
-    const request = this.requestQueue.shift();
-    if (request) {
-      this.workerBusy = true;
-      this.worker.postMessage({
-        terrainArgs: request.terrainArgs,
-        gridKey: request.gridKey,
-        lodLevel: request.lodLevel,
-      });
+      const request = this.requestQueue.shiftAny(this.inFlight);
+
+      if (request) {
+        const key = `${request.gridKey}:${request.lodLevel}`;
+        this.inFlight.add(key);
+        workerState.busy = true;
+        workerState.worker.postMessage({
+          terrainArgs: request.terrainArgs,
+          gridKey: request.gridKey,
+          lodLevel: request.lodLevel,
+        });
+      }
     }
   }
 
@@ -481,6 +507,12 @@ export class TerrainManager {
 
       if (!entry.builtLevels.has(desiredLod)) {
         this.requestChunkLod(gridKey, desiredLod);
+      }
+
+      // ALWAYS ensure the coarsest LOD level is requested for all chunks (horizon fill)
+      const coarsestLod = this.config.lodLevels.length - 1;
+      if (!entry.builtLevels.has(coarsestLod)) {
+        this.requestChunkLod(gridKey, coarsestLod);
       }
 
       // Also request adjacent LOD levels for smooth transitions
@@ -674,10 +706,24 @@ export class TerrainManager {
   }
 
   /**
+   * Get total number of workers
+   */
+  getWorkerCount(): number {
+    return this.workers.length;
+  }
+
+  /**
+   * Get number of workers currently processing chunks
+   */
+  getActiveWorkerCount(): number {
+    return this.workers.filter(w => w.busy).length;
+  }
+
+  /**
    * Get build queue length
    */
   getBuildQueueLength(): number {
-    return this.requestQueue.length + (this.workerBusy ? 1 : 0);
+    return this.requestQueue.length + this.getActiveWorkerCount();
   }
 
   /**
@@ -827,7 +873,10 @@ export class TerrainManager {
    * Clean up resources
    */
   dispose(): void {
-    this.worker.terminate();
+    for (const workerState of this.workers) {
+      workerState.worker.terminate();
+    }
+    this.workers = [];
     
     for (const gridKey of this.terrainGrid.keys()) {
       this.removeChunk(gridKey);
@@ -835,6 +884,7 @@ export class TerrainManager {
     
     this.terrainGrid.clear();
     this.requestQueue.clear();
+    this.inFlight.clear();
     this.material.dispose();
   }
 }

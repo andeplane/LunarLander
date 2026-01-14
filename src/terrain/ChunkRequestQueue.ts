@@ -54,18 +54,6 @@ export function defaultPriorityCalculator(
   lodLevel?: number,
   maxLodLevel?: number
 ): number {
-  // Lowest LOD (highest index) gets highest priority for collision detection
-  // Lower priority value = higher priority (processed first)
-  // Subtract lodLevel from maxLodLevel so highest lodLevel (lowest detail) has SMALLEST value
-  const lodPriority = lodLevel !== undefined && maxLodLevel !== undefined 
-    ? (maxLodLevel - lodLevel) * 1000000 
-    : 0;
-
-  // If in nearest 10, give highest priority (very low value)
-  if (nearestChunkKeys.has(gridKey)) {
-    return -1000000 + lodPriority; // Always highest priority, but still respect LOD
-  }
-
   const [gridX, gridZ] = parseGridKey(gridKey);
   const chunkCenter = getChunkWorldCenter(
     gridX,
@@ -78,6 +66,29 @@ export function defaultPriorityCalculator(
   const dx = chunkCenter.x - cameraPos.x;
   const dz = chunkCenter.z - cameraPos.z;
   const distance = Math.sqrt(dx * dx + dz * dz);
+
+  const isCoarsest = lodLevel !== undefined && maxLodLevel !== undefined && lodLevel === maxLodLevel;
+  const isNearest = nearestChunkKeys.has(gridKey);
+
+  // Tier 1: Nearest 20 chunks (Top Priority)
+  if (isNearest) {
+    // lodPriority ensures coarsest of near chunks build first
+    // Subtract lodLevel from maxLodLevel so highest lodLevel (lowest detail) has SMALLEST value
+    const lodPriority = (lodLevel !== undefined && maxLodLevel !== undefined)
+      ? (maxLodLevel - lodLevel) * 1000000
+      : 0;
+    return -20000000 + lodPriority + distance;
+  }
+
+  // Tier 2: Horizon Fill (Coarsest LOD for all others)
+  if (isCoarsest) {
+    return -10000000 + distance;
+  }
+
+  // Tier 3: Standard progressive detail
+  const lodPriority = (lodLevel !== undefined && maxLodLevel !== undefined)
+    ? (maxLodLevel - lodLevel) * 1000000
+    : 0;
 
   // Calculate direction to chunk (normalized, 2D)
   const dirLength = distance > 0.001 ? distance : 1;
@@ -196,6 +207,24 @@ export class ChunkRequestQueue {
       );
       return priorityA - priorityB;
     });
+  }
+
+  /**
+   * Remove and return the first request that is not already in flight.
+   */
+  shiftAny(inFlight: Set<string>): QueuedRequest | undefined {
+    const index = this.queue.findIndex((req) => {
+      const key = this.getRequestKey(req.gridKey, req.lodLevel);
+      return !inFlight.has(key);
+    });
+
+    if (index !== -1) {
+      const request = this.queue.splice(index, 1)[0];
+      const key = this.getRequestKey(request.gridKey, request.lodLevel);
+      this.queuedSet.delete(key);
+      return request;
+    }
+    return undefined;
   }
 
   /**
