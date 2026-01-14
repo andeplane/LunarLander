@@ -46,6 +46,12 @@ export interface CelestialConfig {
   spaceshipLightIntensity?: number;
   spaceshipLightRange?: number;   // Range in meters
   
+  // Flashlight (directional cone pointing where camera looks)
+  flashlightIntensity?: number;
+  flashlightRange?: number;       // Range in meters
+  flashlightAngle?: number;       // Cone angle in radians
+  flashlightPenumbra?: number;    // Edge softness (0-1)
+  
   // Initial positions (angles in radians)
   // Measured from the reference "up" at origin
   sunAzimuth?: number;       // Horizontal angle
@@ -61,8 +67,12 @@ const DEFAULT_CONFIG: Required<CelestialConfig> = {
   earthDistance: 40000,
   earthSize: 1500,       // Earth appears ~4x larger than sun from Moon
   earthshineMultiplier: 0.15,
-  spaceshipLightIntensity: 100,  // High intensity needed for PointLight with quadratic decay
+  spaceshipLightIntensity: 50,   // Moderate intensity for ambient illumination
   spaceshipLightRange: 200,      // 200m range
+  flashlightIntensity: 30,       // Moderate intensity
+  flashlightRange: 500,          // 500m range
+  flashlightAngle: Math.PI / 8,  // ~22.5 degree cone
+  flashlightPenumbra: 0.3,       // Soft edges
   sunAzimuth: Math.PI * 0.25,      // 45 degrees from north
   sunElevation: Math.PI * 0.35,    // 63 degrees above horizon
   earthAzimuth: Math.PI * 1.2,     // Opposite-ish from sun
@@ -82,10 +92,12 @@ export class CelestialSystem {
   private earthMesh!: THREE.Mesh;
   private earthMaterial!: EarthMaterial;
   
-  // Lighting - three sources as described above
+  // Lighting - four sources
   private sunLight!: THREE.DirectionalLight;      // Main directional light from sun
   private earthLight!: THREE.DirectionalLight;    // Weak bluish earthshine
   private spaceshipLight!: THREE.PointLight;      // Local illumination on camera
+  private flashlight!: THREE.SpotLight;           // Directional cone pointing where camera looks
+  private flashlightTarget: THREE.Object3D;       // Target for flashlight direction
   
   // Camera reference for spaceship light positioning
   private camera: THREE.Camera | null = null;
@@ -111,6 +123,10 @@ export class CelestialSystem {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.celestialContainer = new THREE.Group();
     this.celestialContainer.name = 'CelestialSystem';
+    
+    // Create flashlight target (SpotLight needs a target to point at)
+    this.flashlightTarget = new THREE.Object3D();
+    this.flashlightTarget.name = 'FlashlightTarget';
     
     // Store base skybox rotation as quaternion for composition
     this.baseSkyboxQuaternion.setFromEuler(this.baseSkyboxRotation);
@@ -236,6 +252,21 @@ export class CelestialSystem {
     this.spaceshipLight.name = 'SpaceshipLight';
     // Position will be updated each frame to match camera
     this.scene.add(this.spaceshipLight);
+    
+    // 4. Flashlight - SpotLight that points where camera looks
+    this.flashlight = new THREE.SpotLight(
+      0xffffff,
+      this.config.flashlightIntensity,
+      this.config.flashlightRange,
+      this.config.flashlightAngle,
+      this.config.flashlightPenumbra,
+      2 // Quadratic decay
+    );
+    this.flashlight.name = 'Flashlight';
+    this.flashlight.target = this.flashlightTarget;
+    // Position and target will be updated each frame based on camera
+    this.scene.add(this.flashlight);
+    this.scene.add(this.flashlightTarget);
   }
   
   /**
@@ -373,6 +404,13 @@ export class CelestialSystem {
     // Update spaceship light to follow camera
     if (this.camera) {
       this.spaceshipLight.position.copy(this.camera.position);
+      
+      // Update flashlight position and direction
+      this.flashlight.position.copy(this.camera.position);
+      // Get camera forward direction and place target 100m ahead
+      const forward = new THREE.Vector3(0, 0, -1);
+      forward.applyQuaternion(this.camera.quaternion);
+      this.flashlightTarget.position.copy(this.camera.position).add(forward.multiplyScalar(100));
     }
     
     // Slowly rotate Earth (one rotation per ~24 hours scaled down)
@@ -460,6 +498,48 @@ export class CelestialSystem {
   }
   
   /**
+   * Get flashlight intensity
+   */
+  get flashlightIntensity(): number {
+    return this.flashlight.intensity;
+  }
+  
+  /**
+   * Set flashlight intensity
+   */
+  set flashlightIntensity(value: number) {
+    this.flashlight.intensity = value;
+  }
+  
+  /**
+   * Get flashlight range
+   */
+  get flashlightRange(): number {
+    return this.flashlight.distance;
+  }
+  
+  /**
+   * Set flashlight range
+   */
+  set flashlightRange(value: number) {
+    this.flashlight.distance = value;
+  }
+  
+  /**
+   * Get flashlight angle (cone width in radians)
+   */
+  get flashlightAngle(): number {
+    return this.flashlight.angle;
+  }
+  
+  /**
+   * Set flashlight angle (cone width in radians)
+   */
+  set flashlightAngle(value: number) {
+    this.flashlight.angle = value;
+  }
+  
+  /**
    * Get the sun mesh (for bloom layer configuration)
    */
   getSunMesh(): THREE.Mesh {
@@ -527,9 +607,12 @@ export class CelestialSystem {
     this.sunLight.dispose();
     this.earthLight.dispose();
     this.spaceshipLight.dispose();
+    this.flashlight.dispose();
     this.scene.remove(this.celestialContainer);
     this.scene.remove(this.sunLight);
     this.scene.remove(this.earthLight);
     this.scene.remove(this.spaceshipLight);
+    this.scene.remove(this.flashlight);
+    this.scene.remove(this.flashlightTarget);
   }
 }

@@ -104,7 +104,7 @@ const celestialSystem = new CelestialSystem(engine.getScene(), {
   earthshineMultiplier: 0.15,
   
   // Spaceship light (local illumination)
-  spaceshipLightIntensity: 100,
+  spaceshipLightIntensity: 50,
   spaceshipLightRange: 200,
 });
 // Set camera reference for spaceship light positioning
