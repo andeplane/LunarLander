@@ -209,6 +209,9 @@ export class ShaderUIController {
       earthshineMultiplier: this.celestialSystem.earthshineMultiplier,
       spaceshipLightIntensity: this.celestialSystem.spaceshipLightIntensity,
       spaceshipLightRange: this.celestialSystem.spaceshipLightRange,
+      flashlightIntensity: this.celestialSystem.flashlightIntensity,
+      flashlightRange: this.celestialSystem.flashlightRange,
+      flashlightAngle: this.celestialSystem.flashlightAngle * (180 / Math.PI), // Convert to degrees for UI
     };
     
     folder.add(lightingParams, 'sunIntensity', 0, 5, 0.1)
@@ -240,6 +243,31 @@ export class ShaderUIController {
       .onChange((value: number) => {
         if (this.celestialSystem) {
           this.celestialSystem.spaceshipLightRange = value;
+        }
+      });
+    
+    folder.add(lightingParams, 'flashlightIntensity', 0, 200, 5)
+      .name('Flashlight Intensity')
+      .onChange((value: number) => {
+        if (this.celestialSystem) {
+          this.celestialSystem.flashlightIntensity = value;
+        }
+      });
+    
+    folder.add(lightingParams, 'flashlightRange', 50, 1000, 50)
+      .name('Flashlight Range (m)')
+      .onChange((value: number) => {
+        if (this.celestialSystem) {
+          this.celestialSystem.flashlightRange = value;
+        }
+      });
+    
+    folder.add(lightingParams, 'flashlightAngle', 5, 60, 1)
+      .name('Flashlight Angle (°)')
+      .onChange((value: number) => {
+        if (this.celestialSystem) {
+          // Convert degrees back to radians
+          this.celestialSystem.flashlightAngle = value * (Math.PI / 180);
         }
       });
     
