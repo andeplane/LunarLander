@@ -28,9 +28,14 @@ export interface TerrainConfig {
 }
 
 /**
- * Number of nearest chunks that get highest priority regardless of camera direction
+ * Number of chunks that the high-priority worker targets (3x3 grid)
  */
-const NEAREST_CHUNKS_HIGH_PRIORITY = 30;
+const HP_WORKER_TARGET_CHUNKS = 9;
+
+/**
+ * Number of nearest chunks that get Tier 1 priority boost (~5x5 grid)
+ */
+const NEAREST_CHUNKS_HIGH_PRIORITY = 25;
 
 /**
  * State for a single terrain worker
@@ -38,6 +43,7 @@ const NEAREST_CHUNKS_HIGH_PRIORITY = 30;
 interface WorkerState {
   worker: Worker;
   busy: boolean;
+  isHighPriority: boolean;
 }
 
 /**
@@ -61,6 +67,7 @@ export class TerrainManager {
   private requestQueue: ChunkRequestQueue;
   private workers: WorkerState[] = [];
   private inFlight: Set<string> = new Set(); // "gridKey:lodLevel"
+  private hpWorkerKeys: Set<string> = new Set(); // Nearest 9 chunks for HP worker
   private material: MoonMaterial;
   private scene: Scene;
   private config: TerrainConfig;
@@ -187,6 +194,7 @@ export class TerrainManager {
       this.workers.push({
         worker,
         busy: false,
+        isHighPriority: i === 0, // First worker is high-priority
       });
     }
   }
@@ -385,7 +393,11 @@ export class TerrainManager {
         continue;
       }
 
-      const request = this.requestQueue.shiftAny(this.inFlight);
+      // High-priority worker: try matching nearest 9 chunks first, then any
+      // Normal workers: take next available from queue
+      const request = workerState.isHighPriority
+        ? this.requestQueue.shiftMatching(this.hpWorkerKeys, this.inFlight) || this.requestQueue.shiftAny(this.inFlight)
+        : this.requestQueue.shiftAny(this.inFlight);
 
       if (request) {
         const key = `${request.gridKey}:${request.lodLevel}`;
@@ -525,7 +537,12 @@ export class TerrainManager {
       }
     }
 
-    // Get nearest chunks for highest priority
+    // Get nearest chunks for high-priority worker (3x3 grid = 9 chunks)
+    this.hpWorkerKeys = new Set(
+      nearbyKeys.slice(0, HP_WORKER_TARGET_CHUNKS)
+    );
+
+    // Get nearest chunks for Tier 1 priority boost (~5x5 grid = 25 chunks)
     const nearestHighPriorityKeys = new Set(
       nearbyKeys.slice(0, NEAREST_CHUNKS_HIGH_PRIORITY)
     );
