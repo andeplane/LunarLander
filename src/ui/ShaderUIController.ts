@@ -3,7 +3,7 @@ import { MoonMaterial, type MoonMaterialParams } from '../shaders/MoonMaterial';
 import { CelestialSystem } from '../environment/CelestialSystem';
 
 /**
- * UI Controller for MoonMaterial shader parameters
+ * UI Controller for MoonMaterial shader parameters and lighting
  * Provides organized GUI controls using lil-gui
  */
 export class ShaderUIController {
@@ -38,6 +38,7 @@ export class ShaderUIController {
     this.setupBumpMappingFolder();
     this.setupColorsFolder();
     this.setupCurvatureFolder();
+    this.setupLightingFolder();
   }
 
   /**
@@ -187,6 +188,58 @@ export class ShaderUIController {
         // Sync to celestial system (sun, Earth, stars rotation)
         if (this.celestialSystem) {
           this.celestialSystem.setPlanetRadius(value);
+        }
+      });
+    
+    folder.open();
+  }
+
+  /**
+   * Setup lighting parameters folder
+   * Controls for sun, earthshine, and spaceship lights
+   */
+  private setupLightingFolder(): void {
+    if (!this.celestialSystem) return;
+    
+    const folder = this.gui.addFolder('Lighting');
+    
+    // Create a proxy object for the lighting params since celestialSystem uses getters/setters
+    const lightingParams = {
+      sunIntensity: this.celestialSystem.sunIntensity,
+      earthshineMultiplier: this.celestialSystem.earthshineMultiplier,
+      spaceshipLightIntensity: this.celestialSystem.spaceshipLightIntensity,
+      spaceshipLightRange: this.celestialSystem.spaceshipLightRange,
+    };
+    
+    folder.add(lightingParams, 'sunIntensity', 0, 5, 0.1)
+      .name('Sun Intensity')
+      .onChange((value: number) => {
+        if (this.celestialSystem) {
+          this.celestialSystem.sunIntensity = value;
+        }
+      });
+    
+    folder.add(lightingParams, 'earthshineMultiplier', 0, 1, 0.01)
+      .name('Earthshine Multiplier')
+      .onChange((value: number) => {
+        if (this.celestialSystem) {
+          this.celestialSystem.earthshineMultiplier = value;
+        }
+      });
+    
+    folder.add(lightingParams, 'spaceshipLightIntensity', 0, 500, 10)
+      .name('Spaceship Intensity')
+      .onChange((value: number) => {
+        if (this.celestialSystem) {
+          this.celestialSystem.spaceshipLightIntensity = value;
+        }
+      });
+    
+    folder.add(lightingParams, 'spaceshipLightRange', 10, 500, 10)
+      .name('Spaceship Range (m)')
+      .onChange((value: number) => {
+        if (this.celestialSystem) {
+          this.celestialSystem.spaceshipLightRange = value;
         }
       });
     
