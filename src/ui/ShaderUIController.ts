@@ -119,18 +119,26 @@ export class ShaderUIController {
   }
 
   /**
-   * Setup bump mapping parameters folder
+   * Setup surface texture (regolith) parameters folder
    */
   private setupBumpMappingFolder(): void {
-    const folder = this.gui.addFolder('Bump Mapping');
+    const folder = this.gui.addFolder('Surface Texture');
     
-    folder.add(this.params, 'bumpStrength', 0.0, 2.0, 0.1)
-      .name('Bump Strength')
-      .onChange((value: number) => this.material.setParam('bumpStrength', value));
+    folder.add(this.params, 'rockDensity', 0.0, 1.0, 0.05)
+      .name('Gravel vs Dust')
+      .onChange((value: number) => this.material.setParam('rockDensity', value));
 
-    folder.add(this.params, 'bumpMultiplier', 10.0, 200.0, 10.0)
-      .name('Bump Multiplier')
-      .onChange((value: number) => this.material.setParam('bumpMultiplier', value));
+    folder.add(this.params, 'rockSize', 5.0, 100.0, 5.0)
+      .name('Texture Scale')
+      .onChange((value: number) => this.material.setParam('rockSize', value));
+
+    folder.add(this.params, 'rockSoftness', 0.0, 1.0, 0.05)
+      .name('Smoothness')
+      .onChange((value: number) => this.material.setParam('rockSoftness', value));
+
+    folder.add(this.params, 'rockHeight', 0.1, 2.0, 0.1)
+      .name('Bump Intensity')
+      .onChange((value: number) => this.material.setParam('rockHeight', value));
   }
 
   /**

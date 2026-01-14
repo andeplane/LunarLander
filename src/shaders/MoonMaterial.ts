@@ -32,8 +32,11 @@ export interface MoonMaterialParams {
   largeCraterWeight: number; // Large crater blend weight
   mediumCraterWeight: number; // Medium crater blend weight
 
-  // Bump mapping
-  bumpMultiplier: number; // Bump strength multiplier
+  // Rock bump mapping
+  rockDensity: number; // Threshold for rocks (0 = all rocks, 1 = no rocks)
+  rockSize: number; // Frequency - lower = larger rocks
+  rockSoftness: number; // Edge sharpness (0 = sharp, 1 = rounded)
+  rockHeight: number; // How tall the rock bumps are
 
   // Color parameters
   colorVariationFrequency: number; // Color variation frequency
@@ -86,7 +89,10 @@ export class MoonMaterial extends MeshStandardMaterial {
       mediumCraterSmoothMax: 0.8,
       largeCraterWeight: 0.6,
       mediumCraterWeight: 0.4,
-      bumpMultiplier: 80.0,
+      rockDensity: 0.3,
+      rockSize: 20.0,
+      rockSoftness: 0.2,
+      rockHeight: 0.5,
       colorVariationFrequency: 0.005,
       baseColorBlend: 0.6,
       brightnessBoost: 2.5,
@@ -120,7 +126,10 @@ export class MoonMaterial extends MeshStandardMaterial {
       shader.uniforms.uLargeCraterWeight = { value: this.params.largeCraterWeight };
       shader.uniforms.uMediumCraterWeight = { value: this.params.mediumCraterWeight };
       
-      shader.uniforms.uBumpMultiplier = { value: this.params.bumpMultiplier };
+      shader.uniforms.uRockDensity = { value: this.params.rockDensity };
+      shader.uniforms.uRockSize = { value: this.params.rockSize };
+      shader.uniforms.uRockSoftness = { value: this.params.rockSoftness };
+      shader.uniforms.uRockHeight = { value: this.params.rockHeight };
       
       shader.uniforms.uColorVariationFrequency = { value: this.params.colorVariationFrequency };
       shader.uniforms.uBaseColorBlend = { value: this.params.baseColorBlend };
@@ -180,8 +189,11 @@ export class MoonMaterial extends MeshStandardMaterial {
         uniform float uLargeCraterWeight;
         uniform float uMediumCraterWeight;
         
-        // Bump mapping
-        uniform float uBumpMultiplier;
+        // Rock bump mapping
+        uniform float uRockDensity;
+        uniform float uRockSize;
+        uniform float uRockSoftness;
+        uniform float uRockHeight;
         
         // Color parameters
         uniform float uColorVariationFrequency;
@@ -276,6 +288,31 @@ export class MoonMaterial extends MeshStandardMaterial {
           return normalize(abs(fDet) * surf_norm - vGrad);
         }
 
+        // ==========================================
+        // LUNAR REGOLITH TEXTURE (Dust/Gravel)
+        // Multi-octave noise for realistic dusty surface
+        // ==========================================
+        
+        float getRegolithHeight(vec2 pos) {
+          float height = 0.0;
+          
+          // Fine dust texture (high frequency, low amplitude)
+          float dust = simplexNoise(pos * uRockSize * 3.0) * 0.3;
+          dust += simplexNoise(pos * uRockSize * 7.0) * 0.15;
+          dust += simplexNoise(pos * uRockSize * 15.0) * 0.08;
+          
+          // Medium gravel/pebble undulations
+          float gravel = simplexNoise(pos * uRockSize) * 0.5;
+          
+          // Combine: mostly dust with some gravel influence
+          height = mix(dust, gravel, uRockDensity);
+          
+          // Apply softness as overall smoothing (higher = smoother)
+          height = height * (1.0 - uRockSoftness * 0.5);
+          
+          return height * uRockHeight;
+        }
+
         ${shader.fragmentShader}
       `;
 
@@ -287,12 +324,9 @@ export class MoonMaterial extends MeshStandardMaterial {
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <color_fragment>',
         `
-        // Calculate height ONCE - use dFdx/dFdy for gradient (free GPU operation)
+        // Calculate terrain position and surface height for coloring
         vec2 terrainPos = vWorldPosition.xz;
         float surfaceHeight = getSurfaceHeight(terrainPos);
-        
-        // Screen-space derivatives give us the gradient for FREE
-        vec2 heightGradient = vec2(dFdx(surfaceHeight), dFdy(surfaceHeight));
         
         #include <color_fragment>
         
@@ -329,9 +363,14 @@ export class MoonMaterial extends MeshStandardMaterial {
         `
         #include <normal_fragment_begin>
 
-        // Use cached screen-space gradient for normal perturbation (if enabled)
+        // Use regolith texture for bump mapping (if enabled)
         if (uEnableBumpMapping > 0.5) {
-          vec2 dHdxy = heightGradient * uBumpStrength * uBumpMultiplier;
+          // Get regolith height at this position
+          float regolithHeight = getRegolithHeight(terrainPos);
+          // Screen-space derivatives for gradient
+          vec2 regolithGradient = vec2(dFdx(regolithHeight), dFdy(regolithHeight));
+          // Scale gradient for visible effect
+          vec2 dHdxy = regolithGradient * 30.0;
           float moonFaceDir = gl_FrontFacing ? 1.0 : -1.0;
           normal = perturbNormalArb(vViewPosition, normal, dHdxy, moonFaceDir);
         }
@@ -403,8 +442,11 @@ export class MoonMaterial extends MeshStandardMaterial {
     this.shaderUniforms.uLargeCraterWeight.value = this.params.largeCraterWeight;
     this.shaderUniforms.uMediumCraterWeight.value = this.params.mediumCraterWeight;
 
-    // Update bump mapping
-    this.shaderUniforms.uBumpMultiplier.value = this.params.bumpMultiplier;
+    // Update rock bump mapping
+    this.shaderUniforms.uRockDensity.value = this.params.rockDensity;
+    this.shaderUniforms.uRockSize.value = this.params.rockSize;
+    this.shaderUniforms.uRockSoftness.value = this.params.rockSoftness;
+    this.shaderUniforms.uRockHeight.value = this.params.rockHeight;
 
     // Update color parameters
     this.shaderUniforms.uColorVariationFrequency.value = this.params.colorVariationFrequency;
