@@ -244,6 +244,27 @@ export class TerrainManager {
     // Compute bounding sphere for correct frustum culling
     geometry.computeBoundingSphere();
 
+    // Expand bounding sphere to account for vertex shader curvature transformation
+    if (!this.debugMode && this.material.getParam('enableCurvature')) {
+      const planetRadius = this.material.getParam('planetRadius');
+      
+      // Calculate maximum distance from chunk center to corner in XZ plane
+      const halfWidth = this.config.chunkWidth / 2;
+      const halfDepth = this.config.chunkDepth / 2;
+      const maxDist = Math.sqrt(halfWidth * halfWidth + halfDepth * halfDepth);
+      
+      // Maximum curvature drop occurs at the furthest corner from camera
+      // Formula: curvatureDrop = distSq / (2 * planetRadius)
+      const maxCurvatureDrop = (maxDist * maxDist) / (2 * planetRadius);
+      
+      // Expand bounding sphere to encompass transformed geometry
+      // Move center down by half the drop, increase radius by half the drop
+      if (geometry.boundingSphere) {
+        geometry.boundingSphere.center.y -= maxCurvatureDrop / 2;
+        geometry.boundingSphere.radius += maxCurvatureDrop / 2;
+      }
+    }
+
     // Create mesh with appropriate material
     const material = this.debugMode 
       ? this.createDebugMaterial(gridKey)

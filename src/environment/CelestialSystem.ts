@@ -73,6 +73,8 @@ export class CelestialSystem {
   
   // Reusable objects for calculations (avoid per-frame allocations)
   private readonly sunDirection = new THREE.Vector3();
+  private readonly sunWorldPos = new THREE.Vector3();
+  private readonly earthWorldPos = new THREE.Vector3();
   private readonly curvatureQuaternion = new THREE.Quaternion();
   private readonly rotationAxis = new THREE.Vector3();
   
@@ -239,16 +241,18 @@ export class CelestialSystem {
    * Update sun direction uniform for Earth shader
    */
   private updateSunDirection(): void {
-    // Get sun position in world space
-    this.sunMesh.getWorldPosition(this.sunDirection);
-    this.sunDirection.normalize();
+    // Calculate direction from Earth to Sun in WORLD SPACE
+    // Must use getWorldPosition() to account for container rotation and Earth's own rotation
+    this.sunMesh.getWorldPosition(this.sunWorldPos);
+    this.earthMesh.getWorldPosition(this.earthWorldPos);
     
-    // Update Earth material
+    this.sunDirection.copy(this.sunWorldPos).sub(this.earthWorldPos).normalize();
+    
+    // Update Earth material with world-space sun direction
     this.earthMaterial.setSunDirection(this.sunDirection);
     
     // Update directional light position
-    // Light should come FROM the sun direction
-    this.sunLight.position.copy(this.sunDirection).multiplyScalar(1000);
+    this.sunLight.position.copy(this.sunWorldPos);
   }
   
   /**
