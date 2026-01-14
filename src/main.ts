@@ -42,7 +42,7 @@ const cameraConfig: CameraConfig = {
 
 // Terrain configuration
 const terrainConfig: TerrainConfig = {
-  renderDistance: 10,    // Chunks to load in each direction
+  renderDistance: 30,    // Chunks to load in each direction
   chunkWidth: 100,       // World units per chunk
   chunkDepth: 100,       // World units per chunk
   lodLevels: [1024, 512, 256, 128, 64, 32, 16, 8, 4], // Resolution levels (highest to lowest)

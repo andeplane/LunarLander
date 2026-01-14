@@ -29,6 +29,7 @@ export class ShaderUIController {
     this.setupCratersFolder();
     this.setupBumpMappingFolder();
     this.setupColorsFolder();
+    this.setupCurvatureFolder();
   }
 
   /**
@@ -158,6 +159,23 @@ export class ShaderUIController {
     folder.add(this.params, 'brightnessBoost', 1.0, 5.0, 0.1)
       .name('Brightness Boost')
       .onChange((value: number) => this.material.setParam('brightnessBoost', value));
+  }
+
+  /**
+   * Setup curvature parameters folder
+   */
+  private setupCurvatureFolder(): void {
+    const folder = this.gui.addFolder('Curvature');
+    
+    folder.add(this.params, 'enableCurvature')
+      .name('Enable Curvature')
+      .onChange((value: boolean) => this.material.setParam('enableCurvature', value));
+
+    folder.add(this.params, 'planetRadius', 5000, 30000, 1000)
+      .name('Planet Radius (m)')
+      .onChange((value: number) => this.material.setParam('planetRadius', value));
+    
+    folder.open();
   }
 
   /**

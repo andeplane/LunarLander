@@ -42,6 +42,10 @@ export interface MoonMaterialParams {
   colorVariationFrequency: number; // Color variation frequency
   baseColorBlend: number; // Base color blend factor
   brightnessBoost: number; // Brightness boost multiplier
+
+  // Curvature parameters
+  enableCurvature: boolean;
+  planetRadius: number; // Virtual planet radius in meters
 }
 
 /**
@@ -96,6 +100,8 @@ export class MoonMaterial extends MeshStandardMaterial {
       colorVariationFrequency: 0.005,
       baseColorBlend: 0.6,
       brightnessBoost: 2.5,
+      enableCurvature: true,
+      planetRadius: 5000,
     };
 
     this.onBeforeCompile = (shader) => {
@@ -134,6 +140,9 @@ export class MoonMaterial extends MeshStandardMaterial {
       shader.uniforms.uColorVariationFrequency = { value: this.params.colorVariationFrequency };
       shader.uniforms.uBaseColorBlend = { value: this.params.baseColorBlend };
       shader.uniforms.uBrightnessBoost = { value: this.params.brightnessBoost };
+      
+      shader.uniforms.uEnableCurvature = { value: this.params.enableCurvature ? 1.0 : 0.0 };
+      shader.uniforms.uPlanetRadius = { value: this.params.planetRadius };
 
       // ==========================================
       // VERTEX SHADER MODIFICATIONS
@@ -142,6 +151,8 @@ export class MoonMaterial extends MeshStandardMaterial {
       // Add varying for world position
       shader.vertexShader = `
         varying vec3 vWorldPosition;
+        uniform float uEnableCurvature;
+        uniform float uPlanetRadius;
         ${shader.vertexShader}
       `;
 
@@ -151,6 +162,24 @@ export class MoonMaterial extends MeshStandardMaterial {
         `
         #include <worldpos_vertex>
         vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        `
+      );
+
+      // Apply planetary curvature
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <project_vertex>',
+        `
+        vec4 worldPosition = modelMatrix * vec4( transformed, 1.0 );
+        
+        if (uEnableCurvature > 0.5) {
+          vec2 deltaXZ = worldPosition.xz - cameraPosition.xz;
+          float distSq = dot(deltaXZ, deltaXZ);
+          float curvatureDrop = distSq / (2.0 * uPlanetRadius);
+          worldPosition.y -= curvatureDrop;
+        }
+        
+        vec4 mvPosition = viewMatrix * worldPosition;
+        gl_Position = projectionMatrix * mvPosition;
         `
       );
 
@@ -452,6 +481,10 @@ export class MoonMaterial extends MeshStandardMaterial {
     this.shaderUniforms.uColorVariationFrequency.value = this.params.colorVariationFrequency;
     this.shaderUniforms.uBaseColorBlend.value = this.params.baseColorBlend;
     this.shaderUniforms.uBrightnessBoost.value = this.params.brightnessBoost;
+
+    // Update curvature parameters
+    this.shaderUniforms.uEnableCurvature.value = this.params.enableCurvature ? 1.0 : 0.0;
+    this.shaderUniforms.uPlanetRadius.value = this.params.planetRadius;
 
     // Mark material as needing update
     this.needsUpdate = true;
