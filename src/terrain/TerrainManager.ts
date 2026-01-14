@@ -1,4 +1,4 @@
-import { BufferAttribute, BufferGeometry, LOD, Mesh, Scene, Vector3, Camera, MeshBasicMaterial, Color, PerspectiveCamera } from 'three';
+import { BufferAttribute, BufferGeometry, LOD, Mesh, Scene, Vector3, Camera, MeshBasicMaterial, Color, PerspectiveCamera, Raycaster } from 'three';
 import { MoonMaterial } from '../shaders/MoonMaterial';
 import type { TerrainArgs } from './terrain';
 import type { TerrainWorkerResult } from './TerrainWorker';
@@ -58,6 +58,8 @@ export class TerrainManager {
   private camera: Camera | null = null;
   private cameraForward: Vector3 = new Vector3();
   private debugMode: boolean = false;
+  private collisionLodLevel: number = 0;
+  private raycaster: Raycaster = new Raycaster();
 
   constructor(scene: Scene, config: TerrainConfig) {
     this.scene = scene;
@@ -96,6 +98,26 @@ export class TerrainManager {
     });
 
     this.worker = this.setupTerrainWorker();
+
+    // Identify the LOD level closest to resolution 8 for collision detection
+    this.collisionLodLevel = this.findCollisionLodLevel(8);
+  }
+
+  /**
+   * Find the LOD level index closest to target resolution
+   */
+  private findCollisionLodLevel(targetResolution: number): number {
+    let closestIndex = 0;
+    let minDiff = Infinity;
+
+    for (let i = 0; i < this.config.lodLevels.length; i++) {
+      const diff = Math.abs(this.config.lodLevels[i] - targetResolution);
+      if (diff <= minDiff) {
+        minDiff = diff;
+        closestIndex = i;
+      }
+    }
+    return closestIndex;
   }
 
   /**
@@ -449,6 +471,12 @@ export class TerrainManager {
 
       // Request the desired LOD level if not built
       const entry = this.terrainGrid.get(gridKey)!;
+      
+      // ALWAYS ensure the collision LOD level is built for physics
+      if (!entry.builtLevels.has(this.collisionLodLevel)) {
+        this.requestChunkLod(gridKey, this.collisionLodLevel);
+      }
+
       if (!entry.builtLevels.has(desiredLod)) {
         this.requestChunkLod(gridKey, desiredLod);
       }
@@ -469,7 +497,8 @@ export class TerrainManager {
     );
 
     // Sort queue by priority (nearest chunks first, then distance + direction)
-    this.requestQueue.sort(cameraPosition, this.cameraForward, nearestHighPriorityKeys);
+    const maxLodLevel = this.config.lodLevels.length - 1;
+    this.requestQueue.sort(cameraPosition, this.cameraForward, nearestHighPriorityKeys, maxLodLevel);
 
     // Dispatch next request if worker is idle
     this.dispatchNext();
@@ -654,6 +683,55 @@ export class TerrainManager {
    */
   getMaterial(): MoonMaterial {
     return this.material;
+  }
+
+  /**
+   * Get the height of the terrain at a given world (x, z) coordinate.
+   * Uses raycasting against the collision LOD mesh for efficiency.
+   */
+  getHeightAt(x: number, z: number): number | null {
+    // Find which chunk this (x, z) belongs to
+    const gridX = Math.round(x / this.config.chunkWidth);
+    const gridZ = Math.round(z / this.config.chunkDepth);
+    const gridKey = `${gridX},${gridZ}`;
+
+    const entry = this.terrainGrid.get(gridKey);
+    if (!entry) return null;
+
+    // Use collision LOD mesh if available
+    const mesh = entry.meshes[this.collisionLodLevel];
+    if (!mesh || !entry.builtLevels.has(this.collisionLodLevel)) {
+      // Fallback: use any available LOD mesh
+      let fallbackMesh: Mesh | null = null;
+      for (let i = this.config.lodLevels.length - 1; i >= 0; i--) {
+        if (entry.meshes[i] && entry.builtLevels.has(i)) {
+          fallbackMesh = entry.meshes[i];
+          break;
+        }
+      }
+      if (!fallbackMesh) return null;
+      
+      return this.raycastHeight(x, z, fallbackMesh);
+    }
+
+    return this.raycastHeight(x, z, mesh);
+  }
+
+  private raycastHeight(x: number, z: number, mesh: Mesh): number | null {
+    // Ensure world matrix is up to date for accurate raycasting
+    mesh.updateMatrixWorld(true);
+
+    // Start ray far above terrain
+    const rayOrigin = new Vector3(x, 10000, z);
+    const rayDirection = new Vector3(0, -1, 0);
+    this.raycaster.set(rayOrigin, rayDirection);
+
+    const intersects = this.raycaster.intersectObject(mesh, false);
+    if (intersects.length > 0) {
+      return intersects[0].point.y;
+    }
+
+    return null;
   }
 
   /**

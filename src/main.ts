@@ -34,7 +34,10 @@ const cameraConfig: CameraConfig = {
   minSpeed: 1,          // 1 m/s minimum
   maxSpeed: 1000,       // 1000 m/s maximum
   acceleration: 5.0,    // Smoothing factor
-  mouseSensitivity: 0.002
+  mouseSensitivity: 0.002,
+  minAltitudeAGL: 0.5,    // Minimum altitude above ground (meters)
+  slowdownAltitude: 50, // Start slowing at this AGL (meters)
+  slowdownFactor: 0.0, // Speed multiplier at minimum altitude
 };
 
 // Terrain configuration
@@ -46,18 +49,19 @@ const terrainConfig: TerrainConfig = {
   lodDetailLevel: LodDetailLevel.Balanced,   // Target screen-space triangle size
 };
 
-// Initialize flight controller
-const flightController = new FlightController(
-  engine.getCamera(),
-  inputManager,
-  cameraConfig
-);
-engine.setFlightController(flightController);
-
-// Initialize terrain manager
+// Initialize terrain manager first (needed by flight controller)
 const terrainManager = new TerrainManager(engine.getScene(), terrainConfig);
 terrainManager.setCamera(engine.getCamera());
 engine.setTerrainManager(terrainManager);
+
+// Initialize flight controller with terrain manager
+const flightController = new FlightController(
+  engine.getCamera(),
+  inputManager,
+  cameraConfig,
+  terrainManager
+);
+engine.setFlightController(flightController);
 
 // Initialize shader UI controller
 const shaderUI = new ShaderUIController(terrainManager.getMaterial());
@@ -66,7 +70,14 @@ const shaderUI = new ShaderUIController(terrainManager.getMaterial());
 engine.setInputManager(inputManager);
 
 // Set initial camera position above terrain
-engine.getCamera().position.set(-3, 4, 8);
+const initialX = -3;
+const initialZ = 8;
+const terrainHeight = terrainManager.getHeightAt(initialX, initialZ);
+if (terrainHeight !== null) {
+  engine.getCamera().position.set(initialX, terrainHeight + cameraConfig.minAltitudeAGL + 5, initialZ); // Start 5m above min altitude
+} else {
+  engine.getCamera().position.set(initialX, 4, initialZ); // Fallback height
+}
 engine.getCamera().rotation.x -= 0.4;
 engine.getCamera().rotation.y -= 0.2;
 engine.getCamera().rotation.z -= 0.06;

@@ -104,6 +104,11 @@ export class Engine {
     const chunks = this.terrainManager?.getActiveChunkCount() ?? 0;
     const buildQueue = this.terrainManager?.getBuildQueueLength() ?? 0;
     
+    const cameraPos = this.camera.position;
+    const terrainHeight = this.terrainManager?.getHeightAt(cameraPos.x, cameraPos.z) ?? null;
+    const agl = terrainHeight !== null ? (cameraPos.y - terrainHeight).toFixed(2) : 'N/A';
+    const terrainH = terrainHeight !== null ? terrainHeight.toFixed(2) : 'N/A';
+    
     this.statsElement.innerHTML = `
       <strong>Render Stats</strong><br>
       FPS: ${this.currentFPS}<br>
@@ -116,7 +121,10 @@ export class Engine {
       <br>
       <strong>Terrain</strong><br>
       Active Chunks: ${chunks}<br>
-      Build Queue: ${buildQueue}
+      Build Queue: ${buildQueue}<br>
+      Cam Y: ${cameraPos.y.toFixed(2)}m<br>
+      Terrain Y: ${terrainH}m<br>
+      Altitude AGL: ${agl}m
     `;
   }
 

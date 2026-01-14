@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { CameraConfig } from '../types';
 import { InputManager } from '../core/InputManager';
+import { TerrainManager } from '../terrain/TerrainManager';
 
 /**
  * Flight controller responsible for:
@@ -8,11 +9,13 @@ import { InputManager } from '../core/InputManager';
  * - Smooth acceleration/deceleration
  * - Speed adjustment via scroll wheel
  * - Camera movement based on input
+ * - Terrain collision prevention
  */
 export class FlightController {
   private camera: THREE.PerspectiveCamera;
   private inputManager: InputManager;
   private config: CameraConfig;
+  private terrainManager: TerrainManager | null = null;
   
   // Current velocity in world space
   private velocity: THREE.Vector3 = new THREE.Vector3();
@@ -32,11 +35,18 @@ export class FlightController {
   private readonly forward: THREE.Vector3 = new THREE.Vector3();
   private readonly right: THREE.Vector3 = new THREE.Vector3();
   private readonly up: THREE.Vector3 = new THREE.Vector3(0, 1, 0);
+  private readonly targetPosition: THREE.Vector3 = new THREE.Vector3();
 
-  constructor(camera: THREE.PerspectiveCamera, inputManager: InputManager, config: CameraConfig) {
+  constructor(
+    camera: THREE.PerspectiveCamera, 
+    inputManager: InputManager, 
+    config: CameraConfig,
+    terrainManager?: TerrainManager
+  ) {
     this.camera = camera;
     this.inputManager = inputManager;
     this.config = config;
+    this.terrainManager = terrainManager ?? null;
     
     // Initialize rotation from camera's current orientation
     const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
@@ -140,15 +150,86 @@ export class FlightController {
 
     // Calculate target velocity with shift speed boost
     const shiftBoost = this.inputManager.isKeyPressed('shift') ? this.shiftSpeedMultiplier : 1.0;
-    const targetSpeed = this.config.baseSpeed * this.speedMultiplier * shiftBoost;
-    const targetVelocity = this.moveDirection.multiplyScalar(targetSpeed);
+    const baseTargetSpeed = this.config.baseSpeed * this.speedMultiplier * shiftBoost;
+
+    // Apply speed scaling based on Altitude Above Ground Level (AGL)
+    // ONLY applied to the vertical (Y) component of movement AND only when moving DOWN
+    let ySpeedFactor = 1.0;
+    if (this.terrainManager && this.moveDirection.y < 0) {
+      const terrainHeight = this.terrainManager.getHeightAt(this.camera.position.x, this.camera.position.z);
+      if (terrainHeight !== null) {
+        const altitudeAGL = this.camera.position.y - terrainHeight;
+        
+        // Custom smooth slowdown curve:
+        // 50m -> 5m: 100% -> 50%
+        // 5m -> 1m: 50% -> 25%
+        // 1m -> 0.5m: 25% -> 0%
+        if (altitudeAGL <= 0.5) {
+          ySpeedFactor = 0.0;
+        } else if (altitudeAGL <= 1.0) {
+          // 1.0m to 0.5m: maps 25% to 0%
+          const t = (altitudeAGL - 0.5) / (1.0 - 0.5);
+          ySpeedFactor = THREE.MathUtils.lerp(0.0, 0.25, t);
+        } else if (altitudeAGL <= 5.0) {
+          // 5.0m to 1.0m: maps 50% to 25%
+          const t = (altitudeAGL - 1.0) / (5.0 - 1.0);
+          ySpeedFactor = THREE.MathUtils.lerp(0.25, 0.5, t);
+        } else if (altitudeAGL <= 50.0) {
+          // 50m to 5.0m: maps 100% to 50%
+          const t = (altitudeAGL - 5.0) / (50.0 - 5.0);
+          ySpeedFactor = THREE.MathUtils.lerp(0.5, 1.0, t);
+        }
+      }
+    }
+
+    // Split movement into horizontal and vertical components to apply scaling separately
+    const targetVelocity = new THREE.Vector3();
+    
+    // Horizontal component (X, Z) - remains at base speed
+    targetVelocity.x = this.moveDirection.x * baseTargetSpeed;
+    targetVelocity.z = this.moveDirection.z * baseTargetSpeed;
+    
+    // Vertical component (Y) - scaled by ySpeedFactor
+    targetVelocity.y = this.moveDirection.y * baseTargetSpeed * ySpeedFactor;
 
     // Smooth acceleration/deceleration using exponential decay
     const smoothing = 1.0 - Math.exp(-this.config.acceleration * deltaTime);
     this.velocity.lerp(targetVelocity, smoothing);
 
-    // Apply velocity to position
-    this.camera.position.addScaledVector(this.velocity, deltaTime);
+    // Predict next position
+    this.targetPosition.copy(this.camera.position);
+    this.targetPosition.addScaledVector(this.velocity, deltaTime);
+
+    // Prevent collision with terrain
+    if (this.terrainManager) {
+      // 1. Ensure current altitude is respected (prevents sinking if terrain loads under us)
+      const currentTerrainHeight = this.terrainManager.getHeightAt(this.camera.position.x, this.camera.position.z);
+      if (currentTerrainHeight !== null) {
+        const minHeight = currentTerrainHeight + this.config.minAltitudeAGL;
+        if (this.camera.position.y < minHeight) {
+          this.camera.position.y = minHeight;
+          // Sync targetPosition if we were forced up
+          this.targetPosition.y = Math.max(this.targetPosition.y, minHeight);
+        }
+      }
+
+      // 2. Check target position for future collision
+      const targetTerrainHeight = this.terrainManager.getHeightAt(this.targetPosition.x, this.targetPosition.z);
+      if (targetTerrainHeight !== null) {
+        const minHeight = targetTerrainHeight + this.config.minAltitudeAGL;
+        if (this.targetPosition.y < minHeight) {
+          this.targetPosition.y = minHeight;
+          
+          // Zero out downward velocity component if we hit the floor
+          if (this.velocity.y < 0) {
+            this.velocity.y = 0;
+          }
+        }
+      }
+    }
+
+    // Apply position
+    this.camera.position.copy(this.targetPosition);
   }
 
   /**

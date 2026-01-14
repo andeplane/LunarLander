@@ -28,7 +28,9 @@ export interface ChunkRequestQueueDependencies {
     cameraPos: Vector3,
     cameraForward: Vector3,
     chunkConfig: ChunkConfig,
-    nearestChunkKeys: Set<string>
+    nearestChunkKeys: Set<string>,
+    lodLevel?: number,
+    maxLodLevel?: number
   ) => number;
 }
 
@@ -48,11 +50,20 @@ export function defaultPriorityCalculator(
   cameraPos: Vector3,
   cameraForward: Vector3,
   chunkConfig: ChunkConfig,
-  nearestChunkKeys: Set<string>
+  nearestChunkKeys: Set<string>,
+  lodLevel?: number,
+  maxLodLevel?: number
 ): number {
+  // Lowest LOD (highest index) gets highest priority for collision detection
+  // Lower priority value = higher priority (processed first)
+  // Subtract lodLevel from maxLodLevel so highest lodLevel (lowest detail) has SMALLEST value
+  const lodPriority = lodLevel !== undefined && maxLodLevel !== undefined 
+    ? (maxLodLevel - lodLevel) * 1000000 
+    : 0;
+
   // If in nearest 10, give highest priority (very low value)
   if (nearestChunkKeys.has(gridKey)) {
-    return -1000000; // Always highest priority
+    return -1000000 + lodPriority; // Always highest priority, but still respect LOD
   }
 
   const [gridX, gridZ] = parseGridKey(gridKey);
@@ -81,7 +92,7 @@ export function defaultPriorityCalculator(
   // Scale the direction factor relative to distance
   const directionFactor = -dot * distance * 0.5;
 
-  return distance + directionFactor;
+  return distance + directionFactor + lodPriority;
 }
 
 const defaultDependencies: ChunkRequestQueueDependencies = {
@@ -161,7 +172,8 @@ export class ChunkRequestQueue {
   sort(
     cameraPos: Vector3,
     cameraForward: Vector3,
-    nearestChunkKeys: Set<string>
+    nearestChunkKeys: Set<string>,
+    maxLodLevel?: number
   ): void {
     this.queue.sort((a, b) => {
       const priorityA = this.dependencies.calculatePriority(
@@ -169,14 +181,18 @@ export class ChunkRequestQueue {
         cameraPos,
         cameraForward,
         this.chunkConfig,
-        nearestChunkKeys
+        nearestChunkKeys,
+        a.lodLevel,
+        maxLodLevel
       );
       const priorityB = this.dependencies.calculatePriority(
         b.gridKey,
         cameraPos,
         cameraForward,
         this.chunkConfig,
-        nearestChunkKeys
+        nearestChunkKeys,
+        b.lodLevel,
+        maxLodLevel
       );
       return priorityA - priorityB;
     });
