@@ -92,18 +92,26 @@ skybox.loadTexture('/textures/8k_stars_milky_way.jpg');
 // Initialize celestial system (sun, Earth, lighting with Moon curvature)
 const celestialSystem = new CelestialSystem(engine.getScene(), {
   // Sun position - high in the sky, slightly to the side
-  sunAzimuth: Math.PI * 0.3,      // 54 degrees from north
-  sunElevation: Math.PI * 0.35,   // 63 degrees above horizon
+  sunAzimuth: Math.PI * 0.3,
+  sunElevation: Math.PI * 0.35,
   sunIntensity: 2.5,
   
   // Earth position - visible in the lunar sky
-  earthAzimuth: Math.PI * 1.15,   // Opposite side from sun
-  earthElevation: Math.PI * 0.25, // 45 degrees above horizon
+  earthAzimuth: Math.PI * 1.15,
+  earthElevation: Math.PI * 0.25,
+  
+  // Earthshine (reflected light from Earth)
+  earthshineMultiplier: 0.15,
+  
+  // Spaceship light (local illumination)
+  spaceshipLightIntensity: 100,
+  spaceshipLightRange: 200,
 });
+// Set camera reference for spaceship light positioning
+celestialSystem.setCamera(engine.getCamera());
 engine.setCelestialSystem(celestialSystem);
 
 // Initialize shader UI controller (after celestial system so they can be synced)
-// Changes to planetRadius will update both terrain shader and celestial system
 const shaderUI = new ShaderUIController(terrainManager.getMaterial(), celestialSystem);
 
 // Start the render loop

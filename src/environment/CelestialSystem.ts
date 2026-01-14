@@ -12,6 +12,16 @@ import { SunMaterial } from '../shaders/SunMaterial';
  * - Curvature: As player moves, the entire sky (sun, Earth, stars) rotates
  *              to simulate traveling on a curved planetary surface
  * 
+ * LIGHTING ARCHITECTURE:
+ * Three light sources, all respecting curvature rotation:
+ * 1. Sun Light (DirectionalLight): Main light from sun's world position
+ * 2. Earth Light (DirectionalLight): Weak bluish earthshine from Earth's world position
+ * 3. Spaceship Light (PointLight): Local illumination attached to camera
+ * 
+ * IMPORTANT: Sun and Earth lights use getWorldPosition() to get positions
+ * AFTER curvature rotation is applied to the celestialContainer. This ensures
+ * lighting direction matches the visual positions of celestial objects.
+ * 
  * The curvature uses the same formula as the terrain shader:
  * - θ (theta) = distance / planetRadius (rotation angle)
  * - φ (phi) = atan2(z, x) (direction of travel)
@@ -29,6 +39,13 @@ export interface CelestialConfig {
   earthDistance?: number;    // Distance from camera (visual only)
   earthSize?: number;        // Visual size of Earth sphere
   
+  // Earthshine (reflected light from Earth)
+  earthshineMultiplier?: number;  // Multiplier of sun intensity (0-1)
+  
+  // Spaceship light (local illumination)
+  spaceshipLightIntensity?: number;
+  spaceshipLightRange?: number;   // Range in meters
+  
   // Initial positions (angles in radians)
   // Measured from the reference "up" at origin
   sunAzimuth?: number;       // Horizontal angle
@@ -43,6 +60,9 @@ const DEFAULT_CONFIG: Required<CelestialConfig> = {
   sunIntensity: 2.0,
   earthDistance: 40000,
   earthSize: 1500,       // Earth appears ~4x larger than sun from Moon
+  earthshineMultiplier: 0.15,
+  spaceshipLightIntensity: 100,  // High intensity needed for PointLight with quadratic decay
+  spaceshipLightRange: 200,      // 200m range
   sunAzimuth: Math.PI * 0.25,      // 45 degrees from north
   sunElevation: Math.PI * 0.35,    // 63 degrees above horizon
   earthAzimuth: Math.PI * 1.2,     // Opposite-ish from sun
@@ -61,8 +81,14 @@ export class CelestialSystem {
   private sunMaterial!: SunMaterial;
   private earthMesh!: THREE.Mesh;
   private earthMaterial!: EarthMaterial;
-  private sunLight!: THREE.DirectionalLight;
-  private ambientLight!: THREE.AmbientLight;
+  
+  // Lighting - three sources as described above
+  private sunLight!: THREE.DirectionalLight;      // Main directional light from sun
+  private earthLight!: THREE.DirectionalLight;    // Weak bluish earthshine
+  private spaceshipLight!: THREE.PointLight;      // Local illumination on camera
+  
+  // Camera reference for spaceship light positioning
+  private camera: THREE.Camera | null = null;
   
   // Container that rotates with curvature
   private celestialContainer: THREE.Group;
@@ -73,10 +99,12 @@ export class CelestialSystem {
   
   // Reusable objects for calculations (avoid per-frame allocations)
   private readonly sunDirection = new THREE.Vector3();
-  private readonly sunWorldPos = new THREE.Vector3();
-  private readonly earthWorldPos = new THREE.Vector3();
   private readonly curvatureQuaternion = new THREE.Quaternion();
   private readonly rotationAxis = new THREE.Vector3();
+  
+  // Reusable vectors for world position calculations
+  private readonly sunWorldPos = new THREE.Vector3();
+  private readonly earthWorldPos = new THREE.Vector3();
   
   constructor(scene: THREE.Scene, config: CelestialConfig = {}) {
     this.scene = scene;
@@ -95,6 +123,13 @@ export class CelestialSystem {
     
     // Initial update to position everything
     this.updateSunDirection();
+  }
+  
+  /**
+   * Set camera reference for spaceship light positioning
+   */
+  setCamera(camera: THREE.Camera): void {
+    this.camera = camera;
   }
   
   /**
@@ -154,10 +189,17 @@ export class CelestialSystem {
   }
   
   /**
-   * Initialize the directional light from the sun
+   * Initialize the three light sources:
+   * 1. Sun Light - main directional light from sun's world position
+   * 2. Earth Light - weak bluish earthshine from Earth's world position
+   * 3. Spaceship Light - point light attached to camera
+   * 
+   * IMPORTANT: Sun and Earth light positions are updated each frame using
+   * getWorldPosition() AFTER curvature rotation. This ensures light direction
+   * matches the visual position of celestial objects in the sky.
    */
   private initializeLighting(): void {
-    // Main directional light (sunlight)
+    // 1. Main directional light from sun
     this.sunLight = new THREE.DirectionalLight(0xffffff, this.config.sunIntensity);
     this.sunLight.name = 'SunLight';
     
@@ -173,12 +215,27 @@ export class CelestialSystem {
     this.sunLight.shadow.camera.bottom = -2000;
     
     // Light is positioned at scene root (not in container)
-    // so it maintains correct world-space direction
+    // Position will be updated each frame from sun's world position
     this.scene.add(this.sunLight);
     
-    // Minimal ambient light (earthshine + starlight)
-    this.ambientLight = new THREE.AmbientLight(0x111122, 0.1);
-    this.scene.add(this.ambientLight);
+    // 2. Earthshine - weak reflected light from Earth
+    // Bluish tint, much weaker than sunlight
+    const earthshineIntensity = this.config.sunIntensity * this.config.earthshineMultiplier;
+    this.earthLight = new THREE.DirectionalLight(0x8899ff, earthshineIntensity);
+    this.earthLight.name = 'EarthLight';
+    // Position will be updated each frame from Earth's world position
+    this.scene.add(this.earthLight);
+    
+    // 3. Spaceship light - local point light attached to camera
+    this.spaceshipLight = new THREE.PointLight(
+      0xffffff,
+      this.config.spaceshipLightIntensity,
+      this.config.spaceshipLightRange,
+      2 // Quadratic decay for realistic falloff
+    );
+    this.spaceshipLight.name = 'SpaceshipLight';
+    // Position will be updated each frame to match camera
+    this.scene.add(this.spaceshipLight);
   }
   
   /**
@@ -238,21 +295,34 @@ export class CelestialSystem {
   }
   
   /**
-   * Update sun direction uniform for Earth shader
+   * Update sun direction uniform for Earth shader and light positions
+   * 
+   * CRITICAL: Uses getWorldPosition() to get positions AFTER curvature
+   * rotation is applied to celestialContainer. This ensures:
+   * - Earth shader receives correct sun direction for day/night cycle
+   * - DirectionalLight comes FROM the visual sun position
+   * - Earthshine comes FROM the visual Earth position
    */
   private updateSunDirection(): void {
-    // Calculate direction from Earth to Sun in WORLD SPACE
-    // Must use getWorldPosition() to account for container rotation and Earth's own rotation
+    // Get positions in WORLD SPACE (after container rotation)
+    // This is critical for correct lighting direction after curvature rotation
     this.sunMesh.getWorldPosition(this.sunWorldPos);
     this.earthMesh.getWorldPosition(this.earthWorldPos);
     
+    // Calculate direction FROM Earth TO Sun (for Earth shader)
+    // Earth's day/night depends on which side faces the sun
     this.sunDirection.copy(this.sunWorldPos).sub(this.earthWorldPos).normalize();
     
     // Update Earth material with world-space sun direction
     this.earthMaterial.setSunDirection(this.sunDirection);
     
-    // Update directional light position
+    // Update sun directional light position
+    // Light should come FROM the sun's world position
     this.sunLight.position.copy(this.sunWorldPos);
+    
+    // Update earth directional light position
+    // Earthshine comes FROM Earth's world position
+    this.earthLight.position.copy(this.earthWorldPos);
   }
   
   /**
@@ -296,8 +366,14 @@ export class CelestialSystem {
       tiltZ                  // Z tilt
     );
     
-    // Update sun direction for Earth lighting
+    // Update sun direction for Earth lighting and directional light positions
+    // Must be called AFTER curvature rotation is applied to container
     this.updateSunDirection();
+    
+    // Update spaceship light to follow camera
+    if (this.camera) {
+      this.spaceshipLight.position.copy(this.camera.position);
+    }
     
     // Slowly rotate Earth (one rotation per ~24 hours scaled down)
     this.earthMesh.rotation.y += deltaTime * 0.01;
@@ -318,6 +394,69 @@ export class CelestialSystem {
    */
   getPlanetRadius(): number {
     return this.planetRadius;
+  }
+  
+  // ============================================
+  // Light intensity getters/setters for UI control
+  // ============================================
+  
+  /**
+   * Get sun light intensity
+   */
+  get sunIntensity(): number {
+    return this.sunLight.intensity;
+  }
+  
+  /**
+   * Set sun light intensity
+   */
+  set sunIntensity(value: number) {
+    this.sunLight.intensity = value;
+    // Also update earthshine to maintain ratio
+    this.earthLight.intensity = value * this.config.earthshineMultiplier;
+  }
+  
+  /**
+   * Get earthshine multiplier (relative to sun)
+   */
+  get earthshineMultiplier(): number {
+    return this.config.earthshineMultiplier;
+  }
+  
+  /**
+   * Set earthshine multiplier (relative to sun)
+   */
+  set earthshineMultiplier(value: number) {
+    this.config.earthshineMultiplier = value;
+    this.earthLight.intensity = this.sunLight.intensity * value;
+  }
+  
+  /**
+   * Get spaceship light intensity
+   */
+  get spaceshipLightIntensity(): number {
+    return this.spaceshipLight.intensity;
+  }
+  
+  /**
+   * Set spaceship light intensity
+   */
+  set spaceshipLightIntensity(value: number) {
+    this.spaceshipLight.intensity = value;
+  }
+  
+  /**
+   * Get spaceship light range
+   */
+  get spaceshipLightRange(): number {
+    return this.spaceshipLight.distance;
+  }
+  
+  /**
+   * Set spaceship light range
+   */
+  set spaceshipLightRange(value: number) {
+    this.spaceshipLight.distance = value;
   }
   
   /**
@@ -386,9 +525,11 @@ export class CelestialSystem {
     this.earthMesh.geometry.dispose();
     this.earthMaterial.dispose();
     this.sunLight.dispose();
-    this.ambientLight.dispose();
+    this.earthLight.dispose();
+    this.spaceshipLight.dispose();
     this.scene.remove(this.celestialContainer);
     this.scene.remove(this.sunLight);
-    this.scene.remove(this.ambientLight);
+    this.scene.remove(this.earthLight);
+    this.scene.remove(this.spaceshipLight);
   }
 }

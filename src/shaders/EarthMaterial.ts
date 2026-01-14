@@ -9,6 +9,9 @@ import * as THREE from 'three';
  * - Smooth terminator transition
  * - Atmospheric glow at edges
  * - Cloud layer that only shows on day side
+ * 
+ * IMPORTANT: Uses world-space normals for lighting calculations.
+ * The sunDirection uniform must be in world space (from CelestialSystem).
  */
 
 const earthVertexShader = /* glsl */ `
@@ -18,8 +21,9 @@ varying vec3 vPosition;
 
 void main() {
   vUv = uv;
-  // Transform normal to world space (not view space)
-  // so it matches the world-space sunDirection uniform
+  // Transform normal to WORLD SPACE (not view space)
+  // This is critical: sunDirection from CelestialSystem is in world space,
+  // so normals must also be in world space for correct lighting
   vNormal = normalize(mat3(modelMatrix) * normal);
   vPosition = (modelMatrix * vec4(position, 1.0)).xyz;
   
@@ -134,7 +138,7 @@ export class EarthMaterial extends THREE.ShaderMaterial {
   
   /**
    * Update the sun direction for the shader
-   * @param direction Normalized direction vector pointing toward the sun
+   * @param direction Normalized direction vector pointing toward the sun (in world space)
    */
   setSunDirection(direction: THREE.Vector3): void {
     this.sunDirectionUniform.value.copy(direction);
