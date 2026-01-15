@@ -4,7 +4,9 @@ import { InputManager } from './core/InputManager';
 import { FlightController } from './camera/FlightController';
 import { Skybox } from './environment/Skybox';
 import { CelestialSystem } from './environment/CelestialSystem';
-import { TerrainManager, TerrainConfig } from './terrain/TerrainManager';
+import { ChunkManager, type ChunkConfig } from './terrain/ChunkManager';
+import { TerrainGenerator } from './terrain/TerrainGenerator';
+import { RockManager } from './environment/RockManager';
 import { LodDetailLevel } from './terrain/LodUtils';
 import { ShaderUIController } from './ui/ShaderUIController';
 import type { CameraConfig } from './types';
@@ -40,9 +42,9 @@ const cameraConfig: CameraConfig = {
   slowdownFactor: 0.0, // Speed multiplier at minimum altitude
 };
 
-// Terrain configuration
-const terrainConfig: TerrainConfig = {
-  renderDistance: 30,    // Chunks to load in each direction
+// Chunk configuration
+const chunkConfig: ChunkConfig = {
+  renderDistance: 1,    // Chunks to load in each direction
   chunkWidth: 100,       // World units per chunk
   chunkDepth: 100,       // World units per chunk
   lodLevels: [1024, 512, 256, 128, 64, 32, 16, 8, 4], // Resolution levels (highest to lowest)
@@ -50,17 +52,29 @@ const terrainConfig: TerrainConfig = {
   workerCount: 3,        // 1 high-priority + 2 normal workers
 };
 
-// Initialize terrain manager first (needed by flight controller)
-const terrainManager = new TerrainManager(engine.getScene(), terrainConfig);
-terrainManager.setCamera(engine.getCamera());
-engine.setTerrainManager(terrainManager);
+// Initialize terrain generator and rock manager
+const terrainGenerator = new TerrainGenerator({
+  chunkWidth: chunkConfig.chunkWidth,
+  chunkDepth: chunkConfig.chunkDepth,
+});
+const rockManager = new RockManager(30); // 30 rock prototypes
 
-// Initialize flight controller with terrain manager
+// Initialize chunk manager (orchestrates terrain + rocks)
+const chunkManager = new ChunkManager(
+  engine.getScene(),
+  chunkConfig,
+  terrainGenerator,
+  rockManager
+);
+chunkManager.setCamera(engine.getCamera());
+engine.setChunkManager(chunkManager);
+
+// Initialize flight controller with chunk manager
 const flightController = new FlightController(
   engine.getCamera(),
   inputManager,
   cameraConfig,
-  terrainManager
+  chunkManager
 );
 engine.setFlightController(flightController);
 
@@ -70,7 +84,7 @@ engine.setInputManager(inputManager);
 // Set initial camera position above terrain
 const initialX = -3;
 const initialZ = 8;
-const terrainHeight = terrainManager.getHeightAt(initialX, initialZ);
+const terrainHeight = chunkManager.getHeightAt(initialX, initialZ);
 if (terrainHeight !== null) {
   engine.getCamera().position.set(initialX, terrainHeight + cameraConfig.minAltitudeAGL + 5, initialZ); // Start 5m above min altitude
 } else {
@@ -105,7 +119,7 @@ celestialSystem.setCamera(engine.getCamera());
 engine.setCelestialSystem(celestialSystem);
 
 // Initialize shader UI controller (after celestial system so they can be synced)
-const shaderUI = new ShaderUIController(terrainManager.getMaterial(), celestialSystem);
+const shaderUI = new ShaderUIController(chunkManager.getMaterial(), celestialSystem);
 
 // Start the render loop
 engine.start();
