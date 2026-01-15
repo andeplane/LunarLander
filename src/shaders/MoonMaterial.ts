@@ -10,6 +10,8 @@ export interface MoonMaterialParams {
   enableNoise: boolean;
   enableBumpMapping: boolean;
   enableColorVariation: boolean;
+  enableRocks: boolean;      // Toggle rock bumps
+  enableMicroCraters: boolean;  // Toggle micro-crater pits
 
   // Base parameters
   scale: number; // Crater density (lower = larger craters)
@@ -78,6 +80,8 @@ export class MoonMaterial extends MeshStandardMaterial {
       enableNoise: true,
       enableBumpMapping: true,
       enableColorVariation: true,
+      enableRocks: true,      // Enable rocks by default
+      enableMicroCraters: false,  // Disable micro-craters to focus on rocks
       scale: 0.05,
       distortion: 0.35,
       bumpStrength: 0.4,
@@ -113,6 +117,8 @@ export class MoonMaterial extends MeshStandardMaterial {
       shader.uniforms.uEnableNoise = { value: this.params.enableNoise ? 1.0 : 0.0 };
       shader.uniforms.uEnableBumpMapping = { value: this.params.enableBumpMapping ? 1.0 : 0.0 };
       shader.uniforms.uEnableColorVariation = { value: this.params.enableColorVariation ? 1.0 : 0.0 };
+      shader.uniforms.uEnableRocks = { value: this.params.enableRocks ? 1.0 : 0.0 };
+      shader.uniforms.uEnableMicroCraters = { value: this.params.enableMicroCraters ? 1.0 : 0.0 };
       
       shader.uniforms.uScale = { value: this.params.scale };
       shader.uniforms.uDistortion = { value: this.params.distortion };
@@ -196,6 +202,8 @@ export class MoonMaterial extends MeshStandardMaterial {
         uniform float uEnableNoise;
         uniform float uEnableBumpMapping;
         uniform float uEnableColorVariation;
+        uniform float uEnableRocks;
+        uniform float uEnableMicroCraters;
         
         // Base parameters
         uniform float uScale;
@@ -330,26 +338,19 @@ export class MoonMaterial extends MeshStandardMaterial {
             vec2 cell = floor(uv * scale);
             vec2 local = fract(uv * scale) - 0.5;
             
-            // Random ID for this cell
             float r = hash(cell + vec2(seedOffset));
-            
-            // Filter by density (inverted logic: high r = keep)
             if (r > density) return 0.0;
             
-            // Random position offset within the cell (-0.4 to 0.4)
             float rx = hash(cell + vec2(1.0 + seedOffset, 2.0));
             float ry = hash(cell + vec2(3.0 + seedOffset, 4.0));
             vec2 offset = vec2(rx, ry) - 0.5;
             
-            // Calculate distance
             float d = length(local - offset * 0.8);
+            float size = 0.15 + 0.15 * r;  // Slightly smaller rocks
             
-            // Random rock size
-            float size = 0.25 + 0.25 * r; 
-            
-            // Rock shape profile (sharp falloff for solid object look)
-            // Using smoothstep for antialiasing the edge
-            return smoothstep(size, size - 0.05, d) * sqrt(max(0.0, 1.0 - d/size)); 
+            // Simple dome shape (no rings)
+            float dome = max(0.0, 1.0 - d / size);
+            return dome * dome;
         }
 
         float getMicroCraters(vec2 uv, float scale, float density) {
@@ -361,30 +362,27 @@ export class MoonMaterial extends MeshStandardMaterial {
             
             vec2 offset = vec2(hash(cell), hash(cell + 13.0)) - 0.5;
             float d = length(local - offset);
-            float size = 0.3 + 0.2 * r; 
+            float size = 0.2 + 0.15 * r;
             
-            // Inverted pit shape
-            return -1.0 * smoothstep(size, size * 0.5, d) * (1.0 - smoothstep(size * 0.1, 0.0, d));
+            // Simple bowl shape (inverted dome)
+            float bowl = max(0.0, 1.0 - d / size);
+            return -bowl * bowl;  // Negative for depression
         }
 
         float getRegolithHeight(vec2 pos) {
           float height = 0.0;
           
-          // 1. Very fine high-freq noise for dust/sand texture (Base Regolith)
-          float dust = simplexNoise(pos * uRockSize * 4.0);
-          height += dust * 0.01; // Much subtler - smooth gray base
-
-          // 2. Small scattered pebbles (High frequency, lower height)
-          float pebbles = getRocks(pos, uRockSize * 2.0, uRockDensity * 0.5, 0.0);
-          height += pebbles * 0.15; // Fewer, subtler pebbles
+          if (uEnableRocks > 0.5) {
+            // Larger scattered rocks (distinct bumps)
+            float rocks = getRocks(pos, uRockSize * 0.5, uRockDensity * 0.4, 10.0);
+            height += rocks * 1.0;
+          }
           
-          // 3. Larger scattered rocks (Lower frequency, higher height)
-          float rocks = getRocks(pos, uRockSize * 0.5, uRockDensity * 0.4, 10.0);
-          height += rocks * 1.0;
-          
-          // 4. Micro craters (Negative height)
-          float pits = getMicroCraters(pos, uRockSize * 0.2, 0.4); // Constant density for pits
-          height += pits * 0.5;
+          if (uEnableMicroCraters > 0.5) {
+            // Micro craters (occasional pits)
+            float pits = getMicroCraters(pos, uRockSize * 0.2, 0.4);
+            height += pits * 0.5;
+          }
 
           return height * uRockHeight;
         }
@@ -514,6 +512,8 @@ export class MoonMaterial extends MeshStandardMaterial {
     this.shaderUniforms.uEnableNoise.value = this.params.enableNoise ? 1.0 : 0.0;
     this.shaderUniforms.uEnableBumpMapping.value = this.params.enableBumpMapping ? 1.0 : 0.0;
     this.shaderUniforms.uEnableColorVariation.value = this.params.enableColorVariation ? 1.0 : 0.0;
+    this.shaderUniforms.uEnableRocks.value = this.params.enableRocks ? 1.0 : 0.0;
+    this.shaderUniforms.uEnableMicroCraters.value = this.params.enableMicroCraters ? 1.0 : 0.0;
 
     // Update base parameters
     this.shaderUniforms.uScale.value = this.params.scale;
