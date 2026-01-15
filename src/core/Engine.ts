@@ -44,6 +44,8 @@ export class Engine {
   private currentFPS: number = 0;
   private lastTriangleCount: number = 0;
   private lastDrawCalls: number = 0;
+  private statsUpdateCounter: number = 0;
+  private readonly STATS_UPDATE_INTERVAL: number = 30; // Update stats every 30 frames
 
   constructor(canvas: HTMLCanvasElement) {
     // Initialize renderer
@@ -304,20 +306,25 @@ export class Engine {
    * Render loop (called every frame)
    */
   private render(): void {
-    // Reset renderer info at start of frame so it accumulates correctly
-    this.renderer.info.reset();
+    // Update stats periodically (every N frames) to avoid double rendering every frame
+    // EffectComposer uses render targets which don't update renderer.info correctly,
+    // so we need to render directly occasionally to get accurate stats
+    this.statsUpdateCounter++;
+    if (this.statsUpdateCounter >= this.STATS_UPDATE_INTERVAL) {
+      this.statsUpdateCounter = 0;
+      
+      // Reset renderer info and render directly to get accurate stats
+      this.renderer.info.reset();
+      this.renderer.render(this.scene, this.camera);
+      
+      // Read render stats after direct rendering
+      // In wireframe mode, Three.js counts lines instead of triangles.
+      // We add render.lines / 3 to account for triangles rendered as wireframes.
+      this.lastDrawCalls = this.renderer.info.render.calls;
+      this.lastTriangleCount = Math.round(this.renderer.info.render.triangles + this.renderer.info.render.lines / 3);
+    }
     
-    // Render scene directly to get accurate stats (EffectComposer uses render targets
-    // which don't update renderer.info correctly, so we need to render directly first)
-    this.renderer.render(this.scene, this.camera);
-    
-    // Read render stats after direct rendering (before composer overwrites)
-    // In wireframe mode, Three.js counts lines instead of triangles.
-    // We add render.lines / 3 to account for triangles rendered as wireframes.
-    this.lastDrawCalls = this.renderer.info.render.calls;
-    this.lastTriangleCount = Math.round(this.renderer.info.render.triangles + this.renderer.info.render.lines / 3);
-    
-    // Now render with post-processing composer for final output
+    // Render with post-processing composer for final output (every frame)
     this.composer.render(this.deltaTime);
   }
 
