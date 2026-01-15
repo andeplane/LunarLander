@@ -44,7 +44,7 @@ const cameraConfig: CameraConfig = {
 
 // Chunk configuration
 const chunkConfig: ChunkConfig = {
-  renderDistance: 20,    // Chunks to load in each direction
+  renderDistance: 40,    // Chunks to load in each direction
   chunkWidth: 100,       // World units per chunk
   chunkDepth: 100,       // World units per chunk
   lodLevels: [1024, 512, 256, 128, 64, 32, 16, 8, 4], // Resolution levels (highest to lowest)
@@ -57,7 +57,12 @@ const terrainGenerator = new TerrainGenerator({
   chunkWidth: chunkConfig.chunkWidth,
   chunkDepth: chunkConfig.chunkDepth,
 });
-const rockManager = new RockManager(30); // 30 rock prototypes
+const rockManager = new RockManager(
+  30, // 30 rock prototypes per LOD
+  chunkConfig.chunkWidth,
+  chunkConfig.chunkDepth,
+  chunkConfig.lodLevels
+);
 
 // Initialize chunk manager (orchestrates terrain + rocks)
 const chunkManager = new ChunkManager(

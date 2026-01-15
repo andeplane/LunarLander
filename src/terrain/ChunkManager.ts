@@ -220,7 +220,7 @@ export class ChunkManager {
 
     // Create rock meshes via RockManager (if placements exist)
     if (result.rockPlacements && result.rockPlacements.length > 0) {
-      const rockMeshes = this.rockManager.createRockMeshes(result.rockPlacements);
+      const rockMeshes = this.rockManager.createRockMeshes(result.rockPlacements, lodLevel);
       for (const rockMesh of rockMeshes) {
         chunk.addRockMesh(rockMesh, lodLevel);
       }

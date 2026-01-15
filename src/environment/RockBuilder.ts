@@ -21,55 +21,6 @@ export class RockBuilder {
   // Reusable temp vectors (avoid GC pressure in hot loops)
   private static readonly _v1 = new Vector3();
 
-  /**
-   * Build vertex adjacency list from geometry faces using Set for O(1) lookups.
-   * Returns array where each index contains array of adjacent vertex indices.
-   */
-  private static buildAdjacency(geometry: BufferGeometry): number[][] {
-    const positions = geometry.attributes.position;
-    const index = geometry.index;
-    const vertexCount = positions.count;
-    
-    // Initialize adjacency sets (Set for O(1) add/lookup)
-    const adjacentSets: Set<number>[] = Array.from({ length: vertexCount }, () => new Set());
-    
-    // Build adjacency from faces
-    if (index) {
-      // Indexed geometry
-      const indices = index.array;
-      for (let i = 0; i < indices.length; i += 3) {
-        const i1 = indices[i];
-        const i2 = indices[i + 1];
-        const i3 = indices[i + 2];
-        
-        // Add each vertex's neighbors (Set automatically handles duplicates)
-        adjacentSets[i1].add(i2);
-        adjacentSets[i1].add(i3);
-        adjacentSets[i2].add(i1);
-        adjacentSets[i2].add(i3);
-        adjacentSets[i3].add(i1);
-        adjacentSets[i3].add(i2);
-      }
-    } else {
-      // Non-indexed geometry (triangles)
-      const count = positions.count;
-      for (let i = 0; i < count; i += 3) {
-        const i1 = i;
-        const i2 = i + 1;
-        const i3 = i + 2;
-        
-        adjacentSets[i1].add(i2);
-        adjacentSets[i1].add(i3);
-        adjacentSets[i2].add(i1);
-        adjacentSets[i2].add(i3);
-        adjacentSets[i3].add(i1);
-        adjacentSets[i3].add(i2);
-      }
-    }
-    
-    // Convert Sets to arrays
-    return adjacentSets.map(s => Array.from(s));
-  }
 
   /**
    * Project point p onto plane defined by normal n and point r0.
@@ -96,27 +47,27 @@ export class RockBuilder {
   }
 
   /**
-   * Scrape at vertex positionIndex: project nearby vertices onto a plane.
-   * Uses flood-fill to find all vertices within radius.
-   * Zero allocations - uses reusable temp vectors and scalar math.
+   * Accumulate scrape displacement for a vertex.
+   * Instead of directly projecting, accumulates weighted displacement that will be blended.
+   * This prevents holes from overlapping scrapes projecting vertices to different planes.
    */
-  private static scrape(
+  private static accumulateScrapeDisplacement(
     positionIndex: number,
-    positions: Float32Array,
+    originalPositions: Float32Array,
     normals: Float32Array,
-    adjacentVertices: number[][],
+    displacements: Float32Array,
+    weights: Float32Array,
     strength: number,
     radius: number
   ): void {
-    const vertexCount = positions.length / 3;
-    const traversed = new Array(vertexCount).fill(false);
+    const vertexCount = originalPositions.length / 3;
     
-    // Get center position (scalar math)
-    const cx = positions[positionIndex * 3];
-    const cy = positions[positionIndex * 3 + 1];
-    const cz = positions[positionIndex * 3 + 2];
+    // Get center position from ORIGINAL positions
+    const cx = originalPositions[positionIndex * 3];
+    const cy = originalPositions[positionIndex * 3 + 1];
+    const cz = originalPositions[positionIndex * 3 + 2];
     
-    // Get and normalize normal (scalar math)
+    // Get normal (use original position's normal)
     let nx = normals[positionIndex * 3];
     let ny = normals[positionIndex * 3 + 1];
     let nz = normals[positionIndex * 3 + 2];
@@ -130,51 +81,47 @@ export class RockBuilder {
     const r0y = cy - ny * strength;
     const r0z = cz - nz * strength;
     
-    // Flood-fill algorithm
-    const stack: number[] = [positionIndex];
     const radiusSq = radius * radius;
+    let verticesAffected = 0;
     
-    while (stack.length > 0) {
-      const topIndex = stack.pop()!;
+    for (let i = 0; i < vertexCount; i++) {
+      // Get ORIGINAL vertex position
+      const origPx = originalPositions[i * 3];
+      const origPy = originalPositions[i * 3 + 1];
+      const origPz = originalPositions[i * 3 + 2];
       
-      if (traversed[topIndex]) continue;
-      traversed[topIndex] = true;
-      
-      // Get vertex position (scalar math)
-      const px = positions[topIndex * 3];
-      const py = positions[topIndex * 3 + 1];
-      const pz = positions[topIndex * 3 + 2];
-      
-      // Project onto plane (reuse _v1 temp vector)
-      RockBuilder.project(nx, ny, nz, r0x, r0y, r0z, px, py, pz, RockBuilder._v1);
-      
-      // Check if within radius (scalar math)
-      const dx = RockBuilder._v1.x - r0x;
-      const dy = RockBuilder._v1.y - r0y;
-      const dz = RockBuilder._v1.z - r0z;
+      // Check if ORIGINAL vertex position is within radius
+      const dx = origPx - cx;
+      const dy = origPy - cy;
+      const dz = origPz - cz;
       const distSq = dx * dx + dy * dy + dz * dz;
       
       if (distSq < radiusSq) {
-        // Project vertex onto plane
-        positions[topIndex * 3] = RockBuilder._v1.x;
-        positions[topIndex * 3 + 1] = RockBuilder._v1.y;
-        positions[topIndex * 3 + 2] = RockBuilder._v1.z;
+        // Calculate weight based on distance (closer = higher weight)
+        const dist = Math.sqrt(distSq);
+        const normalizedDist = dist / radius; // 0 to 1
+        // Use smooth falloff (1 at center, 0 at edge)
+        const weight = 1.0 - (normalizedDist * normalizedDist); // Quadratic falloff
         
-        // Update normal to match plane normal
-        normals[topIndex * 3] = nx;
-        normals[topIndex * 3 + 1] = ny;
-        normals[topIndex * 3 + 2] = nz;
+        // Project original position onto plane
+        RockBuilder.project(nx, ny, nz, r0x, r0y, r0z, origPx, origPy, origPz, RockBuilder._v1);
         
-        // Add neighbors to stack
-        const neighbours = adjacentVertices[topIndex];
-        for (const neighbourIndex of neighbours) {
-          if (!traversed[neighbourIndex]) {
-            stack.push(neighbourIndex);
-          }
-        }
+        // Calculate displacement from original position
+        const dispX = RockBuilder._v1.x - origPx;
+        const dispY = RockBuilder._v1.y - origPy;
+        const dispZ = RockBuilder._v1.z - origPz;
+        
+        // Accumulate weighted displacement
+        displacements[i * 3] += dispX * weight;
+        displacements[i * 3 + 1] += dispY * weight;
+        displacements[i * 3 + 2] += dispZ * weight;
+        weights[i] += weight;
+        
+        verticesAffected++;
       }
     }
   }
+
 
   /**
    * Fractal Brownian Motion (fBm) noise with multiple octaves.
@@ -210,7 +157,8 @@ export class RockBuilder {
     const baseGeometry = new IcosahedronGeometry(1, detail);
     // Merge vertices to weld any duplicates (critical for flood-fill)
     // mergeVertices returns BufferGeometry (loses specific geometry type)
-    return mergeVertices(baseGeometry, 1e-6);
+    const merged = mergeVertices(baseGeometry, 1e-6);
+    return merged;
   }
 
   /**
@@ -219,7 +167,6 @@ export class RockBuilder {
    */
   private static applyScrapingAndNoise(
     geometry: BufferGeometry,
-    adjacency: number[][],
     seed: number,
     options: {
       scrapeCount?: number;
@@ -235,9 +182,9 @@ export class RockBuilder {
       scrapeCount = 7,
       scrapeMinDist = 0.8,
       scrapeStrength = 0.2,
-      scrapeRadius = 0.4,
+      scrapeRadius = 0.6, // Increased from 0.4 to affect more vertices and create smoother transitions
       noiseScale = 2.0,
-      noiseStrength = 0.1,
+      noiseStrength = 0.15, // Increased from 0.1 to smooth out flat facets
       scale = [1, 1, 0.7],
     } = options;
 
@@ -252,7 +199,10 @@ export class RockBuilder {
     const normalArray = normals.array as Float32Array;
     const vertexCount = positions.count;
 
-    // Randomly select scrape positions
+    // Store original positions BEFORE any scraping to prevent holes from overlapping scrapes
+    const originalPositions = new Float32Array(positionArray);
+
+    // Randomly select scrape positions (using original positions)
     const scrapeIndices: number[] = [];
     const scrapePositions: number[] = []; // Store as flat array [x, y, z, ...]
 
@@ -262,9 +212,9 @@ export class RockBuilder {
 
       while (!found && attempts < 100) {
         const randIndex = Math.floor(prng() * vertexCount);
-        const px = positionArray[randIndex * 3];
-        const py = positionArray[randIndex * 3 + 1];
-        const pz = positionArray[randIndex * 3 + 2];
+        const px = originalPositions[randIndex * 3];
+        const py = originalPositions[randIndex * 3 + 1];
+        const pz = originalPositions[randIndex * 3 + 2];
 
         // Check minimum distance from other scrape points (scalar math)
         let tooClose = false;
@@ -292,21 +242,43 @@ export class RockBuilder {
       }
     }
 
+    // Accumulate displacements from all scrapes to prevent holes from overlapping projections
+    // Each vertex accumulates weighted displacements from all affecting scrapes
+    const displacements = new Float32Array(vertexCount * 3); // [dx, dy, dz, ...]
+    const weights = new Float32Array(vertexCount); // Total weight per vertex
+    
     // Apply scraping at selected positions with randomized parameters
     for (const scrapeIndex of scrapeIndices) {
       // Randomize strength and radius per scrape for natural variation
       const localStrength = scrapeStrength * (0.6 + 0.8 * prng());
       const localRadius = scrapeRadius * (0.6 + 1.2 * prng());
       
-      RockBuilder.scrape(
+      RockBuilder.accumulateScrapeDisplacement(
         scrapeIndex,
-        positionArray,
+        originalPositions,
         normalArray,
-        adjacency,
+        displacements,
+        weights,
         localStrength,
         localRadius
       );
     }
+    
+    // Apply accumulated displacements with normalization
+    for (let i = 0; i < vertexCount; i++) {
+      const w = weights[i];
+      if (w > 0) {
+        // Normalize by total weight to get smooth blend
+        positionArray[i * 3] = originalPositions[i * 3] + displacements[i * 3] / w;
+        positionArray[i * 3 + 1] = originalPositions[i * 3 + 1] + displacements[i * 3 + 1] / w;
+        positionArray[i * 3 + 2] = originalPositions[i * 3 + 2] + displacements[i * 3 + 2] / w;
+      }
+    }
+
+    // Recompute normals after scraping (before noise) so noise displacement uses correct normals
+    geometry.computeVertexNormals();
+    // Update normal array reference after recomputation
+    const updatedNormalArray = geometry.attributes.normal.array as Float32Array;
 
     // Apply final fBm noise distortion (scalar math, zero allocations)
     for (let i = 0; i < vertexCount; i++) {
@@ -323,10 +295,10 @@ export class RockBuilder {
         3
       );
 
-      // Displace along normal (scalar math)
-      const nx = normalArray[i * 3];
-      const ny = normalArray[i * 3 + 1];
-      const nz = normalArray[i * 3 + 2];
+      // Displace along normal (scalar math) - use updated normals after scraping
+      const nx = updatedNormalArray[i * 3];
+      const ny = updatedNormalArray[i * 3 + 1];
+      const nz = updatedNormalArray[i * 3 + 2];
       
       const newX = px + nx * noise;
       const newY = py + ny * noise;
@@ -342,7 +314,7 @@ export class RockBuilder {
     positions.needsUpdate = true;
     normals.needsUpdate = true;
 
-    // Recompute smooth normals
+    // Recompute smooth normals one final time after noise
     geometry.computeVertexNormals();
 
     // Compute bounds for frustum culling
@@ -378,11 +350,8 @@ export class RockBuilder {
     // Create base geometry
     const geometry = RockBuilder.createBaseGeometry(detail);
 
-    // Build adjacency list (needed for scraping)
-    const adjacency = RockBuilder.buildAdjacency(geometry);
-
     // Apply scraping and noise
-    RockBuilder.applyScrapingAndNoise(geometry, adjacency, seed, options);
+    RockBuilder.applyScrapingAndNoise(geometry, seed, options);
 
     return geometry;
   }
@@ -410,14 +379,13 @@ export class RockBuilder {
   ): BufferGeometry[] {
     const { detail = 3 } = options || {};
 
-    // Build topology once (expensive operations)
+    // Build base geometry once (expensive operation)
     const baseGeometry = RockBuilder.createBaseGeometry(detail);
-    const adjacency = RockBuilder.buildAdjacency(baseGeometry);
 
     // Clone and scrape each rock (cheap operations)
     return Array.from({ length: count }, (_, i) => {
       const geometry = baseGeometry.clone();
-      RockBuilder.applyScrapingAndNoise(geometry, adjacency, i, options);
+      RockBuilder.applyScrapingAndNoise(geometry, i, options);
       return geometry;
     });
   }

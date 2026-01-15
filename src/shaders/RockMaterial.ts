@@ -7,6 +7,8 @@ import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 export interface RockMaterialParams {
   enableCurvature: boolean;
   planetRadius: number; // Virtual planet radius in meters
+  brightnessBoost: number; // Brightness multiplier (match MoonMaterial default of 1.2)
+  baseColorBlend: number; // Base color blend factor (match MoonMaterial default of 0.6)
 }
 
 /**
@@ -31,29 +33,34 @@ export class RockMaterial extends MeshStandardMaterial {
     this.params = {
       enableCurvature: true,
       planetRadius: DEFAULT_PLANET_RADIUS,
+      brightnessBoost: 1.2, // Match MoonMaterial default
+      baseColorBlend: 0.6, // Match MoonMaterial default
     };
 
     this.onBeforeCompile = (shader) => {
       // Store reference to uniforms for later updates
       this.shaderUniforms = shader.uniforms;
 
-      // Initialize curvature uniforms
+      // Initialize curvature, brightness, and color blend uniforms
       shader.uniforms.uEnableCurvature = { value: this.params.enableCurvature ? 1.0 : 0.0 };
       shader.uniforms.uPlanetRadius = { value: this.params.planetRadius };
+      shader.uniforms.uBrightnessBoost = { value: this.params.brightnessBoost };
+      shader.uniforms.uBaseColorBlend = { value: this.params.baseColorBlend };
       // Note: cameraPosition is automatically provided by Three.js
 
       // ==========================================
       // VERTEX SHADER MODIFICATIONS
       // ==========================================
       
-      // Add uniforms for curvature
+      // Add uniforms and varying for curvature and lighting
       shader.vertexShader = `
+        varying vec3 vWorldPosition; // Curved world position for lighting
         uniform float uEnableCurvature;
         uniform float uPlanetRadius;
         ${shader.vertexShader}
       `;
 
-      // Apply planetary curvature (same as MoonMaterial)
+      // Apply planetary curvature and store curved world position
       // IMPORTANT: For InstancedMesh, we need to use instanceMatrix if available
       shader.vertexShader = shader.vertexShader.replace(
         '#include <project_vertex>',
@@ -71,8 +78,47 @@ export class RockMaterial extends MeshStandardMaterial {
           worldPosition.y -= curvatureDrop;
         }
         
+        // Store CURVED world position (after curvature) for fragment shader lighting
+        vWorldPosition = worldPosition.xyz;
+        
         vec4 mvPosition = viewMatrix * worldPosition;
         gl_Position = projectionMatrix * mvPosition;
+        `
+      );
+
+      // ==========================================
+      // FRAGMENT SHADER MODIFICATIONS
+      // ==========================================
+      
+      // Add varying and uniforms for fragment shader
+      shader.fragmentShader = `
+        varying vec3 vWorldPosition; // Curved world position for lighting
+        uniform float uBrightnessBoost;
+        uniform float uBaseColorBlend;
+        ${shader.fragmentShader}
+      `;
+
+      // Apply lunar color palette matching MoonMaterial exactly
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <color_fragment>',
+        `
+        #include <color_fragment>
+        
+        // Lunar color palette (match MoonMaterial exactly)
+        vec3 darkMoon = vec3(0.08, 0.08, 0.10);    // Deep crater bottoms
+        vec3 lightMoon = vec3(0.55, 0.53, 0.51);   // Crater rims / fresh ejecta
+        vec3 baseColor = vec3(0.25, 0.24, 0.23);   // Default mid-tone
+        
+        // Use average height (0.5) to match terrain mid-tone
+        // This approximates what terrain produces when color variation/noise are disabled
+        float surfaceHeight = 0.5;
+        vec3 surfaceColor = mix(darkMoon, lightMoon, surfaceHeight);
+        
+        // Blend base color with height-based color (match MoonMaterial's uBaseColorBlend)
+        vec3 rockColor = mix(baseColor, surfaceColor, uBaseColorBlend);
+        
+        // Apply color and brightness boost (match MoonMaterial)
+        diffuseColor.rgb *= rockColor * uBrightnessBoost;
         `
       );
     };
@@ -89,6 +135,10 @@ export class RockMaterial extends MeshStandardMaterial {
         this.shaderUniforms.uEnableCurvature.value = value ? 1.0 : 0.0;
       } else if (key === 'planetRadius') {
         this.shaderUniforms.uPlanetRadius.value = value;
+      } else if (key === 'brightnessBoost') {
+        this.shaderUniforms.uBrightnessBoost.value = value;
+      } else if (key === 'baseColorBlend') {
+        this.shaderUniforms.uBaseColorBlend.value = value;
       }
     }
     
