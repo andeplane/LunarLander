@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { CameraConfig } from '../types';
 import { InputManager } from '../core/InputManager';
-import { TerrainManager } from '../terrain/TerrainManager';
+import { ChunkManager } from '../terrain/ChunkManager';
 
 /**
  * Flight controller responsible for:
@@ -15,7 +15,7 @@ export class FlightController {
   private camera: THREE.PerspectiveCamera;
   private inputManager: InputManager;
   private config: CameraConfig;
-  private terrainManager: TerrainManager | null = null;
+  private chunkManager: ChunkManager | null = null;
   
   // Current velocity in world space
   private velocity: THREE.Vector3 = new THREE.Vector3();
@@ -41,12 +41,12 @@ export class FlightController {
     camera: THREE.PerspectiveCamera, 
     inputManager: InputManager, 
     config: CameraConfig,
-    terrainManager?: TerrainManager
+    chunkManager?: ChunkManager
   ) {
     this.camera = camera;
     this.inputManager = inputManager;
     this.config = config;
-    this.terrainManager = terrainManager ?? null;
+    this.chunkManager = chunkManager ?? null;
     
     // Initialize rotation from camera's current orientation
     const euler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
@@ -155,8 +155,8 @@ export class FlightController {
     // Apply speed scaling based on Altitude Above Ground Level (AGL)
     // ONLY applied to the vertical (Y) component of movement AND only when moving DOWN
     let ySpeedFactor = 1.0;
-    if (this.terrainManager && this.moveDirection.y < 0) {
-      const terrainHeight = this.terrainManager.getHeightAt(this.camera.position.x, this.camera.position.z);
+    if (this.chunkManager && this.moveDirection.y < 0) {
+      const terrainHeight = this.chunkManager.getHeightAt(this.camera.position.x, this.camera.position.z);
       if (terrainHeight !== null) {
         const altitudeAGL = this.camera.position.y - terrainHeight;
         
@@ -201,9 +201,9 @@ export class FlightController {
     this.targetPosition.addScaledVector(this.velocity, deltaTime);
 
     // Prevent collision with terrain
-    if (this.terrainManager) {
+    if (this.chunkManager) {
       // 1. Ensure current altitude is respected (prevents sinking if terrain loads under us)
-      const currentTerrainHeight = this.terrainManager.getHeightAt(this.camera.position.x, this.camera.position.z);
+      const currentTerrainHeight = this.chunkManager.getHeightAt(this.camera.position.x, this.camera.position.z);
       if (currentTerrainHeight !== null) {
         const minHeight = currentTerrainHeight + this.config.minAltitudeAGL;
         if (this.camera.position.y < minHeight) {
@@ -214,7 +214,7 @@ export class FlightController {
       }
 
       // 2. Check target position for future collision
-      const targetTerrainHeight = this.terrainManager.getHeightAt(this.targetPosition.x, this.targetPosition.z);
+      const targetTerrainHeight = this.chunkManager.getHeightAt(this.targetPosition.x, this.targetPosition.z);
       if (targetTerrainHeight !== null) {
         const minHeight = targetTerrainHeight + this.config.minAltitudeAGL;
         if (this.targetPosition.y < minHeight) {

@@ -4,7 +4,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { FlightController } from '../camera/FlightController';
-import { TerrainManager } from '../terrain/TerrainManager';
+import { ChunkManager } from '../terrain/ChunkManager';
 import { CelestialSystem } from '../environment/CelestialSystem';
 import { InputManager } from './InputManager';
 
@@ -14,7 +14,7 @@ import { InputManager } from './InputManager';
  * - Main render loop with deltaTime tracking
  * - Scene management
  * - FlightController updates
- * - TerrainManager updates
+ * - ChunkManager updates
  * - Stats display (FPS, draw calls, triangles)
  */
 export class Engine {
@@ -23,7 +23,7 @@ export class Engine {
   private camera: THREE.PerspectiveCamera;
   private animationId: number | null = null;
   private flightController: FlightController | null = null;
-  private terrainManager: TerrainManager | null = null;
+  private chunkManager: ChunkManager | null = null;
   private celestialSystem: CelestialSystem | null = null;
   private inputManager: InputManager | null = null;
   
@@ -130,11 +130,11 @@ export class Engine {
       this.fpsUpdateTime = 0;
     }
     
-    const chunks = this.terrainManager?.getActiveChunkCount() ?? 0;
-    const buildQueue = this.terrainManager?.getBuildQueueLength() ?? 0;
+    const chunks = this.chunkManager?.getActiveChunkCount() ?? 0;
+    const buildQueue = this.chunkManager?.getBuildQueueLength() ?? 0;
     
     const cameraPos = this.camera.position;
-    const terrainHeight = this.terrainManager?.getHeightAt(cameraPos.x, cameraPos.z) ?? null;
+    const terrainHeight = this.chunkManager?.getHeightAt(cameraPos.x, cameraPos.z) ?? null;
     const agl = terrainHeight !== null ? (cameraPos.y - terrainHeight).toFixed(2) : 'N/A';
     const terrainH = terrainHeight !== null ? terrainHeight.toFixed(2) : 'N/A';
     
@@ -177,10 +177,10 @@ export class Engine {
   }
 
   /**
-   * Set the terrain manager for terrain updates
+   * Set the chunk manager for terrain/rock updates
    */
-  setTerrainManager(manager: TerrainManager): void {
-    this.terrainManager = manager;
+  setChunkManager(manager: ChunkManager): void {
+    this.chunkManager = manager;
   }
 
   /**
@@ -256,13 +256,13 @@ export class Engine {
     this.deltaTime = deltaTime;
     
     // Check for debug toggle (O key)
-    if (this.inputManager?.isKeyJustPressed('o') && this.terrainManager) {
-      this.terrainManager.toggleDebugMode();
+    if (this.inputManager?.isKeyJustPressed('o') && this.chunkManager) {
+      this.chunkManager.toggleDebugMode();
     }
 
     // Check for chunk distance/LOD debug (I key)
-    if (this.inputManager?.isKeyJustPressed('i') && this.terrainManager) {
-      this.terrainManager.logChunkDistancesAndLods(this.camera.position);
+    if (this.inputManager?.isKeyJustPressed('i') && this.chunkManager) {
+      this.chunkManager.logChunkDistancesAndLods(this.camera.position);
     }
 
     // Check for camera position debug (C key)
@@ -278,9 +278,9 @@ export class Engine {
       this.flightController.update(deltaTime);
     }
 
-    // Update terrain manager with camera position
-    if (this.terrainManager) {
-      this.terrainManager.update(this.camera.position);
+    // Update chunk manager with camera position
+    if (this.chunkManager) {
+      this.chunkManager.update(this.camera.position);
     }
 
     // Update celestial system (sun, Earth, curvature)
@@ -331,8 +331,8 @@ export class Engine {
    */
   dispose(): void {
     this.stop();
-    if (this.terrainManager) {
-      this.terrainManager.dispose();
+    if (this.chunkManager) {
+      this.chunkManager.dispose();
     }
     if (this.celestialSystem) {
       this.celestialSystem.dispose();
