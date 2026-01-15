@@ -1,5 +1,7 @@
-import { BufferGeometry, InstancedMesh, MeshStandardMaterial, Matrix4, Color } from 'three';
+import { BufferGeometry, InstancedMesh, Matrix4 } from 'three';
 import { RockBuilder } from './RockBuilder';
+import { RockMaterial } from '../shaders/RockMaterial';
+import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 import type { RockPlacement } from '../terrain/ChunkWorker';
 
 /**
@@ -10,7 +12,7 @@ import type { RockPlacement } from '../terrain/ChunkWorker';
  */
 export class RockManager {
   private prototypes: BufferGeometry[] = [];
-  private material: MeshStandardMaterial;
+  private material: RockMaterial;
   private librarySize: number;
 
   /**
@@ -21,14 +23,10 @@ export class RockManager {
   constructor(librarySize: number = 30) {
     this.librarySize = librarySize;
 
-    // Create shared material for all rocks
-    // flatShading: true gives that low-poly chiseled look
-    this.material = new MeshStandardMaterial({
-      color: new Color(0xcccccc),  // Lighter gray for visibility
-      roughness: 0.85,             // Moon rocks are dusty/rough
-      metalness: 0.1,
-      flatShading: true,           // Chiseled appearance
-    });
+    // Create shared material for all rocks with curvature support
+    this.material = new RockMaterial();
+    this.material.setParam('enableCurvature', true);
+    this.material.setParam('planetRadius', DEFAULT_PLANET_RADIUS);
 
     // Generate prototype library at startup
     this.generatePrototypeLibrary();
@@ -108,7 +106,7 @@ export class RockManager {
   /**
    * Get the shared rock material.
    */
-  getMaterial(): MeshStandardMaterial {
+  getMaterial(): RockMaterial {
     return this.material;
   }
 

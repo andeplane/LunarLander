@@ -7,6 +7,7 @@ import { FlightController } from '../camera/FlightController';
 import { ChunkManager } from '../terrain/ChunkManager';
 import { CelestialSystem } from '../environment/CelestialSystem';
 import { InputManager } from './InputManager';
+import { DEFAULT_PLANET_RADIUS } from './EngineSettings';
 
 /**
  * Main engine class responsible for:
@@ -139,7 +140,7 @@ export class Engine {
     const terrainH = terrainHeight !== null ? terrainHeight.toFixed(2) : 'N/A';
     
     // Curvature debug info
-    const planetRadius = this.celestialSystem?.getPlanetRadius() ?? 5000;
+    const planetRadius = this.celestialSystem?.getPlanetRadius() ?? DEFAULT_PLANET_RADIUS;
     const d = Math.sqrt(cameraPos.x * cameraPos.x + cameraPos.z * cameraPos.z);
     const theta = d / planetRadius;
     const thetaDeg = (theta * 180 / Math.PI).toFixed(1);

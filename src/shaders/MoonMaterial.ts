@@ -1,5 +1,6 @@
 import { MeshStandardMaterial, Color } from 'three';
 import { glslCommon } from './glsl_common';
+import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 
 /**
  * Shader parameters interface for MoonMaterial
@@ -89,7 +90,7 @@ export class MoonMaterial extends MeshStandardMaterial {
       baseColorBlend: 0.6,
       brightnessBoost: 1.2,
       enableCurvature: true,
-      planetRadius: 5000,
+      planetRadius: DEFAULT_PLANET_RADIUS,
     };
 
     this.onBeforeCompile = (shader) => {
