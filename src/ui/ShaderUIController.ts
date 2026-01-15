@@ -35,7 +35,6 @@ export class ShaderUIController {
     this.setupTogglesFolder();
     this.setupNoiseFolder();
     this.setupCratersFolder();
-    this.setupBumpMappingFolder();
     this.setupColorsFolder();
     this.setupCurvatureFolder();
     this.setupLightingFolder();
@@ -54,10 +53,6 @@ export class ShaderUIController {
     folder.add(this.params, 'enableNoise')
       .name('Enable Noise')
       .onChange((value: boolean) => this.material.setParam('enableNoise', value));
-
-    folder.add(this.params, 'enableBumpMapping')
-      .name('Enable Bump Mapping')
-      .onChange((value: boolean) => this.material.setParam('enableBumpMapping', value));
 
     folder.add(this.params, 'enableColorVariation')
       .name('Enable Color Variation')
@@ -126,37 +121,6 @@ export class ShaderUIController {
     mediumFolder.add(this.params, 'mediumCraterWeight', 0.0, 1.0, 0.1)
       .name('Blend Weight')
       .onChange((value: number) => this.material.setParam('mediumCraterWeight', value));
-  }
-
-  /**
-   * Setup surface texture (regolith) parameters folder
-   */
-  private setupBumpMappingFolder(): void {
-    const folder = this.gui.addFolder('Surface Texture');
-    
-    folder.add(this.params, 'enableRocks')
-      .name('Enable Rocks')
-      .onChange((value: boolean) => this.material.setParam('enableRocks', value));
-
-    folder.add(this.params, 'enableMicroCraters')
-      .name('Enable Micro Craters')
-      .onChange((value: boolean) => this.material.setParam('enableMicroCraters', value));
-    
-    folder.add(this.params, 'rockDensity', 0.0, 1.0, 0.05)
-      .name('Gravel vs Dust')
-      .onChange((value: number) => this.material.setParam('rockDensity', value));
-
-    folder.add(this.params, 'rockSize', 5.0, 100.0, 5.0)
-      .name('Texture Scale')
-      .onChange((value: number) => this.material.setParam('rockSize', value));
-
-    folder.add(this.params, 'rockSoftness', 0.0, 1.0, 0.05)
-      .name('Smoothness')
-      .onChange((value: number) => this.material.setParam('rockSoftness', value));
-
-    folder.add(this.params, 'rockHeight', 0.1, 2.0, 0.1)
-      .name('Bump Intensity')
-      .onChange((value: number) => this.material.setParam('rockHeight', value));
   }
 
   /**

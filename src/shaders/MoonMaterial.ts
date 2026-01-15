@@ -8,10 +8,7 @@ export interface MoonMaterialParams {
   // Toggles
   enableCraters: boolean;
   enableNoise: boolean;
-  enableBumpMapping: boolean;
   enableColorVariation: boolean;
-  enableRocks: boolean;      // Toggle rock bumps
-  enableMicroCraters: boolean;  // Toggle micro-crater pits
 
   // Base parameters
   scale: number; // Crater density (lower = larger craters)
@@ -33,12 +30,6 @@ export interface MoonMaterialParams {
   mediumCraterSmoothMax: number; // Medium crater smoothstep max
   largeCraterWeight: number; // Large crater blend weight
   mediumCraterWeight: number; // Medium crater blend weight
-
-  // Rock bump mapping
-  rockDensity: number; // Threshold for rocks (0 = no rocks, 1 = many rocks)
-  rockSize: number; // Frequency - HIGHER = SMALLER rocks
-  rockSoftness: number; // Edge sharpness (0 = sharp, 1 = rounded)
-  rockHeight: number; // How tall the rock bumps are
 
   // Color parameters
   colorVariationFrequency: number; // Color variation frequency
@@ -78,10 +69,7 @@ export class MoonMaterial extends MeshStandardMaterial {
     this.params = {
       enableCraters: false,
       enableNoise: true,
-      enableBumpMapping: true,
       enableColorVariation: true,
-      enableRocks: true,      // Enable rocks by default
-      enableMicroCraters: false,  // Disable micro-craters to focus on rocks
       scale: 0.05,
       distortion: 0.35,
       bumpStrength: 0.4,
@@ -97,10 +85,6 @@ export class MoonMaterial extends MeshStandardMaterial {
       mediumCraterSmoothMax: 0.8,
       largeCraterWeight: 0.6,
       mediumCraterWeight: 0.4,
-      rockDensity: 0.5, // Density of scattered rocks
-      rockSize: 150.0,  // Scale (Higher = smaller/more rocks)
-      rockSoftness: 0.1, // Sharpness of rocks
-      rockHeight: 1.5,   // Height intensity
       colorVariationFrequency: 0.005,
       baseColorBlend: 0.6,
       brightnessBoost: 1.2,
@@ -115,10 +99,7 @@ export class MoonMaterial extends MeshStandardMaterial {
       // Initialize all uniforms
       shader.uniforms.uEnableCraters = { value: this.params.enableCraters ? 1.0 : 0.0 };
       shader.uniforms.uEnableNoise = { value: this.params.enableNoise ? 1.0 : 0.0 };
-      shader.uniforms.uEnableBumpMapping = { value: this.params.enableBumpMapping ? 1.0 : 0.0 };
       shader.uniforms.uEnableColorVariation = { value: this.params.enableColorVariation ? 1.0 : 0.0 };
-      shader.uniforms.uEnableRocks = { value: this.params.enableRocks ? 1.0 : 0.0 };
-      shader.uniforms.uEnableMicroCraters = { value: this.params.enableMicroCraters ? 1.0 : 0.0 };
       
       shader.uniforms.uScale = { value: this.params.scale };
       shader.uniforms.uDistortion = { value: this.params.distortion };
@@ -138,10 +119,6 @@ export class MoonMaterial extends MeshStandardMaterial {
       shader.uniforms.uLargeCraterWeight = { value: this.params.largeCraterWeight };
       shader.uniforms.uMediumCraterWeight = { value: this.params.mediumCraterWeight };
       
-      shader.uniforms.uRockDensity = { value: this.params.rockDensity };
-      shader.uniforms.uRockSize = { value: this.params.rockSize };
-      shader.uniforms.uRockSoftness = { value: this.params.rockSoftness };
-      shader.uniforms.uRockHeight = { value: this.params.rockHeight };
       
       shader.uniforms.uColorVariationFrequency = { value: this.params.colorVariationFrequency };
       shader.uniforms.uBaseColorBlend = { value: this.params.baseColorBlend };
@@ -200,10 +177,7 @@ export class MoonMaterial extends MeshStandardMaterial {
         // Toggle uniforms
         uniform float uEnableCraters;
         uniform float uEnableNoise;
-        uniform float uEnableBumpMapping;
         uniform float uEnableColorVariation;
-        uniform float uEnableRocks;
-        uniform float uEnableMicroCraters;
         
         // Base parameters
         uniform float uScale;
@@ -225,12 +199,6 @@ export class MoonMaterial extends MeshStandardMaterial {
         uniform float uMediumCraterSmoothMax;
         uniform float uLargeCraterWeight;
         uniform float uMediumCraterWeight;
-        
-        // Rock bump mapping
-        uniform float uRockDensity;
-        uniform float uRockSize;
-        uniform float uRockSoftness;
-        uniform float uRockHeight;
         
         // Color parameters
         uniform float uColorVariationFrequency;
@@ -309,83 +277,6 @@ export class MoonMaterial extends MeshStandardMaterial {
           return height;
         }
 
-        // ==========================================
-        // NORMAL PERTURBATION (Bump Mapping)
-        // ==========================================
-        
-        vec3 perturbNormalArb(vec3 surf_pos, vec3 surf_norm, vec2 dHdxy, float faceDirection) {
-          vec3 vSigmaX = dFdx(surf_pos);
-          vec3 vSigmaY = dFdy(surf_pos);
-          vec3 vN = surf_norm;
-          vec3 R1 = cross(vSigmaY, vN);
-          vec3 R2 = cross(vN, vSigmaX);
-          float fDet = dot(vSigmaX, R1);
-          fDet *= faceDirection;
-          vec3 vGrad = sign(fDet) * (dHdxy.x * R1 + dHdxy.y * R2);
-          return normalize(abs(fDet) * surf_norm - vGrad);
-        }
-
-        // ==========================================
-        // SCATTERED ROCK GENERATOR
-        // Creates discrete rocks instead of wavy noise
-        // ==========================================
-        
-        float hash(vec2 p) {
-            return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
-        }
-
-        float getRocks(vec2 uv, float scale, float density, float seedOffset) {
-            vec2 cell = floor(uv * scale);
-            vec2 local = fract(uv * scale) - 0.5;
-            
-            float r = hash(cell + vec2(seedOffset));
-            if (r > density) return 0.0;
-            
-            float rx = hash(cell + vec2(1.0 + seedOffset, 2.0));
-            float ry = hash(cell + vec2(3.0 + seedOffset, 4.0));
-            vec2 offset = vec2(rx, ry) - 0.5;
-            
-            float d = length(local - offset * 0.8);
-            float size = 0.15 + 0.15 * r;  // Slightly smaller rocks
-            
-            // Simple dome shape (no rings)
-            float dome = max(0.0, 1.0 - d / size);
-            return dome * dome;
-        }
-
-        float getMicroCraters(vec2 uv, float scale, float density) {
-            vec2 cell = floor(uv * scale);
-            vec2 local = fract(uv * scale) - 0.5;
-            
-            float r = hash(cell + vec2(42.0));
-            if (r > density) return 0.0;
-            
-            vec2 offset = vec2(hash(cell), hash(cell + 13.0)) - 0.5;
-            float d = length(local - offset);
-            float size = 0.2 + 0.15 * r;
-            
-            // Simple bowl shape (inverted dome)
-            float bowl = max(0.0, 1.0 - d / size);
-            return -bowl * bowl;  // Negative for depression
-        }
-
-        float getRegolithHeight(vec2 pos) {
-          float height = 0.0;
-          
-          if (uEnableRocks > 0.5) {
-            // Larger scattered rocks (distinct bumps)
-            float rocks = getRocks(pos, uRockSize * 0.5, uRockDensity * 0.4, 10.0);
-            height += rocks * 1.0;
-          }
-          
-          if (uEnableMicroCraters > 0.5) {
-            // Micro craters (occasional pits)
-            float pits = getMicroCraters(pos, uRockSize * 0.2, 0.4);
-            height += pits * 0.5;
-          }
-
-          return height * uRockHeight;
-        }
 
         ${shader.fragmentShader}
       `;
@@ -434,40 +325,6 @@ export class MoonMaterial extends MeshStandardMaterial {
       );
       
       // ==========================================
-      // INJECT NORMAL PERTURBATION (world-space normal reconstruction)
-      // ==========================================
-
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <normal_fragment_begin>',
-        `
-        #include <normal_fragment_begin>
-
-        if (uEnableBumpMapping > 0.5) {
-          // Get regolith height at this position
-          float regolithHeight = getRegolithHeight(terrainPos);
-          
-          // Use screen-space derivatives for gradient (standard bump mapping approach)
-          vec2 regolithGradient = vec2(dFdx(regolithHeight), dFdy(regolithHeight));
-          
-          // Negate gradient so bumps appear as rocks (not holes)
-          // Scale gradient for visible effect
-          vec2 dHdxy = -regolithGradient * uBumpStrength * 30.0;
-          
-          // Clamp gradient magnitude to prevent unrealistic normal tilts
-          // Max slope of 1.0 (45°) prevents black pixels with flashlight while
-          // still allowing legitimate shadows from side lighting (sun)
-          float maxSlope = 1.0;  // Max 45 degree tilt
-          float slopeMag = length(dHdxy);
-          if (slopeMag > maxSlope) {
-            dHdxy = dHdxy * (maxSlope / slopeMag);
-          }
-          
-          // Use standard perturbNormalArb function
-          float moonFaceDir = gl_FrontFacing ? 1.0 : -1.0;
-          normal = perturbNormalArb(-vViewPosition, normal, dHdxy, moonFaceDir);
-        }
-        `
-      );
     };
   }
 
@@ -510,10 +367,7 @@ export class MoonMaterial extends MeshStandardMaterial {
     // Update toggle uniforms (convert boolean to float)
     this.shaderUniforms.uEnableCraters.value = this.params.enableCraters ? 1.0 : 0.0;
     this.shaderUniforms.uEnableNoise.value = this.params.enableNoise ? 1.0 : 0.0;
-    this.shaderUniforms.uEnableBumpMapping.value = this.params.enableBumpMapping ? 1.0 : 0.0;
     this.shaderUniforms.uEnableColorVariation.value = this.params.enableColorVariation ? 1.0 : 0.0;
-    this.shaderUniforms.uEnableRocks.value = this.params.enableRocks ? 1.0 : 0.0;
-    this.shaderUniforms.uEnableMicroCraters.value = this.params.enableMicroCraters ? 1.0 : 0.0;
 
     // Update base parameters
     this.shaderUniforms.uScale.value = this.params.scale;
@@ -536,11 +390,6 @@ export class MoonMaterial extends MeshStandardMaterial {
     this.shaderUniforms.uLargeCraterWeight.value = this.params.largeCraterWeight;
     this.shaderUniforms.uMediumCraterWeight.value = this.params.mediumCraterWeight;
 
-    // Update rock bump mapping
-    this.shaderUniforms.uRockDensity.value = this.params.rockDensity;
-    this.shaderUniforms.uRockSize.value = this.params.rockSize;
-    this.shaderUniforms.uRockSoftness.value = this.params.rockSoftness;
-    this.shaderUniforms.uRockHeight.value = this.params.rockHeight;
 
     // Update color parameters
     this.shaderUniforms.uColorVariationFrequency.value = this.params.colorVariationFrequency;
