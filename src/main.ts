@@ -90,22 +90,15 @@ const skybox = new Skybox(engine.getScene());
 skybox.loadTexture('/textures/8k_stars_milky_way.jpg');
 
 // Initialize celestial system (sun, Earth, lighting with Moon curvature)
+// Only override position values - all intensity/range defaults come from CelestialSystem
 const celestialSystem = new CelestialSystem(engine.getScene(), {
   // Sun position - high in the sky, slightly to the side
   sunAzimuth: Math.PI * 0.3,
   sunElevation: Math.PI * 0.35,
-  sunIntensity: 2.5,
   
   // Earth position - visible in the lunar sky
   earthAzimuth: Math.PI * 1.15,
   earthElevation: Math.PI * 0.25,
-  
-  // Earthshine (reflected light from Earth)
-  earthshineMultiplier: 0.15,
-  
-  // Spaceship light (local illumination)
-  spaceshipLightIntensity: 50,
-  spaceshipLightRange: 200,
 });
 // Set camera reference for spaceship light positioning
 celestialSystem.setCamera(engine.getCamera());

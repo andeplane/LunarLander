@@ -134,6 +134,14 @@ export class ShaderUIController {
   private setupBumpMappingFolder(): void {
     const folder = this.gui.addFolder('Surface Texture');
     
+    folder.add(this.params, 'enableRocks')
+      .name('Enable Rocks')
+      .onChange((value: boolean) => this.material.setParam('enableRocks', value));
+
+    folder.add(this.params, 'enableMicroCraters')
+      .name('Enable Micro Craters')
+      .onChange((value: boolean) => this.material.setParam('enableMicroCraters', value));
+    
     folder.add(this.params, 'rockDensity', 0.0, 1.0, 0.05)
       .name('Gravel vs Dust')
       .onChange((value: number) => this.material.setParam('rockDensity', value));
@@ -214,7 +222,7 @@ export class ShaderUIController {
       flashlightAngle: this.celestialSystem.flashlightAngle * (180 / Math.PI), // Convert to degrees for UI
     };
     
-    folder.add(lightingParams, 'sunIntensity', 0, 5, 0.1)
+    folder.add(lightingParams, 'sunIntensity', 0, 20, 0.1)
       .name('Sun Intensity')
       .onChange((value: number) => {
         if (this.celestialSystem) {
@@ -230,7 +238,7 @@ export class ShaderUIController {
         }
       });
     
-    folder.add(lightingParams, 'spaceshipLightIntensity', 0, 500, 10)
+    folder.add(lightingParams, 'spaceshipLightIntensity', 0, 20, 1)
       .name('Spaceship Intensity')
       .onChange((value: number) => {
         if (this.celestialSystem) {
@@ -246,7 +254,7 @@ export class ShaderUIController {
         }
       });
     
-    folder.add(lightingParams, 'flashlightIntensity', 0, 200, 5)
+    folder.add(lightingParams, 'flashlightIntensity', 0, 50, 1)
       .name('Flashlight Intensity')
       .onChange((value: number) => {
         if (this.celestialSystem) {
