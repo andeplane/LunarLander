@@ -40,7 +40,8 @@ export class RockManager {
     console.log(`Generating ${this.librarySize} rock prototypes...`);
     const startTime = performance.now();
 
-    this.prototypes = RockBuilder.generateLibrary(this.librarySize, 2);
+    // Use default options (20x20 sphere, 7 scrapes per rock)
+    this.prototypes = RockBuilder.generateLibrary(this.librarySize);
 
     const elapsed = performance.now() - startTime;
     console.log(`Rock prototypes generated in ${elapsed.toFixed(1)}ms`);
