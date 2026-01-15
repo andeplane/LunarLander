@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { EarthMaterial } from '../shaders/EarthMaterial';
 import { SunMaterial } from '../shaders/SunMaterial';
+import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 
 /**
  * CelestialSystem manages the sun, Earth, starfield, and directional lighting
@@ -84,7 +85,7 @@ export class CelestialSystem {
   private config: Required<CelestialConfig>;
   
   // Planet radius for curvature (synced with terrain shader)
-  private planetRadius: number = 5000; // Default matches MoonMaterial default
+  private planetRadius: number;
   
   // Celestial objects
   private sunMesh!: THREE.Mesh;
@@ -121,6 +122,7 @@ export class CelestialSystem {
   constructor(scene: THREE.Scene, config: CelestialConfig = {}) {
     this.scene = scene;
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.planetRadius = DEFAULT_PLANET_RADIUS;
     this.celestialContainer = new THREE.Group();
     this.celestialContainer.name = 'CelestialSystem';
     

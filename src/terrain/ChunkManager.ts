@@ -462,11 +462,31 @@ export class ChunkManager {
     const chunkLodLevels = this.updateChunkVisibility(cameraPosition, fovRadians, screenHeight);
     this.updateEdgeStitching(chunkLodLevels);
 
+    // Update rock material uniforms (curvature)
+    this.updateRockMaterialUniforms(cameraPosition);
+
     for (const gridKey of this.chunks.keys()) {
       if (!nearbySet.has(gridKey)) {
         this.removeChunk(gridKey);
       }
     }
+  }
+
+  /**
+   * Update rock material uniforms per-frame for curvature.
+   * Syncs enableCurvature and planetRadius from terrain material.
+   * Note: cameraPosition is automatically provided by Three.js.
+   */
+  private updateRockMaterialUniforms(_cameraPosition: Vector3): void {
+    const rockMaterial = this.rockManager.getMaterial();
+    
+    // Sync curvature settings from terrain material
+    const terrainMaterial = this.terrainGenerator.getMaterial();
+    const enableCurvature = terrainMaterial.getParam('enableCurvature');
+    const planetRadius = terrainMaterial.getParam('planetRadius');
+
+    rockMaterial.setParam('enableCurvature', enableCurvature);
+    rockMaterial.setParam('planetRadius', planetRadius);
   }
 
   /**

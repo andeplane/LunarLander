@@ -1,5 +1,7 @@
 import { generateTerrain, type TerrainArgs } from './terrain';
 import alea from 'alea';
+import { BufferGeometry, BufferAttribute, Float32BufferAttribute, Mesh, MeshBasicMaterial, Raycaster, Vector3 } from 'three';
+import { generateGridIndices } from './EdgeStitcher';
 
 /**
  * Message sent to the chunk worker
@@ -156,33 +158,49 @@ function composeMatrix(
 /** Number of rock candidates to generate per chunk (same at all LODs) */
 const ROCK_CANDIDATES_PER_CHUNK = 100;
 
+// Reusable raycaster for height queries (created once, reused)
+let heightRaycaster: Raycaster | null = null;
+let tempGeometry: BufferGeometry | null = null;
+let tempMesh: Mesh | null = null;
+
 /**
- * Sample terrain height from vertex positions array.
- * Finds the nearest vertex to the given (x, z) position and returns its Y value.
+ * Sample terrain height using Three.js Raycaster (same approach as main thread).
+ * Creates a temporary geometry and mesh from positions, then raycasts downward.
  */
 function sampleHeightFromVertices(
   positions: ArrayLike<number>,
   resolution: number,
-  chunkWidth: number,
-  chunkDepth: number,
+  _chunkWidth: number,
+  _chunkDepth: number,
   x: number,
   z: number
 ): number {
-  // Convert local position to grid coordinates (0 to resolution-1)
-  // Positions are centered at origin, so offset by half chunk size
-  const gridX = ((x / chunkWidth) + 0.5) * (resolution - 1);
-  const gridZ = ((z / chunkDepth) + 0.5) * (resolution - 1);
+  // Initialize raycaster and temp geometry/mesh on first call
+  if (!heightRaycaster) {
+    heightRaycaster = new Raycaster();
+    tempGeometry = new BufferGeometry();
+    tempMesh = new Mesh(tempGeometry, new MeshBasicMaterial({ visible: false }));
+  }
 
-  // Clamp to valid grid range
-  const clampedX = Math.max(0, Math.min(resolution - 1, Math.round(gridX)));
-  const clampedZ = Math.max(0, Math.min(resolution - 1, Math.round(gridZ)));
+  // Update geometry with current positions and generate indices for grid
+  tempGeometry!.setAttribute('position', new Float32BufferAttribute(positions as Float32Array, 3));
+  const indices = generateGridIndices(resolution);
+  tempGeometry!.setIndex(new BufferAttribute(indices, 1));
+  tempGeometry!.computeVertexNormals();
 
-  // Calculate vertex index (grid is resolution x resolution)
-  const vertexIndex = clampedZ * resolution + clampedX;
-  const arrayIndex = vertexIndex * 3;
+  // Raycast downward from above (same as TerrainGenerator.raycastHeight)
+  const rayOrigin = new Vector3(x, 10000, z);
+  const rayDirection = new Vector3(0, -1, 0);
+  heightRaycaster.set(rayOrigin, rayDirection);
 
-  // Return Y coordinate (positions are [x, y, z, x, y, z, ...])
-  return positions[arrayIndex + 1];
+  const intersects = heightRaycaster.intersectObject(tempMesh!, false);
+  
+  if (intersects.length > 0) {
+    return intersects[0].point.y;
+  }
+
+  // Fallback: return 0 if no intersection (shouldn't happen for valid terrain)
+  return 0;
 }
 
 /**
@@ -255,10 +273,11 @@ function generateRockPlacements(
 
     // Offset Y slightly so rock sits on surface, not buried
     const offsetY = diameter * 0.3;
+    const finalY = y + offsetY;
 
     // Compute transform matrix
     const matrix = composeMatrix(
-      localX, y + offsetY, localZ,
+      localX, finalY, localZ,
       rx, ry, rz,
       scale, scale, scale
     );
