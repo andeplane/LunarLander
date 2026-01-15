@@ -434,7 +434,7 @@ export class MoonMaterial extends MeshStandardMaterial {
       );
       
       // ==========================================
-      // INJECT NORMAL PERTURBATION (reuses cached gradient)
+      // INJECT NORMAL PERTURBATION (world-space normal reconstruction)
       // ==========================================
 
       shader.fragmentShader = shader.fragmentShader.replace(
@@ -443,19 +443,19 @@ export class MoonMaterial extends MeshStandardMaterial {
         #include <normal_fragment_begin>
 
         if (uEnableBumpMapping > 0.5) {
-          // Sampling pattern for gradients to keep lines sharp
-          float delta = 0.01; // 1cm sample distance for normal calculation
+          // Get regolith height at this position
+          float regolithHeight = getRegolithHeight(terrainPos);
           
-          float hC = getRegolithHeight(terrainPos);
-          float hR = getRegolithHeight(terrainPos + vec2(delta, 0.0));
-          float hU = getRegolithHeight(terrainPos + vec2(0.0, delta));
+          // Use screen-space derivatives for gradient (standard bump mapping approach)
+          vec2 regolithGradient = vec2(dFdx(regolithHeight), dFdy(regolithHeight));
           
-          // Negate gradient so bumps face toward light correctly
-          vec2 dHdxy = -vec2((hR - hC), (hU - hC)) / delta;
+          // Negate gradient so bumps appear as rocks (not holes)
+          // Scale gradient for visible effect
+          vec2 dHdxy = -regolithGradient * uBumpStrength * 30.0;
           
-          // Use standard perturbNormalArb
+          // Use standard perturbNormalArb function
           float moonFaceDir = gl_FrontFacing ? 1.0 : -1.0;
-          normal = perturbNormalArb(vViewPosition, normal, dHdxy, moonFaceDir);
+          normal = perturbNormalArb(-vViewPosition, normal, dHdxy, moonFaceDir);
         }
         `
       );
