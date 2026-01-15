@@ -33,8 +33,8 @@ export interface MoonMaterialParams {
   mediumCraterWeight: number; // Medium crater blend weight
 
   // Rock bump mapping
-  rockDensity: number; // Threshold for rocks (0 = all rocks, 1 = no rocks)
-  rockSize: number; // Frequency - lower = larger rocks
+  rockDensity: number; // Threshold for rocks (0 = no rocks, 1 = many rocks)
+  rockSize: number; // Frequency - HIGHER = SMALLER rocks
   rockSoftness: number; // Edge sharpness (0 = sharp, 1 = rounded)
   rockHeight: number; // How tall the rock bumps are
 
@@ -67,8 +67,8 @@ export class MoonMaterial extends MeshStandardMaterial {
   constructor() {
     super({
       color: new Color(0xaaaaaa),
-      roughness: 0.92, // Lunar regolith is very rough
-      metalness: 0.0,
+      roughness: 0.9, // Moon dust is extremely rough and non-reflective
+      metalness: 0.1,
       flatShading: false,
     });
 
@@ -93,13 +93,13 @@ export class MoonMaterial extends MeshStandardMaterial {
       mediumCraterSmoothMax: 0.8,
       largeCraterWeight: 0.6,
       mediumCraterWeight: 0.4,
-      rockDensity: 0.3,
-      rockSize: 20.0,
-      rockSoftness: 0.2,
-      rockHeight: 0.5,
+      rockDensity: 0.5, // Density of scattered rocks
+      rockSize: 150.0,  // Scale (Higher = smaller/more rocks)
+      rockSoftness: 0.1, // Sharpness of rocks
+      rockHeight: 1.5,   // Height intensity
       colorVariationFrequency: 0.005,
       baseColorBlend: 0.6,
-      brightnessBoost: 2.5,
+      brightnessBoost: 1.2,
       enableCurvature: true,
       planetRadius: 5000,
     };
@@ -318,27 +318,74 @@ export class MoonMaterial extends MeshStandardMaterial {
         }
 
         // ==========================================
-        // LUNAR REGOLITH TEXTURE (Dust/Gravel)
-        // Multi-octave noise for realistic dusty surface
+        // SCATTERED ROCK GENERATOR
+        // Creates discrete rocks instead of wavy noise
         // ==========================================
         
+        float hash(vec2 p) {
+            return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+        }
+
+        float getRocks(vec2 uv, float scale, float density, float seedOffset) {
+            vec2 cell = floor(uv * scale);
+            vec2 local = fract(uv * scale) - 0.5;
+            
+            // Random ID for this cell
+            float r = hash(cell + vec2(seedOffset));
+            
+            // Filter by density (inverted logic: high r = keep)
+            if (r > density) return 0.0;
+            
+            // Random position offset within the cell (-0.4 to 0.4)
+            float rx = hash(cell + vec2(1.0 + seedOffset, 2.0));
+            float ry = hash(cell + vec2(3.0 + seedOffset, 4.0));
+            vec2 offset = vec2(rx, ry) - 0.5;
+            
+            // Calculate distance
+            float d = length(local - offset * 0.8);
+            
+            // Random rock size
+            float size = 0.25 + 0.25 * r; 
+            
+            // Rock shape profile (sharp falloff for solid object look)
+            // Using smoothstep for antialiasing the edge
+            return smoothstep(size, size - 0.05, d) * sqrt(max(0.0, 1.0 - d/size)); 
+        }
+
+        float getMicroCraters(vec2 uv, float scale, float density) {
+            vec2 cell = floor(uv * scale);
+            vec2 local = fract(uv * scale) - 0.5;
+            
+            float r = hash(cell + vec2(42.0));
+            if (r > density) return 0.0;
+            
+            vec2 offset = vec2(hash(cell), hash(cell + 13.0)) - 0.5;
+            float d = length(local - offset);
+            float size = 0.3 + 0.2 * r; 
+            
+            // Inverted pit shape
+            return -1.0 * smoothstep(size, size * 0.5, d) * (1.0 - smoothstep(size * 0.1, 0.0, d));
+        }
+
         float getRegolithHeight(vec2 pos) {
           float height = 0.0;
           
-          // Fine dust texture (high frequency, low amplitude)
-          float dust = simplexNoise(pos * uRockSize * 3.0) * 0.3;
-          dust += simplexNoise(pos * uRockSize * 7.0) * 0.15;
-          dust += simplexNoise(pos * uRockSize * 15.0) * 0.08;
+          // 1. Very fine high-freq noise for dust/sand texture (Base Regolith)
+          float dust = simplexNoise(pos * uRockSize * 4.0);
+          height += dust * 0.05; // Subtle texture
+
+          // 2. Small scattered pebbles (High frequency, lower height)
+          float pebbles = getRocks(pos, uRockSize * 2.0, uRockDensity * 0.8, 0.0);
+          height += pebbles * 0.4;
           
-          // Medium gravel/pebble undulations
-          float gravel = simplexNoise(pos * uRockSize) * 0.5;
+          // 3. Larger scattered rocks (Lower frequency, higher height)
+          float rocks = getRocks(pos, uRockSize * 0.5, uRockDensity * 0.4, 10.0);
+          height += rocks * 1.0;
           
-          // Combine: mostly dust with some gravel influence
-          height = mix(dust, gravel, uRockDensity);
-          
-          // Apply softness as overall smoothing (higher = smoother)
-          height = height * (1.0 - uRockSoftness * 0.5);
-          
+          // 4. Micro craters (Negative height)
+          float pits = getMicroCraters(pos, uRockSize * 0.2, 0.4); // Constant density for pits
+          height += pits * 0.5;
+
           return height * uRockHeight;
         }
 
@@ -378,7 +425,10 @@ export class MoonMaterial extends MeshStandardMaterial {
         // Blend base color with height-based color
         surfaceColor = mix(baseColor, surfaceColor, uBaseColorBlend);
         
-        // Apply brightness boost
+        // Add subtle noise to albedo to match regolith roughness
+        float albedoNoise = simplexNoise(terrainPos * 50.0) * 0.1;
+        surfaceColor += vec3(albedoNoise);
+
         diffuseColor.rgb *= surfaceColor * uBrightnessBoost;
         `
       );
@@ -392,14 +442,18 @@ export class MoonMaterial extends MeshStandardMaterial {
         `
         #include <normal_fragment_begin>
 
-        // Use regolith texture for bump mapping (if enabled)
         if (uEnableBumpMapping > 0.5) {
-          // Get regolith height at this position
-          float regolithHeight = getRegolithHeight(terrainPos);
-          // Screen-space derivatives for gradient
-          vec2 regolithGradient = vec2(dFdx(regolithHeight), dFdy(regolithHeight));
-          // Scale gradient for visible effect
-          vec2 dHdxy = regolithGradient * 30.0;
+          // Sampling pattern for gradients to keep lines sharp
+          float delta = 0.01; // 1cm sample distance for normal calculation
+          
+          float hC = getRegolithHeight(terrainPos);
+          float hR = getRegolithHeight(terrainPos + vec2(delta, 0.0));
+          float hU = getRegolithHeight(terrainPos + vec2(0.0, delta));
+          
+          // Negate gradient so bumps face toward light correctly
+          vec2 dHdxy = -vec2((hR - hC), (hU - hC)) / delta;
+          
+          // Use standard perturbNormalArb
           float moonFaceDir = gl_FrontFacing ? 1.0 : -1.0;
           normal = perturbNormalArb(vViewPosition, normal, dHdxy, moonFaceDir);
         }
