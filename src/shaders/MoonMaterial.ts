@@ -372,11 +372,11 @@ export class MoonMaterial extends MeshStandardMaterial {
           
           // 1. Very fine high-freq noise for dust/sand texture (Base Regolith)
           float dust = simplexNoise(pos * uRockSize * 4.0);
-          height += dust * 0.05; // Subtle texture
+          height += dust * 0.01; // Much subtler - smooth gray base
 
           // 2. Small scattered pebbles (High frequency, lower height)
-          float pebbles = getRocks(pos, uRockSize * 2.0, uRockDensity * 0.8, 0.0);
-          height += pebbles * 0.4;
+          float pebbles = getRocks(pos, uRockSize * 2.0, uRockDensity * 0.5, 0.0);
+          height += pebbles * 0.15; // Fewer, subtler pebbles
           
           // 3. Larger scattered rocks (Lower frequency, higher height)
           float rocks = getRocks(pos, uRockSize * 0.5, uRockDensity * 0.4, 10.0);
@@ -425,9 +425,11 @@ export class MoonMaterial extends MeshStandardMaterial {
         // Blend base color with height-based color
         surfaceColor = mix(baseColor, surfaceColor, uBaseColorBlend);
         
-        // Add subtle noise to albedo to match regolith roughness
-        float albedoNoise = simplexNoise(terrainPos * 50.0) * 0.1;
-        surfaceColor += vec3(albedoNoise);
+        // Add subtle noise to albedo to match regolith roughness (only if noise enabled)
+        if (uEnableNoise > 0.5) {
+          float albedoNoise = simplexNoise(terrainPos * 50.0) * 0.02;
+          surfaceColor += vec3(albedoNoise);
+        }
 
         diffuseColor.rgb *= surfaceColor * uBrightnessBoost;
         `
@@ -452,6 +454,15 @@ export class MoonMaterial extends MeshStandardMaterial {
           // Negate gradient so bumps appear as rocks (not holes)
           // Scale gradient for visible effect
           vec2 dHdxy = -regolithGradient * uBumpStrength * 30.0;
+          
+          // Clamp gradient magnitude to prevent unrealistic normal tilts
+          // Max slope of 1.0 (45°) prevents black pixels with flashlight while
+          // still allowing legitimate shadows from side lighting (sun)
+          float maxSlope = 1.0;  // Max 45 degree tilt
+          float slopeMag = length(dHdxy);
+          if (slopeMag > maxSlope) {
+            dHdxy = dHdxy * (maxSlope / slopeMag);
+          }
           
           // Use standard perturbNormalArb function
           float moonFaceDir = gl_FrontFacing ? 1.0 : -1.0;
