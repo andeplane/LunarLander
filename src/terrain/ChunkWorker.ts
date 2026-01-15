@@ -1,4 +1,4 @@
-import { generateTerrain, createHeightFunction, type TerrainArgs } from './terrain';
+import { generateTerrain, type TerrainArgs } from './terrain';
 import alea from 'alea';
 
 /**
@@ -157,14 +157,45 @@ function composeMatrix(
 const ROCK_CANDIDATES_PER_CHUNK = 100;
 
 /**
+ * Sample terrain height from vertex positions array.
+ * Finds the nearest vertex to the given (x, z) position and returns its Y value.
+ */
+function sampleHeightFromVertices(
+  positions: ArrayLike<number>,
+  resolution: number,
+  chunkWidth: number,
+  chunkDepth: number,
+  x: number,
+  z: number
+): number {
+  // Convert local position to grid coordinates (0 to resolution-1)
+  // Positions are centered at origin, so offset by half chunk size
+  const gridX = ((x / chunkWidth) + 0.5) * (resolution - 1);
+  const gridZ = ((z / chunkDepth) + 0.5) * (resolution - 1);
+
+  // Clamp to valid grid range
+  const clampedX = Math.max(0, Math.min(resolution - 1, Math.round(gridX)));
+  const clampedZ = Math.max(0, Math.min(resolution - 1, Math.round(gridZ)));
+
+  // Calculate vertex index (grid is resolution x resolution)
+  const vertexIndex = clampedZ * resolution + clampedX;
+  const arrayIndex = vertexIndex * 3;
+
+  // Return Y coordinate (positions are [x, y, z, x, y, z, ...])
+  return positions[arrayIndex + 1];
+}
+
+/**
  * Generate rock placements for a chunk using world-space positions.
  * 
  * Key insight: Generate the SAME rock candidates at all LOD levels using
  * deterministic RNG based on chunk key. LOD only affects filtering by size.
+ * Heights are sampled from already-generated terrain vertices (fast, no duplicate computation).
  * This ensures rocks never change position when LOD changes - they only
  * appear/disappear based on size threshold.
  */
 function generateRockPlacements(
+  positions: ArrayLike<number>,
   terrainArgs: TerrainArgs,
   lodLevel: number,
   gridKey: string,
@@ -174,12 +205,10 @@ function generateRockPlacements(
   const seed = hashString(gridKey);
   const random = alea(seed);
 
-  // Create height function for this chunk
-  const getHeight = createHeightFunction(terrainArgs);
-
   const minDiameter = getMinDiameterForLod(lodLevel);
   const chunkWidth = terrainArgs.width;
   const chunkDepth = terrainArgs.depth;
+  const resolution = terrainArgs.resolution;
 
   // Group placements by prototype ID
   const placementsByPrototype: Map<number, Float32Array[]> = new Map();
@@ -211,8 +240,15 @@ function generateRockPlacements(
       continue;
     }
 
-    // Query terrain height at this position
-    const y = getHeight(localX, localZ);
+    // Sample terrain height from already-generated vertex positions
+    const y = sampleHeightFromVertices(
+      positions,
+      resolution,
+      chunkWidth,
+      chunkDepth,
+      localX,
+      localZ
+    );
 
     // Scale based on diameter (base rock geometry is 1m)
     const scale = diameter;
@@ -287,9 +323,11 @@ self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
   const index = geometry.index?.array;
 
   // Generate rock placements using world-space coordinates
+  // Heights are sampled from already-generated vertex positions (fast, no duplicate computation)
   console.log(`[ChunkWorker] ${gridKey} LOD${lodLevel}: Starting rock placement`);
   const rockStart = performance.now();
   const rockPlacements = generateRockPlacements(
+    positions,
     terrainArgs,
     lodLevel,
     gridKey,
