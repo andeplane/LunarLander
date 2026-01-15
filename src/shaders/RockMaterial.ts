@@ -24,7 +24,7 @@ export class RockMaterial extends MeshStandardMaterial {
       color: new Color(0xcccccc),  // Lighter gray for visibility
       roughness: 0.85,             // Moon rocks are dusty/rough
       metalness: 0.1,
-      flatShading: true,           // Chiseled appearance
+      flatShading: false,          // Smooth normals for realistic look
     });
 
     // Initialize default parameters (these will be used when shader compiles)
