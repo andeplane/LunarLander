@@ -1,4 +1,4 @@
-import { generateTerrain, type TerrainArgs } from './terrain';
+import { generateTerrain, createTerrainEvaluator, type TerrainArgs } from './terrain';
 import alea from 'alea';
 import { BufferGeometry, BufferAttribute, Float32BufferAttribute, Mesh, MeshBasicMaterial, Raycaster, Vector3 } from 'three';
 import { generateGridIndices } from './EdgeStitcher';
@@ -158,49 +158,37 @@ function composeMatrix(
 /** Number of rock candidates to generate per chunk (same at all LODs) */
 const ROCK_CANDIDATES_PER_CHUNK = 100;
 
-// Reusable raycaster for height queries (created once, reused)
-let heightRaycaster: Raycaster | null = null;
-let tempGeometry: BufferGeometry | null = null;
-let tempMesh: Mesh | null = null;
+// Terrain evaluator cached per chunk (reuses exact same logic as generateTerrain)
+let cachedTerrainEvaluator: ((x: number, z: number) => {y: number; biome: number[]}) | null = null;
 
 /**
- * Sample terrain height using Three.js Raycaster (same approach as main thread).
- * Creates a temporary geometry and mesh from positions, then raycasts downward.
+ * Setup the height sampler by creating the terrain evaluator.
+ * Uses the exact same logic as generateTerrain - just caches the evaluator function.
+ */
+function setupHeightSampler(terrainArgs: TerrainArgs): void {
+  // Create terrain evaluator (reuses exact same logic as generateTerrain)
+  cachedTerrainEvaluator = createTerrainEvaluator(terrainArgs);
+}
+
+/**
+ * Sample terrain height by calling the terrain evaluator directly.
+ * Uses the exact same function as generateTerrain - just for a single point.
  */
 function sampleHeightFromVertices(
-  positions: ArrayLike<number>,
-  resolution: number,
+  _positions: ArrayLike<number>,
+  _resolution: number,
   _chunkWidth: number,
   _chunkDepth: number,
   x: number,
   z: number
 ): number {
-  // Initialize raycaster and temp geometry/mesh on first call
-  if (!heightRaycaster) {
-    heightRaycaster = new Raycaster();
-    tempGeometry = new BufferGeometry();
-    tempMesh = new Mesh(tempGeometry, new MeshBasicMaterial({ visible: false }));
+  if (!cachedTerrainEvaluator) {
+    return 0; // Fallback if not set up
   }
 
-  // Update geometry with current positions and generate indices for grid
-  tempGeometry!.setAttribute('position', new Float32BufferAttribute(positions as Float32Array, 3));
-  const indices = generateGridIndices(resolution);
-  tempGeometry!.setIndex(new BufferAttribute(indices, 1));
-  tempGeometry!.computeVertexNormals();
-
-  // Raycast downward from above (same as TerrainGenerator.raycastHeight)
-  const rayOrigin = new Vector3(x, 10000, z);
-  const rayDirection = new Vector3(0, -1, 0);
-  heightRaycaster.set(rayOrigin, rayDirection);
-
-  const intersects = heightRaycaster.intersectObject(tempMesh!, false);
-  
-  if (intersects.length > 0) {
-    return intersects[0].point.y;
-  }
-
-  // Fallback: return 0 if no intersection (shouldn't happen for valid terrain)
-  return 0;
+  // Call terrain evaluator directly (x, z are already in local chunk space)
+  const result = cachedTerrainEvaluator(x, z);
+  return result.y;
 }
 
 /**
@@ -227,6 +215,9 @@ function generateRockPlacements(
   const chunkWidth = terrainArgs.width;
   const chunkDepth = terrainArgs.depth;
   const resolution = terrainArgs.resolution;
+
+  // Setup height sampler ONCE for all rocks in this chunk (creates terrain evaluator, reuses exact same logic)
+  setupHeightSampler(terrainArgs);
 
   // Group placements by prototype ID
   const placementsByPrototype: Map<number, Float32Array[]> = new Map();

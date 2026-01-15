@@ -136,6 +136,9 @@ export class Engine {
     
     const chunks = this.chunkManager?.getActiveChunkCount() ?? 0;
     const buildQueue = this.chunkManager?.getBuildQueueLength() ?? 0;
+    const busyWorkers = this.chunkManager?.getActiveWorkerCount() ?? 0;
+    const totalWorkers = this.chunkManager?.getWorkerCount() ?? 0;
+    const idleWorkers = totalWorkers - busyWorkers;
     
     const cameraPos = this.camera.position;
     const terrainHeight = this.chunkManager?.getHeightAt(cameraPos.x, cameraPos.z) ?? null;
@@ -169,6 +172,7 @@ export class Engine {
       <br>
       <strong>Terrain</strong><br>
       Chunks: ${chunks} (queue: ${buildQueue})<br>
+      Workers: ${idleWorkers}/${totalWorkers}<br>
       Terrain Y: ${terrainH}m<br>
       AGL: ${agl}m
     `;

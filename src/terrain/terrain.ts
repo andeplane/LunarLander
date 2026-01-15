@@ -30,7 +30,14 @@ export type TerrainArgs = {
   renderDistance: number;
 };
 
-export function generateTerrain(args: TerrainArgs) {
+/**
+ * Creates a terrain height evaluation function that can be used for both
+ * full mesh generation and single-point sampling.
+ * 
+ * @param args Terrain generation arguments
+ * @returns Function that takes (x, z) in local chunk space and returns {y: height, biome: [biome, water, 0]}
+ */
+export function createTerrainEvaluator(args: TerrainArgs): (x: number, z: number) => {y: number; biome: number[]} {
   let fbm = new FbmNoiseBuilder()
     .octaves(args.octaves)
     .lacunarity(args.lacunarity)
@@ -62,13 +69,15 @@ export function generateTerrain(args: TerrainArgs) {
     .frequency(args.frequency)
     .build();
 
-  const geometry = new PlaneGeometry(
-    args.width,
-    args.depth,
-    args.resolution,
-    args.resolution
-  );
-  geometry.rotateX(-Math.PI / 2);
+  let fbmCanyons = new FbmNoiseBuilder()
+    .octaves(args.octaves)
+    .lacunarity(args.lacunarity)
+    .gain(args.gain)
+    .seed(args.seed)
+    .offset(0.25)
+    .amplitude(args.amplitude * 1.5)
+    .frequency(args.frequency * 0.3)
+    .build();
 
   const defaultTerrain = (x: number, z: number) => {
     let terrainNoise = fbm(x + args.posX * 25, z + args.posZ * 25);
@@ -100,17 +109,6 @@ export function generateTerrain(args: TerrainArgs) {
     return {y: MathUtils.lerp(terrainNoise, -3, MathUtils.clamp(rivers * args.rivers * 3, 0, 1)), water: rivers};
   };
 
-  let fbmCanyons= new FbmNoiseBuilder()
-  .octaves(args.octaves)
-  .lacunarity(args.lacunarity)
-  .gain(args.gain)
-  .seed(args.seed)
-  .offset(0.25)
-  .amplitude(args.amplitude * 1.5)
-  .frequency(args.frequency * 0.3)
-  .build();
-
-
   const desertTerrain = (x: number, z: number) => {
     let terrainNoise = normalizeFbmRange(Math.abs(fbmCanyons(x + args.posX * 25, z + args.posZ * 25) - 0.25));
     const riverWidthVariation = normalizeFbmRange(fbmValiation(x + 1000 + args.posX * 25, z + 1000 + args.posZ * 25));
@@ -121,28 +119,39 @@ export function generateTerrain(args: TerrainArgs) {
     return {y: cliffs - rivers, water: rivers * 5};
   };
 
-  displaceY(geometry, 
-    (x: number, z: number) => {
+  return (x: number, z: number) => {
+    let biome = normalizeFbmRange(fbmBiomes(x + 500 + args.posX * 25, z + 500 + args.posZ * 25));
+    biome = mapRangeSmooth(biome, 0.65, 0.8, 0, 1)
+    if (closeTo(biome, 0, 0.004)) {
+      const t = desertTerrain(x, z);
+      return {y: t.y, biome: [biome, t.water, 0]};
+    } 
+    if (closeTo(biome, 1, 0.004)) {
+      const t = defaultTerrain(x, z);
+      return {y: t.y, biome: [biome, t.water, 0]};
+    } 
+     else {
+      const tDesert = desertTerrain(x, z);
+      const tDefault = defaultTerrain(x, z)
+      const y = MathUtils.lerp(tDesert.y, tDefault.y, biome);
+      const water = MathUtils.lerp(tDesert.water, tDefault.water, biome);
+      return {y, biome: [biome, water, 0]}
+    }
+  };
+}
 
-      let biome = normalizeFbmRange(fbmBiomes(x + 500 + args.posX * 25, z + 500 + args.posZ * 25));
-      biome = mapRangeSmooth(biome, 0.65, 0.8, 0, 1)
-      if (closeTo(biome, 0, 0.004)) {
-        const t = desertTerrain(x, z);
-        return {y: t.y, biome: [biome, t.water, 0]};
-      } 
-      if (closeTo(biome, 1, 0.004)) {
-        const t = defaultTerrain(x, z);
-        return {y: t.y, biome: [biome, t.water, 0]};
-      } 
-       else {
-        const tDesert = desertTerrain(x, z);
-        const tDefault = defaultTerrain(x, z)
-        const y = MathUtils.lerp(tDesert.y, tDefault.y, biome);
-        const water = MathUtils.lerp(tDesert.water, tDefault.water, biome);
-        return {y, biome: [biome, water, 0]}
-      }
-      
-    }, 2.8 * (1 - args.smoothLowerPlanes * 0.5));
+export function generateTerrain(args: TerrainArgs) {
+  const geometry = new PlaneGeometry(
+    args.width,
+    args.depth,
+    args.resolution,
+    args.resolution
+  );
+  geometry.rotateX(-Math.PI / 2);
+
+  const evaluateTerrain = createTerrainEvaluator(args);
+
+  displaceY(geometry, evaluateTerrain, 2.8 * (1 - args.smoothLowerPlanes * 0.5));
 
   return geometry;
 }
