@@ -63,16 +63,16 @@ export interface CelestialConfig {
 const DEFAULT_CONFIG: Required<CelestialConfig> = {
   sunDistance: 50000,    // Far enough to look like skybox object
   sunSize: 500,          // Visual size
-  sunIntensity: 2.0,
+  sunIntensity: 5.0,
   earthDistance: 40000,
   earthSize: 1500,       // Earth appears ~4x larger than sun from Moon
   earthshineMultiplier: 0.15,
-  spaceshipLightIntensity: 50,   // Moderate intensity for ambient illumination
-  spaceshipLightRange: 200,      // 200m range
-  flashlightIntensity: 30,       // Moderate intensity
-  flashlightRange: 500,          // 500m range
-  flashlightAngle: Math.PI / 8,  // ~22.5 degree cone
-  flashlightPenumbra: 0.3,       // Soft edges
+  spaceshipLightIntensity: 5,     // Default intensity
+  spaceshipLightRange: 200,        // 200m range
+  flashlightIntensity: 10,         // Default intensity
+  flashlightRange: 500,            // 500m range
+  flashlightAngle: Math.PI / 8,    // ~22.5 degree cone
+  flashlightPenumbra: 0.3,         // Soft edges
   sunAzimuth: Math.PI * 0.25,      // 45 degrees from north
   sunElevation: Math.PI * 0.35,    // 63 degrees above horizon
   earthAzimuth: Math.PI * 1.2,     // Opposite-ish from sun
