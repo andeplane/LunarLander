@@ -136,7 +136,6 @@ export class Engine {
     if (!this.statsElement) return;
     
     // Update FPS counter (every 500ms)
-    this.frameCount++;
     this.fpsUpdateTime += deltaTime;
     if (this.fpsUpdateTime >= 0.5) {
       this.currentFPS = Math.round(this.frameCount / this.fpsUpdateTime);
