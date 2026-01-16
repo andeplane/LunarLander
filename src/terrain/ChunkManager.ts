@@ -724,6 +724,16 @@ export class ChunkManager {
   }
 
   /**
+   * Update sun direction for horizon occlusion calculation
+   * Should be called each frame with the current sun direction in world space
+   * 
+   * @param direction Sun direction vector (normalized, in world space)
+   */
+  setSunDirection(direction: Vector3): void {
+    this.terrainGenerator.setSunDirection(direction);
+  }
+
+  /**
    * Clean up resources
    */
   dispose(): void {
