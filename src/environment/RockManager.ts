@@ -1,6 +1,6 @@
 import { BufferGeometry, InstancedMesh, Matrix4 } from 'three';
 import { RockBuilder } from './RockBuilder';
-import { RockMaterial } from '../shaders/RockMaterial';
+import { MoonMaterial } from '../shaders/MoonMaterial';
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 import type { RockPlacement } from '../terrain/ChunkWorker';
 
@@ -19,7 +19,7 @@ export class RockManager {
   // Store prototypes by detail level (3, 4, 5) instead of LOD level
   // This avoids generating duplicate libraries for LODs that share the same detail level
   private prototypesByDetail: Map<number, BufferGeometry[]> = new Map();
-  private material: RockMaterial;
+  private material: MoonMaterial;
   private librarySize: number;
   private chunkWidth: number;
   private chunkDepth: number;
@@ -113,7 +113,9 @@ export class RockManager {
     this.lodLevels = lodLevels;
 
     // Create shared material for all rocks with curvature support
-    this.material = new RockMaterial();
+    // Use MoonMaterial so rocks match terrain appearance
+    this.material = new MoonMaterial();
+    this.material.setParam('enableColorVariation', true); // Match terrain
     this.material.setParam('enableCurvature', true);
     this.material.setParam('planetRadius', DEFAULT_PLANET_RADIUS);
 
@@ -218,7 +220,7 @@ export class RockManager {
   /**
    * Get the shared rock material.
    */
-  getMaterial(): RockMaterial {
+  getMaterial(): MoonMaterial {
     return this.material;
   }
 

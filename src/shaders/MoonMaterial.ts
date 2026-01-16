@@ -1,4 +1,4 @@
-import { MeshStandardMaterial, Color } from 'three';
+import { MeshStandardMaterial, Color, Texture } from 'three';
 import { glslCommon } from './glsl_common';
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 
@@ -7,30 +7,7 @@ import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
  */
 export interface MoonMaterialParams {
   // Toggles
-  enableCraters: boolean;
-  enableNoise: boolean;
   enableColorVariation: boolean;
-
-  // Base parameters
-  scale: number; // Crater density (lower = larger craters)
-  distortion: number; // Crater "wobble" (0 = perfect circles)
-  bumpStrength: number; // Visual depth intensity
-  detailScale: number; // Fine detail scale
-
-  // Noise parameters
-  noiseFrequency: number; // Noise frequency multiplier
-  noiseAmplitude: number; // Noise amplitude
-  distortionFrequency: number; // Distortion frequency multiplier
-
-  // Crater parameters
-  largeCraterScale: number; // Large crater scale multiplier
-  mediumCraterScale: number; // Medium crater scale multiplier
-  largeCraterSmoothMin: number; // Large crater smoothstep min
-  largeCraterSmoothMax: number; // Large crater smoothstep max
-  mediumCraterSmoothMin: number; // Medium crater smoothstep min
-  mediumCraterSmoothMax: number; // Medium crater smoothstep max
-  largeCraterWeight: number; // Large crater blend weight
-  mediumCraterWeight: number; // Medium crater blend weight
 
   // Color parameters
   colorVariationFrequency: number; // Color variation frequency
@@ -40,19 +17,22 @@ export interface MoonMaterialParams {
   // Curvature parameters
   enableCurvature: boolean;
   planetRadius: number; // Virtual planet radius in meters
+
+  // Texture (optional, for future use)
+  texture?: Texture | null; // Optional albedo texture
 }
 
 /**
- * MoonMaterial - Procedural lunar surface shader
+ * MoonMaterial - Unified lunar surface shader for terrain and rocks
  * 
- * Uses distorted Voronoi noise for crater patterns and procedural bump mapping
- * for visual depth. Works with existing CPU-generated terrain geometry.
+ * Works with both regular meshes (terrain) and instanced meshes (rocks).
+ * Supports color variation, curvature, and optional texture mapping.
  * 
  * Key features:
- * - Coordinate distortion for organic crater shapes (Ryan King Art technique)
- * - Cellular/Voronoi noise for crater patterns
- * - Procedural normal perturbation (bump mapping via finite differences)
- * - Gray lunar color palette with height-based variation
+ * - Gray lunar color palette with mare/highlands variation
+ * - Planetary curvature support
+ * - Instancing support for rocks
+ * - Optional texture slot for future use
  */
 export class MoonMaterial extends MeshStandardMaterial {
   private shaderUniforms: { [key: string]: { value: any } } | null = null;
@@ -68,92 +48,78 @@ export class MoonMaterial extends MeshStandardMaterial {
 
     // Initialize default parameters
     this.params = {
-      enableCraters: false,
-      enableNoise: true,
       enableColorVariation: true,
-      scale: 0.05,
-      distortion: 0.35,
-      bumpStrength: 0.4,
-      detailScale: 0.5,
-      noiseFrequency: 8.0,
-      noiseAmplitude: 0.06,
-      distortionFrequency: 0.5,
-      largeCraterScale: 0.5,
-      mediumCraterScale: 1.5,
-      largeCraterSmoothMin: 0.15,
-      largeCraterSmoothMax: 0.85,
-      mediumCraterSmoothMin: 0.2,
-      mediumCraterSmoothMax: 0.8,
-      largeCraterWeight: 0.6,
-      mediumCraterWeight: 0.4,
       colorVariationFrequency: 0.005,
       baseColorBlend: 0.6,
       brightnessBoost: 1.2,
       enableCurvature: true,
       planetRadius: DEFAULT_PLANET_RADIUS,
+      texture: null,
     };
 
     this.onBeforeCompile = (shader) => {
       // Store reference to uniforms for later updates
       this.shaderUniforms = shader.uniforms;
 
-      // Initialize all uniforms
-      shader.uniforms.uEnableCraters = { value: this.params.enableCraters ? 1.0 : 0.0 };
-      shader.uniforms.uEnableNoise = { value: this.params.enableNoise ? 1.0 : 0.0 };
+      // Initialize uniforms
       shader.uniforms.uEnableColorVariation = { value: this.params.enableColorVariation ? 1.0 : 0.0 };
-      
-      shader.uniforms.uScale = { value: this.params.scale };
-      shader.uniforms.uDistortion = { value: this.params.distortion };
-      shader.uniforms.uBumpStrength = { value: this.params.bumpStrength };
-      shader.uniforms.uDetailScale = { value: this.params.detailScale };
-      
-      shader.uniforms.uNoiseFrequency = { value: this.params.noiseFrequency };
-      shader.uniforms.uNoiseAmplitude = { value: this.params.noiseAmplitude };
-      shader.uniforms.uDistortionFrequency = { value: this.params.distortionFrequency };
-      
-      shader.uniforms.uLargeCraterScale = { value: this.params.largeCraterScale };
-      shader.uniforms.uMediumCraterScale = { value: this.params.mediumCraterScale };
-      shader.uniforms.uLargeCraterSmoothMin = { value: this.params.largeCraterSmoothMin };
-      shader.uniforms.uLargeCraterSmoothMax = { value: this.params.largeCraterSmoothMax };
-      shader.uniforms.uMediumCraterSmoothMin = { value: this.params.mediumCraterSmoothMin };
-      shader.uniforms.uMediumCraterSmoothMax = { value: this.params.mediumCraterSmoothMax };
-      shader.uniforms.uLargeCraterWeight = { value: this.params.largeCraterWeight };
-      shader.uniforms.uMediumCraterWeight = { value: this.params.mediumCraterWeight };
-      
-      
       shader.uniforms.uColorVariationFrequency = { value: this.params.colorVariationFrequency };
       shader.uniforms.uBaseColorBlend = { value: this.params.baseColorBlend };
       shader.uniforms.uBrightnessBoost = { value: this.params.brightnessBoost };
-      
       shader.uniforms.uEnableCurvature = { value: this.params.enableCurvature ? 1.0 : 0.0 };
       shader.uniforms.uPlanetRadius = { value: this.params.planetRadius };
+      
+      // Texture uniform (optional)
+      shader.uniforms.uTexture = { value: this.params.texture || null };
+      shader.uniforms.uUseTexture = { value: this.params.texture ? 1.0 : 0.0 };
 
       // ==========================================
       // VERTEX SHADER MODIFICATIONS
       // ==========================================
       
-      // Add varying for world position
+      // Add varying for world position, UV, and world normal
       shader.vertexShader = `
         varying vec3 vWorldPosition;
+        varying vec2 vUv;
+        varying vec3 vWorldNormal;
         uniform float uEnableCurvature;
         uniform float uPlanetRadius;
         ${shader.vertexShader}
       `;
+      
+      // Pass UV to fragment shader
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <uv_vertex>',
+        `
+        #include <uv_vertex>
+        vUv = uv;
+        `
+      );
 
-      // Pass world position to fragment shader
+      // Pass world position and world normal to fragment shader (with instancing support)
       shader.vertexShader = shader.vertexShader.replace(
         '#include <worldpos_vertex>',
         `
         #include <worldpos_vertex>
-        vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        #ifdef USE_INSTANCING
+          vWorldPosition = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
+          vWorldNormal = normalize((modelMatrix * instanceMatrix * vec4(objectNormal, 0.0)).xyz);
+        #else
+          vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
+          vWorldNormal = normalize((modelMatrix * vec4(objectNormal, 0.0)).xyz);
+        #endif
         `
       );
 
-      // Apply planetary curvature
+      // Apply planetary curvature (with instancing support)
       shader.vertexShader = shader.vertexShader.replace(
         '#include <project_vertex>',
         `
-        vec4 worldPosition = modelMatrix * vec4( transformed, 1.0 );
+        #ifdef USE_INSTANCING
+          vec4 worldPosition = modelMatrix * instanceMatrix * vec4( transformed, 1.0 );
+        #else
+          vec4 worldPosition = modelMatrix * vec4( transformed, 1.0 );
+        #endif
         
         if (uEnableCurvature > 0.5) {
           vec2 deltaXZ = worldPosition.xz - cameraPosition.xz;
@@ -171,130 +137,40 @@ export class MoonMaterial extends MeshStandardMaterial {
       // FRAGMENT SHADER MODIFICATIONS
       // ==========================================
 
-      // Add uniforms, varyings, and noise functions
+      // Add uniforms and varyings
       shader.fragmentShader = `
         varying vec3 vWorldPosition;
+        varying vec2 vUv;
+        varying vec3 vWorldNormal;
         
         // Toggle uniforms
-        uniform float uEnableCraters;
-        uniform float uEnableNoise;
         uniform float uEnableColorVariation;
-        
-        // Base parameters
-        uniform float uScale;
-        uniform float uDistortion;
-        uniform float uBumpStrength;
-        uniform float uDetailScale;
-        
-        // Noise parameters
-        uniform float uNoiseFrequency;
-        uniform float uNoiseAmplitude;
-        uniform float uDistortionFrequency;
-        
-        // Crater parameters
-        uniform float uLargeCraterScale;
-        uniform float uMediumCraterScale;
-        uniform float uLargeCraterSmoothMin;
-        uniform float uLargeCraterSmoothMax;
-        uniform float uMediumCraterSmoothMin;
-        uniform float uMediumCraterSmoothMax;
-        uniform float uLargeCraterWeight;
-        uniform float uMediumCraterWeight;
         
         // Color parameters
         uniform float uColorVariationFrequency;
         uniform float uBaseColorBlend;
         uniform float uBrightnessBoost;
+        
+        // Texture uniforms (optional)
+        uniform sampler2D uTexture;
+        uniform float uUseTexture;
 
         ${glslCommon}
-
-        // ==========================================
-        // OPTIMIZED 2D CELLULAR NOISE (for craters)
-        // Using 2D instead of 3D - terrain is essentially a heightfield
-        // ==========================================
-        
-        float cellular2D(vec2 P) {
-          vec2 Pi = floor(P);
-          vec2 Pf = P - Pi;
-          
-          float d = 1e30;
-          
-          // Search 3x3 neighborhood (9 iterations vs 27 for 3D)
-          for (int i = -1; i <= 1; i++) {
-            for (int j = -1; j <= 1; j++) {
-              vec2 offset = vec2(float(i), float(j));
-              vec2 cellPos = Pi + offset;
-              
-              // Simple hash for random offset
-              vec2 p = fract(sin(vec2(
-                dot(cellPos, vec2(127.1, 311.7)),
-                dot(cellPos, vec2(269.5, 183.3))
-              )) * 43758.5453);
-              
-              vec2 pointPos = offset + p - Pf;
-              float dist = length(pointPos);
-              d = min(d, dist);
-            }
-          }
-          
-          return d;
-        }
-
-        // ==========================================
-        // OPTIMIZED LUNAR SURFACE HEIGHT FUNCTION
-        // ==========================================
-        
-        float getSurfaceHeight(vec2 pos) {
-          float scale = uScale;
-          float height = 0.0;
-          
-          // A. Noise detail (if enabled)
-          float noise = 0.0;
-          if (uEnableNoise > 0.5) {
-            noise = simplexNoise(pos * scale * uNoiseFrequency) * uNoiseAmplitude;
-            height += noise;
-          }
-          
-          // B. Craters (if enabled)
-          if (uEnableCraters > 0.5) {
-            // Distortion calculation
-            float distortion = simplexNoise(pos * scale * uDistortionFrequency);
-            vec2 distortedPos = pos + vec2(distortion) * uDistortion;
-            
-            // Large craters
-            float largeCraters = 1.0 - cellular2D(distortedPos * scale * uLargeCraterScale);
-            largeCraters = smoothstep(uLargeCraterSmoothMin, uLargeCraterSmoothMax, largeCraters);
-            
-            // Medium craters
-            vec2 distortedPos2 = pos + vec2(distortion * 0.7) + vec2(100.0);
-            float mediumCraters = 1.0 - cellular2D(distortedPos2 * scale * uMediumCraterScale);
-            mediumCraters = smoothstep(uMediumCraterSmoothMin, uMediumCraterSmoothMax, mediumCraters);
-            
-            // Combine crater layers
-            float craters = largeCraters * uLargeCraterWeight + mediumCraters * uMediumCraterWeight;
-            height += craters;
-          }
-          
-          return height;
-        }
-
 
         ${shader.fragmentShader}
       `;
 
       // ==========================================
-      // INJECT HEIGHT CALCULATION EARLY (before color_fragment)
-      // Uses screen-space derivatives for gradient - only 1 height sample!
+      // APPLY COLOR AND TEXTURE (before color_fragment)
       // ==========================================
       
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <color_fragment>',
         `
-        // Calculate terrain position and surface height for coloring
-        vec2 terrainPos = vWorldPosition.xz;
-        float surfaceHeight = getSurfaceHeight(terrainPos);
-        
         #include <color_fragment>
+        
+        // Calculate terrain position for color variation
+        vec2 terrainPos = vWorldPosition.xz;
         
         // Lunar color palette
         vec3 darkMoon = vec3(0.08, 0.08, 0.10);    // Deep crater bottoms
@@ -309,19 +185,31 @@ export class MoonMaterial extends MeshStandardMaterial {
           baseColor = mix(mareColor, highlandsColor, smoothstep(0.3, 0.7, largeVariation));
         }
         
-        // Height-based coloring (craters are darker, rims are lighter)
+        // Normal-based variation: upward-facing surfaces are lighter (dusty), sides/bottom darker
+        vec3 worldNorm = normalize(vWorldNormal);
+        float upFacing = worldNorm.y * 0.5 + 0.5; // 0 = down, 0.5 = side, 1 = up
+        
+        // Small-scale noise for local surface variation (breaks up uniformity on rocks)
+        float localNoise = snoise3D(vWorldPosition * 2.0) * 0.15; // Higher frequency, subtle amplitude
+        
+        // Combine normal-based and noise-based variation for surface height
+        float surfaceHeight = mix(0.3, 0.7, upFacing) + localNoise;
+        surfaceHeight = clamp(surfaceHeight, 0.0, 1.0);
+        
         vec3 surfaceColor = mix(darkMoon, lightMoon, surfaceHeight);
         
         // Blend base color with height-based color
-        surfaceColor = mix(baseColor, surfaceColor, uBaseColorBlend);
+        vec3 finalColor = mix(baseColor, surfaceColor, uBaseColorBlend);
         
-        // Add subtle noise to albedo to match regolith roughness (only if noise enabled)
-        if (uEnableNoise > 0.5) {
-          float albedoNoise = simplexNoise(terrainPos * 50.0) * 0.02;
-          surfaceColor += vec3(albedoNoise);
+        // Apply texture if available (future use)
+        if (uUseTexture > 0.5) {
+          // Sample texture using UV coordinates (assuming standard UV mapping)
+          vec2 uv = vUv;
+          vec3 texColor = texture2D(uTexture, uv).rgb;
+          finalColor = mix(finalColor, texColor, 1.0); // Can adjust blend factor later
         }
 
-        diffuseColor.rgb *= surfaceColor * uBrightnessBoost;
+        diffuseColor.rgb *= finalColor * uBrightnessBoost;
         `
       );
       
@@ -366,31 +254,7 @@ export class MoonMaterial extends MeshStandardMaterial {
     if (!this.shaderUniforms) return;
 
     // Update toggle uniforms (convert boolean to float)
-    this.shaderUniforms.uEnableCraters.value = this.params.enableCraters ? 1.0 : 0.0;
-    this.shaderUniforms.uEnableNoise.value = this.params.enableNoise ? 1.0 : 0.0;
     this.shaderUniforms.uEnableColorVariation.value = this.params.enableColorVariation ? 1.0 : 0.0;
-
-    // Update base parameters
-    this.shaderUniforms.uScale.value = this.params.scale;
-    this.shaderUniforms.uDistortion.value = this.params.distortion;
-    this.shaderUniforms.uBumpStrength.value = this.params.bumpStrength;
-    this.shaderUniforms.uDetailScale.value = this.params.detailScale;
-
-    // Update noise parameters
-    this.shaderUniforms.uNoiseFrequency.value = this.params.noiseFrequency;
-    this.shaderUniforms.uNoiseAmplitude.value = this.params.noiseAmplitude;
-    this.shaderUniforms.uDistortionFrequency.value = this.params.distortionFrequency;
-
-    // Update crater parameters
-    this.shaderUniforms.uLargeCraterScale.value = this.params.largeCraterScale;
-    this.shaderUniforms.uMediumCraterScale.value = this.params.mediumCraterScale;
-    this.shaderUniforms.uLargeCraterSmoothMin.value = this.params.largeCraterSmoothMin;
-    this.shaderUniforms.uLargeCraterSmoothMax.value = this.params.largeCraterSmoothMax;
-    this.shaderUniforms.uMediumCraterSmoothMin.value = this.params.mediumCraterSmoothMin;
-    this.shaderUniforms.uMediumCraterSmoothMax.value = this.params.mediumCraterSmoothMax;
-    this.shaderUniforms.uLargeCraterWeight.value = this.params.largeCraterWeight;
-    this.shaderUniforms.uMediumCraterWeight.value = this.params.mediumCraterWeight;
-
 
     // Update color parameters
     this.shaderUniforms.uColorVariationFrequency.value = this.params.colorVariationFrequency;
@@ -400,6 +264,10 @@ export class MoonMaterial extends MeshStandardMaterial {
     // Update curvature parameters
     this.shaderUniforms.uEnableCurvature.value = this.params.enableCurvature ? 1.0 : 0.0;
     this.shaderUniforms.uPlanetRadius.value = this.params.planetRadius;
+
+    // Update texture parameters
+    this.shaderUniforms.uTexture.value = this.params.texture || null;
+    this.shaderUniforms.uUseTexture.value = this.params.texture ? 1.0 : 0.0;
 
     // Mark material as needing update
     this.needsUpdate = true;
