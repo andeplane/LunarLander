@@ -147,3 +147,14 @@ console.log('  Mouse - Look around');
 console.log('  Scroll - Adjust speed');
 console.log('  Escape - Release mouse');
 console.log('  O - Toggle debug wireframe (shows LOD chunks)');
+
+// Expose setCameraPosition to window for debugging
+(window as unknown as { setCameraPosition: (x: number, y: number, z: number) => void }).setCameraPosition = (x: number, y: number, z: number) => {
+  engine.getCamera().position.set(x, y, z);
+  console.log(`Camera position set to: (${x}, ${y}, ${z})`);
+};
+
+// Print current camera position command
+const cam = engine.getCamera();
+console.log(`setCameraPosition(${cam.position.x.toFixed(1)}, ${cam.position.y.toFixed(1)}, ${cam.position.z.toFixed(1)})`);
+console.log('Use setCameraPosition(x, y, z) in console to set camera position');
