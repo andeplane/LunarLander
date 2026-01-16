@@ -292,7 +292,7 @@ export class ChunkManager {
         for (const rockMesh of rockMeshes) {
           const oldMaterial = rockMesh.material;
 
-          // Only dispose debug materials (MeshBasicMaterial), never the shared RockMaterial
+          // Only dispose debug materials (MeshBasicMaterial), never the shared MoonMaterial
           if (oldMaterial instanceof MeshBasicMaterial) {
             oldMaterial.dispose();
           }
