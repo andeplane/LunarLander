@@ -18,8 +18,10 @@ export interface MoonMaterialParams {
   enableCurvature: boolean;
   planetRadius: number; // Virtual planet radius in meters
 
-  // Texture (optional, for future use)
-  texture?: Texture | null; // Optional albedo texture
+  // Texture LOD parameters
+  textureLowDetail?: Texture | null; // Low detail texture (shown when far)
+  textureHighDetail?: Texture | null; // High detail texture (shown when close)
+  textureLodDistance?: number; // Distance threshold for blending (in meters, default: 50)
 }
 
 /**
@@ -54,7 +56,9 @@ export class MoonMaterial extends MeshStandardMaterial {
       brightnessBoost: 1.2,
       enableCurvature: true,
       planetRadius: DEFAULT_PLANET_RADIUS,
-      texture: null,
+      textureLowDetail: null,
+      textureHighDetail: null,
+      textureLodDistance: 50.0, // 50 meters default blend distance
     };
 
     this.onBeforeCompile = (shader) => {
@@ -72,9 +76,13 @@ export class MoonMaterial extends MeshStandardMaterial {
       // Sun direction uniform for horizon occlusion
       shader.uniforms.uSunDirection = { value: new Vector3(0, 1, 0) };
       
-      // Texture uniform (optional)
-      shader.uniforms.uTexture = { value: this.params.texture || null };
-      shader.uniforms.uUseTexture = { value: this.params.texture ? 1.0 : 0.0 };
+      // Texture LOD uniforms
+      shader.uniforms.uTextureLowDetail = { value: this.params.textureLowDetail || null };
+      shader.uniforms.uTextureHighDetail = { value: this.params.textureHighDetail || null };
+      shader.uniforms.uTextureLodDistance = { value: this.params.textureLodDistance || 50.0 };
+      shader.uniforms.uUseTextureLod = { 
+        value: (this.params.textureLowDetail && this.params.textureHighDetail) ? 1.0 : 0.0 
+      };
 
       // ==========================================
       // VERTEX SHADER MODIFICATIONS
@@ -161,9 +169,11 @@ export class MoonMaterial extends MeshStandardMaterial {
         // Sun direction for horizon occlusion
         uniform vec3 uSunDirection;
         
-        // Texture uniforms (optional)
-        uniform sampler2D uTexture;
-        uniform float uUseTexture;
+        // Texture LOD uniforms
+        uniform sampler2D uTextureLowDetail;
+        uniform sampler2D uTextureHighDetail;
+        uniform float uTextureLodDistance;
+        uniform float uUseTextureLod;
 
         ${glslCommon}
 
@@ -211,12 +221,28 @@ export class MoonMaterial extends MeshStandardMaterial {
         // Blend base color with height-based color
         vec3 finalColor = mix(baseColor, surfaceColor, uBaseColorBlend);
         
-        // Apply texture if available (future use)
-        if (uUseTexture > 0.5) {
-          // Sample texture using UV coordinates (assuming standard UV mapping)
-          vec2 uv = vUv;
-          vec3 texColor = texture2D(uTexture, uv).rgb;
-          finalColor = mix(finalColor, texColor, 1.0); // Can adjust blend factor later
+        // Apply distance-based texture LOD blending if available
+        if (uUseTextureLod > 0.5) {
+          // Use world position for UV coordinates to tile seamlessly across chunks
+          vec2 uv = terrainPos * 0.2;
+          
+          // Calculate distance from camera to fragment
+          float dist = distance(cameraPosition, vWorldPosition);
+          
+          // Create smooth blend factor based on distance
+          // Blend from low detail (far) to high detail (close)
+          // smoothstep returns 0 when dist >= farDistance, 1 when dist <= nearDistance
+          float nearDistance = uTextureLodDistance * 0.5; // Start blending at half distance
+          float farDistance = uTextureLodDistance * 1.5; // Fully low detail beyond 1.5x distance
+          float blendFactor = 1.0 - smoothstep(nearDistance, farDistance, dist);
+          
+          // Sample both textures with same UV coordinates
+          vec3 texLowDetail = texture2D(uTextureLowDetail, uv).rgb;
+          vec3 texHighDetail = texture2D(uTextureHighDetail, uv).rgb;
+          
+          // Blend between low and high detail textures
+          vec3 texColor = mix(texLowDetail, texHighDetail, blendFactor);
+          finalColor = mix(finalColor, texColor, 1.0);
         }
 
         diffuseColor.rgb *= finalColor * uBrightnessBoost;
@@ -291,9 +317,12 @@ export class MoonMaterial extends MeshStandardMaterial {
     this.shaderUniforms.uEnableCurvature.value = this.params.enableCurvature ? 1.0 : 0.0;
     this.shaderUniforms.uPlanetRadius.value = this.params.planetRadius;
 
-    // Update texture parameters
-    this.shaderUniforms.uTexture.value = this.params.texture || null;
-    this.shaderUniforms.uUseTexture.value = this.params.texture ? 1.0 : 0.0;
+    // Update texture LOD parameters
+    this.shaderUniforms.uTextureLowDetail.value = this.params.textureLowDetail || null;
+    this.shaderUniforms.uTextureHighDetail.value = this.params.textureHighDetail || null;
+    this.shaderUniforms.uTextureLodDistance.value = this.params.textureLodDistance || 50.0;
+    this.shaderUniforms.uUseTextureLod.value = 
+      (this.params.textureLowDetail && this.params.textureHighDetail) ? 1.0 : 0.0;
 
     // Mark material as needing update
     this.needsUpdate = true;

@@ -35,6 +35,7 @@ export class ShaderUIController {
     this.setupTogglesFolder();
     this.setupColorsFolder();
     this.setupCurvatureFolder();
+    this.setupTextureLodFolder();
     this.setupLightingFolder();
   }
 
@@ -89,6 +90,22 @@ export class ShaderUIController {
         if (this.celestialSystem) {
           this.celestialSystem.setPlanetRadius(value);
         }
+      });
+    
+    folder.open();
+  }
+
+  /**
+   * Setup texture LOD parameters folder
+   * Controls for distance-based texture blending
+   */
+  private setupTextureLodFolder(): void {
+    const folder = this.gui.addFolder('Texture LOD');
+    
+    folder.add(this.params, 'textureLodDistance', 10, 200, 5)
+      .name('Blend Distance (m)')
+      .onChange((value: number) => {
+        this.material.setParam('textureLodDistance', value);
       });
     
     folder.open();

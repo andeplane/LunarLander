@@ -10,6 +10,7 @@ import { RockManager } from './environment/RockManager';
 import { LodDetailLevel } from './terrain/LodUtils';
 import { ShaderUIController } from './ui/ShaderUIController';
 import type { CameraConfig } from './types';
+import { TextureLoader, MirroredRepeatWrapping, SRGBColorSpace, Texture } from 'three';
 import { DEFAULT_PLANET_RADIUS } from './core/EngineSettings';
 
 /**
@@ -130,6 +131,45 @@ engine.setCelestialSystem(celestialSystem);
 
 // Initialize shader UI controller (after celestial system so they can be synced)
 const shaderUI = new ShaderUIController(chunkManager.getMaterial(), celestialSystem);
+
+// Load texture LOD system: low detail (far) and high detail (close)
+const textureLoader = new TextureLoader();
+
+// Configure texture settings helper
+const configureTexture = (texture: Texture) => {
+  texture.wrapS = MirroredRepeatWrapping;
+  texture.wrapT = MirroredRepeatWrapping;
+  texture.colorSpace = SRGBColorSpace;
+  texture.anisotropy = 8;
+};
+
+// Load low detail texture (shown when zoomed out)
+textureLoader.load('/textures/surface-low-detail.png', (texture) => {
+  configureTexture(texture);
+  
+  // Apply to materials
+  const terrainMaterial = terrainGenerator.getMaterial();
+  const rockMaterial = rockManager.getMaterial();
+  
+  terrainMaterial.setParam('textureLowDetail', texture);
+  rockMaterial.setParam('textureLowDetail', texture);
+  
+  // Set blend distance to 90 meters
+  terrainMaterial.setParam('textureLodDistance', 90);
+  rockMaterial.setParam('textureLodDistance', 90);
+});
+
+// Load high detail texture (shown when zoomed in)
+textureLoader.load('/textures/surface-high-detail.png', (texture) => {
+  configureTexture(texture);
+  
+  // Apply to materials
+  const terrainMaterial = terrainGenerator.getMaterial();
+  const rockMaterial = rockManager.getMaterial();
+  
+  terrainMaterial.setParam('textureHighDetail', texture);
+  rockMaterial.setParam('textureHighDetail', texture);
+});
 
 // Start the render loop
 engine.start();
