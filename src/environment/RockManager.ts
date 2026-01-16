@@ -8,11 +8,17 @@ import type { RockPlacement } from '../terrain/ChunkWorker';
  * RockManager pre-generates LOD-based libraries of rock prototype geometries
  * and creates InstancedMesh from worker-computed placement data.
  * 
- * Rock detail matches terrain LOD triangle area (2x-4x larger triangles on rocks).
+ * Rock detail is mapped directly to chunk LOD level:
+ * - LOD 0-1: detail 5 (20480 triangles) for closest chunks
+ * - LOD 2-3: detail 4 (5120 triangles) for medium chunks
+ * - LOD 4+: detail 3 (1280 triangles) for distant chunks
+ * 
  * No heavy computation on main thread - just assembles meshes from pre-computed data.
  */
 export class RockManager {
-  private prototypesByLod: BufferGeometry[][] = [];
+  // Store prototypes by detail level (3, 4, 5) instead of LOD level
+  // This avoids generating duplicate libraries for LODs that share the same detail level
+  private prototypesByDetail: Map<number, BufferGeometry[]> = new Map();
   private material: RockMaterial;
   private librarySize: number;
   private chunkWidth: number;
@@ -35,58 +41,56 @@ export class RockManager {
 
   /**
    * Calculate rock triangle area for icosahedron detail level.
+   * 
+   * Note: The actual triangle count formula is 20*(detail+1)^2, NOT 20*4^detail.
+   * This is because the geometry uses a quadratic subdivision pattern.
    */
   private static getRockTriangleArea(detail: number, rockDiameter: number): number {
-    const triangleCounts = [20, 80, 320, 1280, 5120]; // detail 0-4
-    const triangles = triangleCounts[detail] ?? 20;
+    // Actual formula: 20 * (detail + 1)^2
+    const triangles = 20 * Math.pow(detail + 1, 2);
     const surfaceArea = Math.PI * Math.pow(rockDiameter / 2, 2);
     return surfaceArea / triangles;
   }
 
   /**
+   * Get triangle count for a given detail level.
+   * Formula: 20 * (detail + 1)^2
+   */
+  static getTriangleCount(detail: number): number {
+    return 20 * Math.pow(detail + 1, 2);
+  }
+
+  /**
    * Find appropriate icosahedron detail level for a given LOD.
-   * Returns detail level that gives 2x-4x larger triangles than terrain.
+   * Uses direct LOD-to-detail mapping prioritizing visual quality.
+   * 
+   * Note: LOD 0 = highest detail terrain (1024 resolution), LOD 8 = lowest detail (4 resolution)
+   * Closest chunks get maximum detail, distant chunks get lower detail for performance.
+   * 
+   * Triangle count formula: 20 * (detail + 1)^2
    * 
    * Strategy:
-   * - For high LOD (close-up, high-res terrain): Use higher detail (detail=2-3)
-   * - For low LOD (distant, low-res terrain): Use lower detail (detail=1-2)
-   * - Never use detail=0 (too low poly, causes holes with scraping algorithm)
-   * - Minimum detail=1 to ensure rocks look decent
+   * - LOD 0-1 (closest chunks): detail 15 (~5120 triangles) - maximum quality
+   * - LOD 2-3 (medium chunks): detail 10 (~2420 triangles) - high quality
+   * - LOD 4+ (distant chunks): detail 7 (~1280 triangles) - lower detail for performance
    */
-  private static getDetailForLod(
+  static getDetailForLod(
     lodLevel: number,
-    chunkWidth: number,
-    chunkDepth: number,
-    lodLevels: number[],
-    avgRockDiameter: number = 1.0
+    _chunkWidth: number,
+    _chunkDepth: number,
+    _lodLevels: number[],
+    _avgRockDiameter: number = 1.0
   ): number {
-    const terrainArea = RockManager.getTerrainTriangleArea(lodLevel, chunkWidth, chunkDepth, lodLevels);
-    const targetRockAreaMin = terrainArea * 2.0; // Minimum: 2x terrain
-    const targetRockAreaMax = terrainArea * 4.0; // Maximum: 4x terrain
-    
-    const MIN_DETAIL = 3; // Never use detail < 3 (too low poly, creates ugly flat facets)
-    const MAX_DETAIL = 3; // Cap at detail=3 for performance
-    
-    // Try each detail level from highest to lowest (within bounds)
-    // We want the highest detail that still gives triangles 2x-4x larger than terrain
-    for (let detail = MAX_DETAIL; detail >= MIN_DETAIL; detail--) {
-      const rockArea = RockManager.getRockTriangleArea(detail, avgRockDiameter);
-      
-      // If this detail level gives triangles within the 2x-4x range, use it
-      if (rockArea >= targetRockAreaMin && rockArea <= targetRockAreaMax) {
-        return detail; // Perfect match
-      }
-      
-      // If this detail gives triangles >= min, it's acceptable (prefer higher detail)
-      if (rockArea >= targetRockAreaMin) {
-        return detail;
-      }
+    // Direct LOD-to-detail mapping prioritizing visual quality
+    // Note: LOD 0 = highest detail (1024), LOD 8 = lowest detail (4)
+    // Closest chunks get maximum detail, distant chunks get lower detail
+    if (lodLevel <= 1) {
+      return 15; // LOD 0-1: detail 15 (~5120 triangles) for closest chunks
+    } else if (lodLevel <= 3) {
+      return 10; // LOD 2-3: detail 10 (~2420 triangles) for medium chunks
+    } else {
+      return 7; // LOD 4+: detail 7 (~1280 triangles) for distant chunks
     }
-    
-    // If no detail level meets the minimum (low LOD with huge terrain triangles),
-    // use the highest detail that's still reasonable (detail=1 minimum)
-    // This ensures rocks look decent even at distance
-    return MIN_DETAIL;
   }
 
   /**
@@ -118,19 +122,27 @@ export class RockManager {
   }
 
   /**
-   * Generate LOD-based libraries of rock prototype geometries.
-   * Each LOD level gets a library with appropriate detail to match terrain triangle area.
+   * Generate rock prototype libraries by detail level.
+   * Only generates unique libraries (detail 7, 10, 15) to avoid duplicates.
    * Called once at construction.
+   * 
+   * Triangle counts use formula: 20 * (detail + 1)^2
+   * - Detail 7: 1280 triangles
+   * - Detail 10: 2420 triangles  
+   * - Detail 15: 5120 triangles
    */
   private generatePrototypeLibraries(): void {
-    console.log(`Generating ${this.librarySize} rock prototypes per LOD level...`);
+    console.log(`Generating ${this.librarySize} rock prototypes per detail level...`);
     const startTime = performance.now();
 
-    const lodCount = this.lodLevels.length;
-    for (let lod = 0; lod < lodCount; lod++) {
-      const detail = RockManager.getDetailForLod(lod, this.chunkWidth, this.chunkDepth, this.lodLevels);
-      console.log(`  LOD ${lod} (res=${this.lodLevels[lod]}): detail=${detail}`);
-      this.prototypesByLod[lod] = RockBuilder.generateLibrary(this.librarySize, { detail });
+    // Generate only unique detail levels (7, 10, 15)
+    // Multiple LOD levels share the same detail level, so we avoid duplicate generation
+    const detailLevels = [7, 10, 15];
+    for (const detail of detailLevels) {
+      const expectedTriangles = RockManager.getTriangleCount(detail);
+      console.log(`  Detail ${detail} (~${expectedTriangles} triangles)`);
+      const libraries = RockBuilder.generateLibrary(this.librarySize, { detail });
+      this.prototypesByDetail.set(detail, libraries);
     }
 
     const elapsed = performance.now() - startTime;
@@ -147,11 +159,11 @@ export class RockManager {
   createRockMeshes(placements: RockPlacement[], lodLevel: number): InstancedMesh[] {
     const meshes: InstancedMesh[] = [];
 
-    // Get prototypes for this LOD level (fallback to LOD 0 if out of range)
-    const lodIndex = Math.min(lodLevel, this.prototypesByLod.length - 1);
-    const prototypes = this.prototypesByLod[lodIndex] ?? this.prototypesByLod[0];
+    // Map LOD level to detail level
+    const detail = RockManager.getDetailForLod(lodLevel, this.chunkWidth, this.chunkDepth, this.lodLevels);
+    const prototypes = this.prototypesByDetail.get(detail) ?? this.prototypesByDetail.get(7);
     if (!prototypes || prototypes.length === 0) {
-      console.warn(`No prototypes available for LOD ${lodLevel}, using LOD 0`);
+      console.warn(`No prototypes available for detail ${detail} (LOD ${lodLevel})`);
       return meshes;
     }
 
@@ -217,8 +229,8 @@ export class RockManager {
    * @param lodLevel - LOD level (default: 0)
    */
   getPrototype(index: number, lodLevel: number = 0): BufferGeometry | undefined {
-    const lodIndex = Math.min(lodLevel, this.prototypesByLod.length - 1);
-    const prototypes = this.prototypesByLod[lodIndex] ?? this.prototypesByLod[0];
+    const detail = RockManager.getDetailForLod(lodLevel, this.chunkWidth, this.chunkDepth, this.lodLevels);
+    const prototypes = this.prototypesByDetail.get(detail) ?? this.prototypesByDetail.get(7);
     if (!prototypes) return undefined;
     return prototypes[index % prototypes.length];
   }
@@ -227,13 +239,13 @@ export class RockManager {
    * Clean up resources.
    */
   dispose(): void {
-    // Dispose all prototype geometries across all LOD levels
-    for (const prototypes of this.prototypesByLod) {
+    // Dispose all prototype geometries across all detail levels
+    for (const prototypes of this.prototypesByDetail.values()) {
       for (const geometry of prototypes) {
         geometry.dispose();
       }
     }
-    this.prototypesByLod = [];
+    this.prototypesByDetail.clear();
 
     // Dispose material
     this.material.dispose();

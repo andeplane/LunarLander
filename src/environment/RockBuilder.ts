@@ -152,6 +152,8 @@ export class RockBuilder {
   /**
    * Create base geometry with IcosahedronGeometry and merge vertices.
    * This ensures uniform triangulation and no duplicate vertices.
+   * 
+   * Note: Triangle count follows formula 20*(detail+1)^2, not 20*4^detail.
    */
   private static createBaseGeometry(detail: number = 3): BufferGeometry {
     const baseGeometry = new IcosahedronGeometry(1, detail);

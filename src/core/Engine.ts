@@ -292,6 +292,7 @@ export class Engine {
       console.log(`Camera Rotation: x=${rot.x.toFixed(4)}, y=${rot.y.toFixed(4)}, z=${rot.z.toFixed(4)}`);
     }
 
+
     // Update flight controller
     if (this.flightController) {
       this.flightController.update(deltaTime);
@@ -314,6 +315,9 @@ export class Engine {
     
     // Update stats display
     this.updateStatsDisplay(deltaTime);
+    
+    // Increment frame counter
+    this.frameCount++;
   }
 
   /**

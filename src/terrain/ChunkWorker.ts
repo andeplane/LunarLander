@@ -321,11 +321,9 @@ self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
   const totalStart = performance.now();
 
   // Generate terrain geometry
-  console.log(`[ChunkWorker] ${gridKey} LOD${lodLevel}: Starting terrain generation (res=${terrainArgs.resolution})`);
   const terrainStart = performance.now();
   const geometry = generateTerrain(terrainArgs);
   const terrainTime = performance.now() - terrainStart;
-  console.log(`[ChunkWorker] ${gridKey} LOD${lodLevel}: Terrain done in ${terrainTime.toFixed(1)}ms`);
 
   // Extract terrain attributes
   const positions = geometry.attributes.position.array;
@@ -334,7 +332,6 @@ self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
 
   // Generate rock placements using world-space coordinates
   // Heights are sampled from already-generated vertex positions (fast, no duplicate computation)
-  console.log(`[ChunkWorker] ${gridKey} LOD${lodLevel}: Starting rock placement`);
   const rockStart = performance.now();
   const rockPlacements = generateRockPlacements(
     positions,
@@ -345,10 +342,8 @@ self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
   );
   const rockTime = performance.now() - rockStart;
   const rockCount = rockPlacements.reduce((sum, p) => sum + p.matrices.length / 16, 0);
-  console.log(`[ChunkWorker] ${gridKey} LOD${lodLevel}: Rocks done in ${rockTime.toFixed(1)}ms (${rockCount} rocks)`);
 
-  const totalTime = performance.now() - totalStart;
-  console.log(`[ChunkWorker] ${gridKey} LOD${lodLevel}: TOTAL ${totalTime.toFixed(1)}ms (terrain=${terrainTime.toFixed(1)}ms, rocks=${rockTime.toFixed(1)}ms)`);
+  // Removed console logs to reduce spam - use debug logs instead if needed
 
   // Build result
   const result: ChunkWorkerResult = {
