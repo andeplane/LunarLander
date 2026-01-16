@@ -305,6 +305,13 @@ export class Engine {
     // Update celestial system (sun, Earth, curvature)
     if (this.celestialSystem) {
       this.celestialSystem.update(this.camera.position, deltaTime);
+      
+      // Update sun direction for horizon occlusion in terrain shader
+      // Use getSunDirectionForTerrain() which gives direction TO the sun
+      if (this.chunkManager) {
+        const sunDirection = this.celestialSystem.getSunDirectionForTerrain();
+        this.chunkManager.setSunDirection(sunDirection);
+      }
     }
 
     // Update input manager (clear just-pressed keys)

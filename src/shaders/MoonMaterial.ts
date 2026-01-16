@@ -1,4 +1,4 @@
-import { MeshStandardMaterial, Color, Texture } from 'three';
+import { MeshStandardMaterial, Color, Texture, Vector3 } from 'three';
 import { glslCommon } from './glsl_common';
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 
@@ -68,6 +68,9 @@ export class MoonMaterial extends MeshStandardMaterial {
       shader.uniforms.uBrightnessBoost = { value: this.params.brightnessBoost };
       shader.uniforms.uEnableCurvature = { value: this.params.enableCurvature ? 1.0 : 0.0 };
       shader.uniforms.uPlanetRadius = { value: this.params.planetRadius };
+      
+      // Sun direction uniform for horizon occlusion
+      shader.uniforms.uSunDirection = { value: new Vector3(0, 1, 0) };
       
       // Texture uniform (optional)
       shader.uniforms.uTexture = { value: this.params.texture || null };
@@ -145,11 +148,18 @@ export class MoonMaterial extends MeshStandardMaterial {
         
         // Toggle uniforms
         uniform float uEnableColorVariation;
+        uniform float uEnableCurvature;
         
         // Color parameters
         uniform float uColorVariationFrequency;
         uniform float uBaseColorBlend;
         uniform float uBrightnessBoost;
+        
+        // Curvature parameters
+        uniform float uPlanetRadius;
+        
+        // Sun direction for horizon occlusion
+        uniform vec3 uSunDirection;
         
         // Texture uniforms (optional)
         uniform sampler2D uTexture;
@@ -212,7 +222,11 @@ export class MoonMaterial extends MeshStandardMaterial {
         diffuseColor.rgb *= finalColor * uBrightnessBoost;
         `
       );
-      
+
+      // ==========================================
+      // NOTE: Per-fragment horizon occlusion was removed because it affects ALL lights
+      // (including flashlight and spaceship lights), not just the sun.
+      // The global sun intensity fade in CelestialSystem handles the main horizon effect.
       // ==========================================
     };
   }
@@ -245,6 +259,18 @@ export class MoonMaterial extends MeshStandardMaterial {
   setParams(params: Partial<MoonMaterialParams>): void {
     Object.assign(this.params, params);
     this.updateUniforms();
+  }
+
+  /**
+   * Set sun direction for horizon occlusion calculation
+   * Should be called each frame with the current sun direction in world space
+   * 
+   * @param direction Sun direction vector (normalized, in world space)
+   */
+  setSunDirection(direction: Vector3): void {
+    if (this.shaderUniforms && this.shaderUniforms.uSunDirection) {
+      this.shaderUniforms.uSunDirection.value.copy(direction);
+    }
   }
 
   /**

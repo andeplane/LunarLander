@@ -237,9 +237,9 @@ export class CelestialSystem {
     this.scene.add(this.sunLight);
     
     // 2. Earthshine - weak reflected light from Earth
-    // Bluish tint, much weaker than sunlight
+    // Subtle blue-gray tint (less saturated than before), much weaker than sunlight
     const earthshineIntensity = this.config.sunIntensity * this.config.earthshineMultiplier;
-    this.earthLight = new THREE.DirectionalLight(0x8899ff, earthshineIntensity);
+    this.earthLight = new THREE.DirectionalLight(0xaabbcc, earthshineIntensity);
     this.earthLight.name = 'EarthLight';
     // Position will be updated each frame from Earth's world position
     this.scene.add(this.earthLight);
@@ -403,6 +403,26 @@ export class CelestialSystem {
     // Must be called AFTER curvature rotation is applied to container
     this.updateSunDirection();
     
+    // Calculate sun elevation relative to local horizon and fade light intensity
+    // This prevents light from reaching terrain when sun is below the virtual curved surface
+    const sunLength = this.sunWorldPos.length();
+    if (sunLength > 0.001) {
+      // Calculate elevation angle: y component normalized by distance
+      // Positive = above horizon, negative = below horizon
+      const sunElevation = this.sunWorldPos.y / sunLength;
+      
+      // Smooth fade from -0.1 (fully below) to 0.1 (fully above horizon)
+      // THREE.MathUtils.smoothstep signature is (x, min, max)
+      const horizonFade = THREE.MathUtils.smoothstep(sunElevation, -0.1, 0.1);
+      
+      // Apply fade to sun light intensity only
+      this.sunLight.intensity = this.config.sunIntensity * horizonFade;
+      
+      // DON'T fade earthshine with sun - Earth is a separate light source
+      // that may still be above the horizon when the sun is below
+      // Earthshine intensity remains constant based on config
+    }
+    
     // Update spaceship light to follow camera
     if (this.camera) {
       this.spaceshipLight.position.copy(this.camera.position);
@@ -563,10 +583,18 @@ export class CelestialSystem {
   }
   
   /**
-   * Get the sun direction in world space
+   * Get the sun direction in world space (from Earth to Sun, for Earth shader)
    */
   getSunDirection(): THREE.Vector3 {
     return this.sunDirection.clone();
+  }
+
+  /**
+   * Get the sun direction for terrain lighting (direction TO the sun from terrain surface)
+   * This is the normalized sun world position, representing the direction to the sun
+   */
+  getSunDirectionForTerrain(): THREE.Vector3 {
+    return this.sunWorldPos.clone().normalize();
   }
   
   /**
