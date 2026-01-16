@@ -173,6 +173,7 @@ function setupHeightSampler(terrainArgs: TerrainArgs): void {
 /**
  * Sample terrain height by calling the terrain evaluator directly.
  * Uses the exact same function as generateTerrain - just for a single point.
+ * IMPORTANT: Must apply the same strength multiplier as displaceY() in terrain.ts
  */
 function sampleHeightFromVertices(
   _positions: ArrayLike<number>,
@@ -180,7 +181,8 @@ function sampleHeightFromVertices(
   _chunkWidth: number,
   _chunkDepth: number,
   x: number,
-  z: number
+  z: number,
+  smoothLowerPlanes: number
 ): number {
   if (!cachedTerrainEvaluator) {
     return 0; // Fallback if not set up
@@ -188,7 +190,11 @@ function sampleHeightFromVertices(
 
   // Call terrain evaluator directly (x, z are already in local chunk space)
   const result = cachedTerrainEvaluator(x, z);
-  return result.y;
+  
+  // Apply the same strength multiplier as displaceY() in terrain.ts
+  // This ensures rock height matches actual terrain mesh height
+  const strength = 2.8 * (1 - smoothLowerPlanes * 0.5);
+  return result.y * strength;
 }
 
 /**
@@ -256,14 +262,18 @@ function generateRockPlacements(
       chunkWidth,
       chunkDepth,
       localX,
-      localZ
+      localZ,
+      terrainArgs.smoothLowerPlanes
     );
 
     // Scale based on diameter (base rock geometry is 1m)
     const scale = diameter;
 
-    // Offset Y slightly so rock sits on surface, not buried
-    const offsetY = diameter * 0.3;
+    // Rock geometry is centered at origin with Y-scale of 0.7 baked in
+    // So rock extends from -0.35*diameter to +0.35*diameter in Y
+    // To place rock's bottom at terrain height, offset by +0.35*diameter
+    // Then subtract 20% to partially bury it: 0.35 - 0.2 = 0.15
+    const offsetY = diameter * 0.15;
     const finalY = y + offsetY;
 
     // Compute transform matrix
