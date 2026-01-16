@@ -277,6 +277,26 @@ export class ChunkManager {
       }
     }
 
+    // Update all existing rock meshes
+    for (const [gridKey, chunk] of this.chunks.entries()) {
+      for (let lodLevel = 0; lodLevel < chunk.getLodLevelCount(); lodLevel++) {
+        const rockMeshes = chunk.getRockMeshes(lodLevel);
+        for (const rockMesh of rockMeshes) {
+          const oldMaterial = rockMesh.material;
+
+          // Only dispose debug materials (MeshBasicMaterial), never the shared RockMaterial
+          if (oldMaterial instanceof MeshBasicMaterial) {
+            oldMaterial.dispose();
+          }
+
+          // Create new material
+          rockMesh.material = this.debugMode
+            ? new MeshBasicMaterial({ wireframe: true, color: this.generateChunkColor(gridKey) })
+            : this.rockManager.getMaterial();
+        }
+      }
+    }
+
     console.log(`Debug wireframe mode: ${this.debugMode ? 'ON' : 'OFF'}`);
   }
 
