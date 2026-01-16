@@ -24,6 +24,8 @@ export class RockManager {
   private chunkWidth: number;
   private chunkDepth: number;
   private lodLevels: number[];
+  private renderDistance: number;
+  private planetRadius: number;
 
   /**
    * Calculate terrain triangle area for a given LOD level.
@@ -100,24 +102,30 @@ export class RockManager {
    * @param chunkWidth - Chunk width in meters (default: 100)
    * @param chunkDepth - Chunk depth in meters (default: 100)
    * @param lodLevels - Terrain LOD resolution levels (default: [1024, 512, 256, 128, 64, 32, 16, 8, 4])
+   * @param renderDistance - Maximum chunks to load in each direction (default: 20)
+   * @param planetRadius - Planet radius for curvature calculations (default: 5000)
    */
   constructor(
     librarySize: number = 30,
     chunkWidth: number = 100,
     chunkDepth: number = 100,
-    lodLevels: number[] = [1024, 512, 256, 128, 64, 32, 16, 8, 4]
+    lodLevels: number[] = [1024, 512, 256, 128, 64, 32, 16, 8, 4],
+    renderDistance: number = 20,
+    planetRadius: number = DEFAULT_PLANET_RADIUS
   ) {
     this.librarySize = librarySize;
     this.chunkWidth = chunkWidth;
     this.chunkDepth = chunkDepth;
     this.lodLevels = lodLevels;
+    this.renderDistance = renderDistance;
+    this.planetRadius = planetRadius;
 
     // Create shared material for all rocks with curvature support
     // Use MoonMaterial so rocks match terrain appearance
     this.material = new MoonMaterial();
     this.material.setParam('enableColorVariation', true); // Match terrain
     this.material.setParam('enableCurvature', true);
-    this.material.setParam('planetRadius', DEFAULT_PLANET_RADIUS);
+    this.material.setParam('planetRadius', planetRadius);
 
     // Generate LOD-based prototype libraries at startup
     this.generatePrototypeLibraries();
@@ -199,6 +207,24 @@ export class RockManager {
 
       // Mark instance matrix as needing update
       mesh.instanceMatrix.needsUpdate = true;
+
+      // Compute bounding sphere for frustum culling
+      mesh.computeBoundingSphere();
+
+      // Expand bounding sphere to account for vertex shader curvature transformation
+      if (this.material.getParam('enableCurvature') && mesh.boundingSphere) {
+        // Calculate maximum camera distance: render distance * chunk width + original bounding sphere radius
+        const maxCameraDistance = this.renderDistance * this.chunkWidth 
+                                + (mesh.boundingSphere.radius ?? 50);
+        
+        // Maximum curvature drop based on maximum possible camera distance
+        // Formula: drop = distance² / (2 * planetRadius)
+        const maxCurvatureDrop = (maxCameraDistance * maxCameraDistance) / (2 * this.planetRadius);
+
+        // Expand bounding sphere to encompass transformed geometry
+        mesh.boundingSphere.center.y -= maxCurvatureDrop / 2;
+        mesh.boundingSphere.radius += maxCurvatureDrop / 2;
+      }
 
       // Enable frustum culling per instance
       mesh.frustumCulled = true;

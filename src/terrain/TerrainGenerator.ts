@@ -10,6 +10,8 @@ import type { NeighborLods } from './LodUtils';
 export interface TerrainGeneratorConfig {
   chunkWidth: number;
   chunkDepth: number;
+  renderDistance: number;  // Maximum chunks to load in each direction
+  planetRadius: number;    // Planet radius for curvature calculations
 }
 
 /**
@@ -66,15 +68,16 @@ export class TerrainGenerator {
 
     // Expand bounding sphere to account for vertex shader curvature transformation
     if (!debugMode && this.material.getParam('enableCurvature')) {
-      const planetRadius = this.material.getParam('planetRadius');
+      const planetRadius = this.config.planetRadius;
 
-      // Calculate maximum distance from chunk center to corner in XZ plane
-      const halfWidth = this.config.chunkWidth / 2;
-      const halfDepth = this.config.chunkDepth / 2;
-      const maxDist = Math.sqrt(halfWidth * halfWidth + halfDepth * halfDepth);
-
-      // Maximum curvature drop occurs at the furthest corner from camera
-      const maxCurvatureDrop = (maxDist * maxDist) / (2 * planetRadius);
+      // Calculate maximum camera distance: render distance * chunk width + original bounding sphere radius
+      // This accounts for chunks at the edge of visibility
+      const maxCameraDistance = this.config.renderDistance * this.config.chunkWidth 
+                              + (geometry.boundingSphere?.radius ?? 50);
+      
+      // Maximum curvature drop based on maximum possible camera distance
+      // Formula: drop = distance² / (2 * planetRadius)
+      const maxCurvatureDrop = (maxCameraDistance * maxCameraDistance) / (2 * planetRadius);
 
       // Expand bounding sphere to encompass transformed geometry
       if (geometry.boundingSphere) {

@@ -10,6 +10,7 @@ import { RockManager } from './environment/RockManager';
 import { LodDetailLevel } from './terrain/LodUtils';
 import { ShaderUIController } from './ui/ShaderUIController';
 import type { CameraConfig } from './types';
+import { DEFAULT_PLANET_RADIUS } from './core/EngineSettings';
 
 /**
  * Main entry point for Lunar Explorer
@@ -56,12 +57,16 @@ const chunkConfig: ChunkConfig = {
 const terrainGenerator = new TerrainGenerator({
   chunkWidth: chunkConfig.chunkWidth,
   chunkDepth: chunkConfig.chunkDepth,
+  renderDistance: chunkConfig.renderDistance,
+  planetRadius: DEFAULT_PLANET_RADIUS,
 });
 const rockManager = new RockManager(
   30, // 30 rock prototypes per LOD
   chunkConfig.chunkWidth,
   chunkConfig.chunkDepth,
-  chunkConfig.lodLevels
+  chunkConfig.lodLevels,
+  chunkConfig.renderDistance,
+  DEFAULT_PLANET_RADIUS
 );
 
 // Initialize chunk manager (orchestrates terrain + rocks)
