@@ -42,10 +42,13 @@ export class Engine {
   private frameCount: number = 0;
   private fpsUpdateTime: number = 0;
   private currentFPS: number = 0;
-  private lastTriangleCount: number = 0;
-  private lastDrawCalls: number = 0;
+  private lastTriangleCount: number | null = null; // null means not yet measured
+  private lastDrawCalls: number | null = null; // null means not yet measured
   private statsUpdateCounter: number = 0;
   private readonly STATS_UPDATE_INTERVAL: number = 30; // Update stats every 30 frames
+  
+  // Offscreen render target for stats collection (prevents visual glitches)
+  private statsRenderTarget: THREE.WebGLRenderTarget;
 
   constructor(canvas: HTMLCanvasElement) {
     // Initialize renderer
@@ -88,6 +91,13 @@ export class Engine {
     // Output pass - applies tone mapping and color space conversion
     const outputPass = new OutputPass();
     this.composer.addPass(outputPass);
+
+    // Initialize offscreen render target for stats collection
+    // This prevents visual glitches when collecting stats
+    this.statsRenderTarget = new THREE.WebGLRenderTarget(
+      window.innerWidth,
+      window.innerHeight
+    );
 
     // Handle window resize
     window.addEventListener('resize', () => this.handleResize());
@@ -167,8 +177,8 @@ export class Engine {
       <br>
       <strong>Render</strong><br>
       FPS: ${this.currentFPS}<br>
-      Draw Calls: ${this.lastDrawCalls}<br>
-      Triangles: ${this.lastTriangleCount.toLocaleString()}<br>
+      Draw Calls: ${this.lastDrawCalls !== null ? this.lastDrawCalls : '...'}<br>
+      Triangles: ${this.lastTriangleCount !== null ? this.lastTriangleCount.toLocaleString() : '...'}<br>
       <br>
       <strong>Terrain</strong><br>
       Chunks: ${chunks} (queue: ${buildQueue})<br>
@@ -317,11 +327,21 @@ export class Engine {
     if (this.statsUpdateCounter >= this.STATS_UPDATE_INTERVAL) {
       this.statsUpdateCounter = 0;
       
-      // Reset renderer info and render directly to get accurate stats
+      // Reset renderer info and render to offscreen target to get accurate stats
+      // This prevents visual glitches since we're not rendering to the main canvas
       this.renderer.info.reset();
+      
+      // Save current render target
+      const previousRenderTarget = this.renderer.getRenderTarget();
+      
+      // Render to offscreen target for stats collection
+      this.renderer.setRenderTarget(this.statsRenderTarget);
       this.renderer.render(this.scene, this.camera);
       
-      // Read render stats after direct rendering
+      // Restore previous render target (null = main canvas)
+      this.renderer.setRenderTarget(previousRenderTarget);
+      
+      // Read render stats after offscreen rendering
       // In wireframe mode, Three.js counts lines instead of triangles.
       // We add render.lines / 3 to account for triangles rendered as wireframes.
       this.lastDrawCalls = this.renderer.info.render.calls;
@@ -346,6 +366,9 @@ export class Engine {
     
     // Update bloom pass resolution
     this.bloomPass.resolution.set(width, height);
+    
+    // Update stats render target size
+    this.statsRenderTarget.setSize(width, height);
   }
 
   /**
@@ -362,6 +385,7 @@ export class Engine {
     if (this.statsElement) {
       this.statsElement.remove();
     }
+    this.statsRenderTarget.dispose();
     this.composer.dispose();
     this.renderer.dispose();
   }
