@@ -213,13 +213,19 @@ export class RockManager {
 
       // Expand bounding sphere to account for vertex shader curvature transformation
       if (this.material.getParam('enableCurvature') && mesh.boundingSphere) {
-        // Calculate maximum camera distance: render distance * chunk width + original bounding sphere radius
-        const maxCameraDistance = this.renderDistance * this.chunkWidth 
-                                + (mesh.boundingSphere.radius ?? 50);
+        // Calculate maximum possible distance from camera to any vertex
+        // Worst case: camera at one corner of its chunk, vertex at opposite corner of furthest chunk
+        // Chunks are centered at integer multiples, so furthest chunk center is at renderDistance chunks away
+        // Camera can be at (-chunkWidth/2, -chunkDepth/2), vertex at (renderDistance*chunkWidth + chunkWidth/2, renderDistance*chunkDepth + chunkDepth/2)
+        // Distance = (renderDistance + 1) * chunkWidth in each dimension
+        const maxChunkDistance = Math.sqrt(
+          Math.pow((this.renderDistance + 1) * this.chunkWidth, 2) +
+          Math.pow((this.renderDistance + 1) * this.chunkDepth, 2)
+        );
         
         // Maximum curvature drop based on maximum possible camera distance
         // Formula: drop = distance² / (2 * planetRadius)
-        const maxCurvatureDrop = (maxCameraDistance * maxCameraDistance) / (2 * this.planetRadius);
+        const maxCurvatureDrop = (maxChunkDistance * maxChunkDistance) / (2 * this.planetRadius);
 
         // Expand bounding sphere to encompass transformed geometry
         mesh.boundingSphere.center.y -= maxCurvatureDrop / 2;

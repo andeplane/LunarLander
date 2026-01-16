@@ -70,14 +70,19 @@ export class TerrainGenerator {
     if (!debugMode && this.material.getParam('enableCurvature')) {
       const planetRadius = this.config.planetRadius;
 
-      // Calculate maximum camera distance: render distance * chunk width + original bounding sphere radius
-      // This accounts for chunks at the edge of visibility
-      const maxCameraDistance = this.config.renderDistance * this.config.chunkWidth 
-                              + (geometry.boundingSphere?.radius ?? 50);
+      // Calculate maximum possible distance from camera to any vertex
+      // Worst case: camera at one corner of its chunk, vertex at opposite corner of furthest chunk
+      // Chunks are centered at integer multiples, so furthest chunk center is at renderDistance chunks away
+      // Camera can be at (-chunkWidth/2, -chunkDepth/2), vertex at (renderDistance*chunkWidth + chunkWidth/2, renderDistance*chunkDepth + chunkDepth/2)
+      // Distance = (renderDistance + 1) * chunkWidth in each dimension
+      const maxChunkDistance = Math.sqrt(
+        Math.pow((this.config.renderDistance + 1) * this.config.chunkWidth, 2) +
+        Math.pow((this.config.renderDistance + 1) * this.config.chunkDepth, 2)
+      );
       
       // Maximum curvature drop based on maximum possible camera distance
       // Formula: drop = distance² / (2 * planetRadius)
-      const maxCurvatureDrop = (maxCameraDistance * maxCameraDistance) / (2 * planetRadius);
+      const maxCurvatureDrop = (maxChunkDistance * maxChunkDistance) / (2 * planetRadius);
 
       // Expand bounding sphere to encompass transformed geometry
       if (geometry.boundingSphere) {
