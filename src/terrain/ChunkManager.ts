@@ -27,7 +27,7 @@ export interface ChunkConfig {
   lodDetailLevel: LodDetailLevel;
   /** Debug mode: render wireframe triangles with different color per chunk */
   debugWireframe?: boolean;
-  /** Number of terrain generation workers (default: 3) */
+  /** Number of terrain generation workers (default: auto-detected from CPU cores, capped at 8) */
   workerCount?: number;
 }
 
@@ -166,7 +166,12 @@ export class ChunkManager {
   }
 
   private setupWorkers(): void {
-    const count = Math.max(1, this.config.workerCount ?? 3);
+    // Use hardwareConcurrency if available, with reasonable defaults and caps
+    const defaultWorkerCount = typeof navigator !== 'undefined' && navigator.hardwareConcurrency
+      ? Math.max(2, Math.min(navigator.hardwareConcurrency - 1, 8)) // Leave 1 core for main thread, cap at 8
+      : 3; // Fallback for browsers without hardwareConcurrency
+    
+    const count = Math.max(1, this.config.workerCount ?? defaultWorkerCount);
 
     for (let i = 0; i < count; i++) {
       const worker = new Worker(

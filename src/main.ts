@@ -49,7 +49,7 @@ const chunkConfig: ChunkConfig = {
   chunkDepth: 100,       // World units per chunk
   lodLevels: [1024, 512, 256, 128, 64, 32, 16, 8, 4], // Resolution levels (highest to lowest)
   lodDetailLevel: LodDetailLevel.Balanced,   // Target screen-space triangle size
-  workerCount: 3,        // 1 high-priority + 2 normal workers
+  workerCount: undefined, // Auto-detect from CPU cores (default: hardwareConcurrency - 1, capped at 8)
 };
 
 // Initialize terrain generator and rock manager
