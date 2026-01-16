@@ -228,6 +228,14 @@ export class ChunkManager {
       const rockMeshes = this.rockManager.createRockMeshes(result.rockPlacements, lodLevel);
       for (const rockMesh of rockMeshes) {
         chunk.addRockMesh(rockMesh, lodLevel);
+        
+        // Apply debug material if debug mode is active
+        if (this.debugMode) {
+          rockMesh.material = new MeshBasicMaterial({ 
+            wireframe: true, 
+            color: this.generateChunkColor(gridKey) 
+          });
+        }
       }
     }
 
