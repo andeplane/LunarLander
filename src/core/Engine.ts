@@ -49,6 +49,11 @@ export class Engine {
   
   // Offscreen render target for stats collection (prevents visual glitches)
   private statsRenderTarget: THREE.WebGLRenderTarget;
+  
+  // Camera state tracking for render optimization
+  private previousCameraPosition: THREE.Vector3 = new THREE.Vector3();
+  private previousCameraQuaternion: THREE.Quaternion = new THREE.Quaternion();
+  private needsRender: boolean = true; // Always render first frame
 
   constructor(canvas: HTMLCanvasElement) {
     // Initialize renderer
@@ -104,6 +109,10 @@ export class Engine {
     
     // Create stats display
     this.createStatsDisplay();
+    
+    // Initialize camera tracking state
+    this.previousCameraPosition.copy(this.camera.position);
+    this.previousCameraQuaternion.copy(this.camera.quaternion);
   }
 
   /**
@@ -237,6 +246,30 @@ export class Engine {
   }
 
   /**
+   * Check if camera has moved since last frame
+   * Uses epsilon comparison for position and quaternion dot product for rotation
+   */
+  private hasCameraChanged(): boolean {
+    const POSITION_EPSILON = 0.0001; // meters
+    const ROTATION_THRESHOLD = 0.9999; // quaternion dot product threshold
+    
+    // Check position change
+    const positionDelta = this.camera.position.distanceTo(this.previousCameraPosition);
+    if (positionDelta > POSITION_EPSILON) {
+      return true;
+    }
+    
+    // Check rotation change using quaternion dot product
+    // Dot product of identical quaternions is 1.0
+    const rotationDot = Math.abs(this.camera.quaternion.dot(this.previousCameraQuaternion));
+    if (rotationDot < ROTATION_THRESHOLD) {
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
    * Start the render loop
    */
   start(): void {
@@ -330,6 +363,12 @@ export class Engine {
    * Render loop (called every frame)
    */
   private render(): void {
+    // Check if camera has moved - skip rendering if unchanged
+    const cameraChanged = this.hasCameraChanged();
+    if (!this.needsRender && !cameraChanged) {
+      return;
+    }
+    
     // Update stats periodically (every N frames) to avoid double rendering every frame
     // EffectComposer uses render targets which don't update renderer.info correctly,
     // so we need to render directly occasionally to get accurate stats
@@ -358,8 +397,13 @@ export class Engine {
       this.lastTriangleCount = Math.round(this.renderer.info.render.triangles + this.renderer.info.render.lines / 3);
     }
     
-    // Render with post-processing composer for final output (every frame)
+    // Render with post-processing composer for final output
     this.composer.render(this.deltaTime);
+    
+    // Update previous camera state after rendering
+    this.previousCameraPosition.copy(this.camera.position);
+    this.previousCameraQuaternion.copy(this.camera.quaternion);
+    this.needsRender = false;
   }
 
   /**
@@ -379,6 +423,9 @@ export class Engine {
     
     // Update stats render target size
     this.statsRenderTarget.setSize(width, height);
+    
+    // Force re-render after resize
+    this.needsRender = true;
   }
 
   /**
