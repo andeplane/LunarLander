@@ -93,23 +93,19 @@ export class Chunk {
 
   /**
    * Set the active LOD level and update mesh visibility
+   * Note: Rock visibility is controlled separately based on bounding sphere screen space size.
    */
   setLodLevel(lodLevel: number): void {
     this.currentLodLevel = lodLevel;
 
-    // Set visibility: only the active LOD level meshes are visible
+    // Set visibility: only the active LOD level terrain meshes are visible
+    // Rock visibility is controlled by ChunkManager.updateRockVisibility() based on screen space size
     for (let i = 0; i < this.lodLevelCount; i++) {
       const isActive = i === lodLevel;
 
       const terrainMesh = this.terrainMeshes[i];
       if (terrainMesh) {
         terrainMesh.visible = isActive;
-      }
-
-      // Set visibility on all rock meshes at this LOD level
-      const rockMeshes = this.rockMeshes[i];
-      for (const rockMesh of rockMeshes) {
-        rockMesh.visible = isActive;
       }
     }
   }
