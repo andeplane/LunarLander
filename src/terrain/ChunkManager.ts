@@ -1,9 +1,10 @@
-import { Scene, Vector3, Camera, PerspectiveCamera, MeshBasicMaterial, Color, Matrix4 } from 'three';
+import { Scene, Vector3, Camera, PerspectiveCamera, MeshBasicMaterial, Color } from 'three';
 import { Chunk } from './Chunk';
 import { TerrainGenerator } from './TerrainGenerator';
 import { RockManager } from '../environment/RockManager';
 import type { TerrainArgs } from './terrain';
 import type { ChunkWorkerResult } from './ChunkWorker';
+import type { RockGenerationConfig } from '../types';
 import {
   getNeighborKeys,
   parseGridKey,
@@ -65,6 +66,7 @@ export class ChunkManager {
   private config: ChunkConfig;
   private terrainGenerator: TerrainGenerator;
   private rockManager: RockManager;
+  private rockGenerationConfig: RockGenerationConfig;
   private baseTerrainArgs: Omit<TerrainArgs, 'resolution' | 'posX' | 'posZ'>;
   private camera: Camera | null = null;
   private cameraForward: Vector3 = new Vector3();
@@ -77,12 +79,14 @@ export class ChunkManager {
     config: ChunkConfig,
     terrainGenerator: TerrainGenerator,
     rockManager: RockManager,
+    rockGenerationConfig: RockGenerationConfig,
     requestRender: () => void
   ) {
     this.scene = scene;
     this.config = config;
     this.terrainGenerator = terrainGenerator;
     this.rockManager = rockManager;
+    this.rockGenerationConfig = rockGenerationConfig;
     this.requestRender = requestRender;
     this.debugMode = config.debugWireframe ?? false;
 
@@ -378,6 +382,7 @@ export class ChunkManager {
           gridKey: request.gridKey,
           lodLevel: request.lodLevel,
           rockLibrarySize: this.rockManager.getLibrarySize(),
+          rockConfig: this.rockGenerationConfig,
         });
       }
     }

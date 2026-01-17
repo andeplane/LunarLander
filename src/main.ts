@@ -9,7 +9,7 @@ import { TerrainGenerator } from './terrain/TerrainGenerator';
 import { RockManager } from './environment/RockManager';
 import { LodDetailLevel } from './terrain/LodUtils';
 import { ShaderUIController } from './ui/ShaderUIController';
-import type { CameraConfig } from './types';
+import type { CameraConfig, RockGenerationConfig } from './types';
 import { TextureLoader, MirroredRepeatWrapping, SRGBColorSpace, Texture, LinearMipmapLinearFilter, LinearFilter } from 'three';
 import { DEFAULT_PLANET_RADIUS } from './core/EngineSettings';
 
@@ -46,12 +46,23 @@ const cameraConfig: CameraConfig = {
 
 // Chunk configuration
 const chunkConfig: ChunkConfig = {
-  renderDistance: 20,    // Chunks to load in each direction
-  chunkWidth: 100,       // World units per chunk
-  chunkDepth: 100,       // World units per chunk
+  renderDistance: 10,    // Chunks to load in each direction
+  chunkWidth: 400,       // World units per chunk
+  chunkDepth: 400,       // World units per chunk
   lodLevels: [1024, 512, 256, 128, 64, 32, 16, 8, 4], // Resolution levels (highest to lowest)
   lodDetailLevel: LodDetailLevel.Balanced,   // Target screen-space triangle size
   workerCount: undefined, // Auto-detect from CPU cores (default: hardwareConcurrency - 1, capped at 8)
+};
+
+// Rock generation configuration (scientific lunar distribution from Rüsch et al. 2024)
+// N(>D) = densityConstant * D^powerLawExponent gives rocks per m² above diameter D
+const rockGeneration: RockGenerationConfig = {
+  minDiameter: 0.75,           // Smallest visible rock (meters) - affects total density
+  maxDiameter: 10.0,          // Largest boulders (meters)
+  densityConstant: 0.0005,    // N(>1m) per m² (500 per km² for mature lunar terrain)
+  powerLawExponent: -2.5,     // Size-frequency exponent (scientific lunar value)
+  // LOD scaling - rocks smaller than minDiameter * scale are hidden at that LOD
+  lodMinDiameterScale: [1.0, 1.0, 1.0, 2.0, 4.0, 6.0],
 };
 
 // Initialize terrain generator and rock manager
@@ -76,6 +87,7 @@ const chunkManager = new ChunkManager(
   chunkConfig,
   terrainGenerator,
   rockManager,
+  rockGeneration,
   () => engine.requestRender()
 );
 chunkManager.setCamera(engine.getCamera());

@@ -28,33 +28,6 @@ export class RockManager {
   private planetRadius: number;
 
   /**
-   * Calculate terrain triangle area for a given LOD level.
-   */
-  private static getTerrainTriangleArea(
-    lodLevel: number,
-    chunkWidth: number,
-    chunkDepth: number,
-    lodLevels: number[]
-  ): number {
-    const resolution = lodLevels[lodLevel] ?? lodLevels[lodLevels.length - 1];
-    const trianglesPerChunk = 2 * resolution * resolution;
-    return (chunkWidth * chunkDepth) / trianglesPerChunk;
-  }
-
-  /**
-   * Calculate rock triangle area for icosahedron detail level.
-   * 
-   * Note: The actual triangle count formula is 20*(detail+1)^2, NOT 20*4^detail.
-   * This is because the geometry uses a quadratic subdivision pattern.
-   */
-  private static getRockTriangleArea(detail: number, rockDiameter: number): number {
-    // Actual formula: 20 * (detail + 1)^2
-    const triangles = 20 * Math.pow(detail + 1, 2);
-    const surfaceArea = Math.PI * Math.pow(rockDiameter / 2, 2);
-    return surfaceArea / triangles;
-  }
-
-  /**
    * Get triangle count for a given detail level.
    * Formula: 20 * (detail + 1)^2
    */
@@ -267,6 +240,16 @@ export class RockManager {
     const prototypes = this.prototypesByDetail.get(detail) ?? this.prototypesByDetail.get(7);
     if (!prototypes) return undefined;
     return prototypes[index % prototypes.length];
+  }
+
+  /**
+   * Get all prototype geometries for a given detail level.
+   * Used by GlobalRockBatcher for instanced rendering.
+   * 
+   * @param detailLevel - Detail level (7, 10, or 15)
+   */
+  getPrototypesForDetail(detailLevel: number): BufferGeometry[] | undefined {
+    return this.prototypesByDetail.get(detailLevel);
   }
 
   /**

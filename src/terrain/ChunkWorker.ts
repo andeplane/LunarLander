@@ -1,7 +1,6 @@
 import { generateTerrain, createTerrainEvaluator, type TerrainArgs } from './terrain';
 import alea from 'alea';
-import { BufferGeometry, BufferAttribute, Float32BufferAttribute, Mesh, MeshBasicMaterial, Raycaster, Vector3 } from 'three';
-import { generateGridIndices } from './EdgeStitcher';
+import type { RockGenerationConfig } from '../types';
 
 /**
  * Message sent to the chunk worker
@@ -11,6 +10,7 @@ export interface ChunkWorkerMessage {
   gridKey: string;
   lodLevel: number;
   rockLibrarySize: number;
+  rockConfig: RockGenerationConfig;
 }
 
 /**
@@ -42,57 +42,71 @@ export interface ChunkWorkerResult {
 }
 
 // ============================================================================
-// Rock Distribution Parameters (Scientific lunar distribution)
-// ============================================================================
-
-/** Minimum rock diameter in meters - increased for visibility */
-const D_MIN = 0.5;
-
-/** Maximum rock diameter in meters (rare large boulders) */
-const D_MAX = 5.0;
-
-/** Power-law exponent for size-frequency distribution */
-const POWER_LAW_EXPONENT = -2.5;
-
-/** LOD-based minimum diameter thresholds - more generous for visibility */
-const LOD_MIN_DIAMETERS: number[] = [
-  0.1,   // LOD 0: Show rocks >= 10cm
-  0.2,   // LOD 1: Show rocks >= 20cm
-  0.5,   // LOD 2: Show rocks >= 50cm
-  1.0,   // LOD 3: Show rocks >= 1m
-  2.0,   // LOD 4: Show rocks >= 2m
-  3.0,   // LOD 5+: Show rocks >= 3m
-];
-
-// ============================================================================
-// Power-Law Distribution Sampling
+// Scientific Rock Distribution (Rüsch et al. 2024)
 // ============================================================================
 
 /**
- * Sample a rock diameter from the power-law distribution.
- * N(>D) = A * D^-2.5 (cumulative size-frequency distribution)
+ * Calculate expected rock count per m² above a given diameter.
+ * Uses power-law: N(>D) = A * D^exponent
  * 
- * Uses inverse CDF sampling:
- * D = [ Dmin^exp + u * (Dmax^exp - Dmin^exp) ]^(1/exp)
+ * @param diameter - Minimum rock diameter in meters
+ * @param densityConstant - A in formula (rocks per m² at D=1m)
+ * @param exponent - Power-law exponent (typically -2.5)
  */
-function sampleRockDiameter(random: () => number): number {
-  const u = random();
-  const exp = POWER_LAW_EXPONENT;
-
-  const dMinPow = Math.pow(D_MIN, exp);
-  const dMaxPow = Math.pow(D_MAX, exp);
-
-  return Math.pow(dMinPow + u * (dMaxPow - dMinPow), 1 / exp);
+function rockDensityAbove(diameter: number, densityConstant: number, exponent: number): number {
+  return densityConstant * Math.pow(diameter, exponent);
 }
 
 /**
- * Get minimum rock diameter for a given LOD level
+ * Calculate expected rocks per chunk for a given minimum diameter.
  */
-function getMinDiameterForLod(lodLevel: number): number {
-  if (lodLevel >= LOD_MIN_DIAMETERS.length) {
-    return LOD_MIN_DIAMETERS[LOD_MIN_DIAMETERS.length - 1];
-  }
-  return LOD_MIN_DIAMETERS[lodLevel];
+function expectedRocksPerChunk(
+  minDiameter: number,
+  chunkArea: number,
+  densityConstant: number,
+  exponent: number
+): number {
+  const density = rockDensityAbove(minDiameter, densityConstant, exponent);
+  return Math.round(density * chunkArea);
+}
+
+/**
+ * Sample a rock diameter from the truncated power-law distribution.
+ * N(>D) = A * D^exponent (cumulative size-frequency distribution)
+ * 
+ * Uses inverse CDF sampling:
+ * D = [ Dmin^exp + u * (Dmax^exp - Dmin^exp) ]^(1/exp)
+ * 
+ * @param random - Random number generator function
+ * @param dMin - Minimum diameter for this LOD
+ * @param dMax - Maximum diameter (rare large boulders)
+ * @param exponent - Power-law exponent
+ */
+function sampleRockDiameter(
+  random: () => number,
+  dMin: number,
+  dMax: number,
+  exponent: number
+): number {
+  const u = random();
+
+  const dMinPow = Math.pow(dMin, exponent);
+  const dMaxPow = Math.pow(dMax, exponent);
+
+  return Math.pow(dMinPow + u * (dMaxPow - dMinPow), 1 / exponent);
+}
+
+/**
+ * Get minimum rock diameter for a given LOD level based on config.
+ */
+function getMinDiameterForLod(
+  lodLevel: number,
+  baseMinDiameter: number,
+  lodMinDiameterScale: number[]
+): number {
+  const scaleIndex = Math.min(lodLevel, lodMinDiameterScale.length - 1);
+  const scale = lodMinDiameterScale[scaleIndex];
+  return baseMinDiameter * scale;
 }
 
 // ============================================================================
@@ -155,9 +169,6 @@ function composeMatrix(
 // Rock Placement Generation (World-Space, LOD-Stable)
 // ============================================================================
 
-/** Number of rock candidates to generate per chunk (same at all LODs) */
-const ROCK_CANDIDATES_PER_CHUNK = 100;
-
 // Terrain evaluator cached per chunk (reuses exact same logic as generateTerrain)
 let cachedTerrainEvaluator: ((x: number, z: number) => {y: number; biome: number[]}) | null = null;
 
@@ -198,47 +209,66 @@ function sampleHeightFromVertices(
 }
 
 /**
- * Generate rock placements for a chunk using world-space positions.
+ * Generate rock placements for a chunk using scientific lunar distribution.
  * 
- * Key insight: Generate the SAME rock candidates at all LOD levels using
- * deterministic RNG based on chunk key. LOD only affects filtering by size.
- * Heights are sampled from already-generated terrain vertices (fast, no duplicate computation).
- * This ensures rocks never change position when LOD changes - they only
- * appear/disappear based on size threshold.
+ * Uses power-law distribution N(>D) = A * D^-2.5 to calculate expected rock count
+ * for the LOD's minimum diameter, then generates exactly that many rocks.
+ * 
+ * All rocks generated are visible at this LOD (no wasteful filtering).
+ * Diameters are sampled from truncated power-law [lodMinDiam, maxDiam].
  */
 function generateRockPlacements(
   positions: ArrayLike<number>,
   terrainArgs: TerrainArgs,
   lodLevel: number,
   gridKey: string,
-  rockLibrarySize: number
+  rockLibrarySize: number,
+  rockConfig: RockGenerationConfig
 ): RockPlacement[] {
   // Create seeded random generator based on grid key
   const seed = hashString(gridKey);
   const random = alea(seed);
 
-  const minDiameter = getMinDiameterForLod(lodLevel);
   const chunkWidth = terrainArgs.width;
   const chunkDepth = terrainArgs.depth;
+  const chunkArea = chunkWidth * chunkDepth;
   const resolution = terrainArgs.resolution;
 
-  // Setup height sampler ONCE for all rocks in this chunk (creates terrain evaluator, reuses exact same logic)
+  // Get LOD-specific minimum diameter
+  const lodMinDiameter = getMinDiameterForLod(
+    lodLevel,
+    rockConfig.minDiameter,
+    rockConfig.lodMinDiameterScale
+  );
+
+  // Calculate expected rock count using scientific distribution
+  const rockCount = expectedRocksPerChunk(
+    lodMinDiameter,
+    chunkArea,
+    rockConfig.densityConstant,
+    rockConfig.powerLawExponent
+  );
+
+  // Setup height sampler ONCE for all rocks in this chunk
   setupHeightSampler(terrainArgs);
 
   // Group placements by prototype ID
   const placementsByPrototype: Map<number, Float32Array[]> = new Map();
 
-  // Generate ALL rock candidates (same at every LOD level)
-  // The RNG sequence is identical regardless of LOD
-  for (let i = 0; i < ROCK_CANDIDATES_PER_CHUNK; i++) {
+  // Generate exactly the expected number of rocks for this LOD
+  // All generated rocks are visible (no filtering needed)
+  for (let i = 0; i < rockCount; i++) {
     // Generate position in local chunk space (centered at origin)
-    // These positions are the SAME at all LOD levels
     const localX = (random() - 0.5) * chunkWidth;
     const localZ = (random() - 0.5) * chunkDepth;
 
-    // Sample rock diameter from power-law distribution
-    // This is also deterministic from the RNG sequence
-    const diameter = sampleRockDiameter(random);
+    // Sample rock diameter from truncated power-law [lodMinDiam, maxDiam]
+    const diameter = sampleRockDiameter(
+      random,
+      lodMinDiameter,
+      rockConfig.maxDiameter,
+      rockConfig.powerLawExponent
+    );
 
     // Assign prototype ID (deterministic from RNG)
     const prototypeId = Math.floor(random() * rockLibrarySize);
@@ -248,14 +278,7 @@ function generateRockPlacements(
     const ry = random() * Math.PI * 2;
     const rz = random() * Math.PI * 2;
 
-    // === LOD FILTERING ===
-    // Only rocks large enough pass through at this LOD level
-    // This is the ONLY thing that varies with LOD
-    if (diameter < minDiameter) {
-      continue;
-    }
-
-    // Sample terrain height from already-generated vertex positions
+    // Sample terrain height
     const y = sampleHeightFromVertices(
       positions,
       resolution,
@@ -327,33 +350,25 @@ function hashString(str: string): number {
 // ============================================================================
 
 self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
-  const { terrainArgs, gridKey, lodLevel, rockLibrarySize } = m.data;
-  const totalStart = performance.now();
+  const { terrainArgs, gridKey, lodLevel, rockLibrarySize, rockConfig } = m.data;
 
   // Generate terrain geometry
-  const terrainStart = performance.now();
   const geometry = generateTerrain(terrainArgs);
-  const terrainTime = performance.now() - terrainStart;
 
   // Extract terrain attributes
   const positions = geometry.attributes.position.array;
   const normals = geometry.attributes.normal.array;
   const index = geometry.index?.array;
 
-  // Generate rock placements using world-space coordinates
-  // Heights are sampled from already-generated vertex positions (fast, no duplicate computation)
-  const rockStart = performance.now();
+  // Generate rock placements using scientific lunar distribution
   const rockPlacements = generateRockPlacements(
     positions,
     terrainArgs,
     lodLevel,
     gridKey,
-    rockLibrarySize
+    rockLibrarySize,
+    rockConfig
   );
-  const rockTime = performance.now() - rockStart;
-  const rockCount = rockPlacements.reduce((sum, p) => sum + p.matrices.length / 16, 0);
-
-  // Removed console logs to reduce spam - use debug logs instead if needed
 
   // Build result
   const result: ChunkWorkerResult = {
