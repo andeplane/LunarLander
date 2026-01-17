@@ -102,11 +102,13 @@ export class ShaderUIController {
   private setupTextureLodFolder(): void {
     const folder = this.gui.addFolder('Texture LOD');
     
-    folder.add(this.params, 'textureLodDistance', 10, 200, 5)
-      .name('Blend Distance (m)')
-      .onChange((value: number) => {
-        this.material.setParam('textureLodDistance', value);
-      });
+    folder.add(this.params, 'enableTexture')
+      .name('Enable Texture')
+      .onChange((value: boolean) => this.material.setParam('enableTexture', value));
+    
+    folder.add(this.params, 'enableHexTiling')
+      .name('Enable Hex Tiling')
+      .onChange((value: boolean) => this.material.setParam('enableHexTiling', value));
     
     // UV scale control (smaller = more zoomed in, larger = more tiling)
     folder.add(this.params, 'textureUvScale', 0.05, 1.0, 0.01)
