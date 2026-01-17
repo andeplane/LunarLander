@@ -22,6 +22,13 @@ export interface MoonMaterialParams {
   textureLowDetail?: Texture | null; // Low detail texture (shown when far)
   textureHighDetail?: Texture | null; // High detail texture (shown when close)
   textureLodDistance?: number; // Distance threshold for blending (in meters, default: 50)
+
+  // Hex tiling parameters
+  hexPatchScale?: number; // Controls hex tile size (larger = smaller tiles = more breakup, default: 6)
+  hexContrastCorrection?: boolean; // Enable contrast-corrected blending (default: true)
+  
+  // Texture UV scale (default: 0.2 = texture repeats every 5 meters)
+  textureUvScale?: number;
 }
 
 /**
@@ -59,6 +66,9 @@ export class MoonMaterial extends MeshStandardMaterial {
       textureLowDetail: null,
       textureHighDetail: null,
       textureLodDistance: 50.0, // 50 meters default blend distance
+      hexPatchScale: 6.0, // Default hex tile scale
+      hexContrastCorrection: true, // Enable contrast correction by default
+      textureUvScale: 0.2, // Default UV scale (texture repeats every 5 meters)
     };
 
     this.onBeforeCompile = (shader) => {
@@ -83,6 +93,11 @@ export class MoonMaterial extends MeshStandardMaterial {
       shader.uniforms.uUseTextureLod = { 
         value: (this.params.textureLowDetail && this.params.textureHighDetail) ? 1.0 : 0.0 
       };
+      
+      // Hex tiling uniforms
+      shader.uniforms.uHexPatchScale = { value: this.params.hexPatchScale || 6.0 };
+      shader.uniforms.uHexContrastCorrection = { value: this.params.hexContrastCorrection ? 1.0 : 0.0 };
+      shader.uniforms.uTextureUvScale = { value: this.params.textureUvScale || 0.2 };
 
       // ==========================================
       // VERTEX SHADER MODIFICATIONS
@@ -174,6 +189,11 @@ export class MoonMaterial extends MeshStandardMaterial {
         uniform sampler2D uTextureHighDetail;
         uniform float uTextureLodDistance;
         uniform float uUseTextureLod;
+        
+        // Hex tiling uniforms
+        uniform float uHexPatchScale;
+        uniform float uHexContrastCorrection;
+        uniform float uTextureUvScale;
 
         ${glslCommon}
 
@@ -224,7 +244,7 @@ export class MoonMaterial extends MeshStandardMaterial {
         // Apply distance-based texture LOD blending if available
         if (uUseTextureLod > 0.5) {
           // Use world position for UV coordinates to tile seamlessly across chunks
-          vec2 uv = terrainPos * 0.2;
+          vec2 uv = terrainPos * uTextureUvScale;
           
           // Calculate distance from camera to fragment
           float dist = distance(cameraPosition, vWorldPosition);
@@ -236,9 +256,10 @@ export class MoonMaterial extends MeshStandardMaterial {
           float farDistance = uTextureLodDistance * 1.5; // Fully low detail beyond 1.5x distance
           float blendFactor = 1.0 - smoothstep(nearDistance, farDistance, dist);
           
-          // Sample both textures with same UV coordinates
-          vec3 texLowDetail = texture2D(uTextureLowDetail, uv).rgb;
-          vec3 texHighDetail = texture2D(uTextureHighDetail, uv).rgb;
+          // Sample both textures with hex tiling to eliminate repetition
+          bool useContrastCorrect = uHexContrastCorrection > 0.5;
+          vec3 texLowDetail = textureNoTileHex(uTextureLowDetail, uv, uHexPatchScale, useContrastCorrect);
+          vec3 texHighDetail = textureNoTileHex(uTextureHighDetail, uv, uHexPatchScale, useContrastCorrect);
           
           // Blend between low and high detail textures
           vec3 texColor = mix(texLowDetail, texHighDetail, blendFactor);
@@ -323,6 +344,11 @@ export class MoonMaterial extends MeshStandardMaterial {
     this.shaderUniforms.uTextureLodDistance.value = this.params.textureLodDistance || 50.0;
     this.shaderUniforms.uUseTextureLod.value = 
       (this.params.textureLowDetail && this.params.textureHighDetail) ? 1.0 : 0.0;
+
+    // Update hex tiling parameters
+    this.shaderUniforms.uHexPatchScale.value = this.params.hexPatchScale || 6.0;
+    this.shaderUniforms.uHexContrastCorrection.value = this.params.hexContrastCorrection ? 1.0 : 0.0;
+    this.shaderUniforms.uTextureUvScale.value = this.params.textureUvScale || 0.2;
 
     // Mark material as needing update
     this.needsUpdate = true;

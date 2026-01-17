@@ -10,7 +10,7 @@ import { RockManager } from './environment/RockManager';
 import { LodDetailLevel } from './terrain/LodUtils';
 import { ShaderUIController } from './ui/ShaderUIController';
 import type { CameraConfig } from './types';
-import { TextureLoader, MirroredRepeatWrapping, SRGBColorSpace, Texture } from 'three';
+import { TextureLoader, MirroredRepeatWrapping, SRGBColorSpace, Texture, LinearMipmapLinearFilter, LinearFilter } from 'three';
 import { DEFAULT_PLANET_RADIUS } from './core/EngineSettings';
 
 /**
@@ -140,7 +140,10 @@ const configureTexture = (texture: Texture) => {
   texture.wrapS = MirroredRepeatWrapping;
   texture.wrapT = MirroredRepeatWrapping;
   texture.colorSpace = SRGBColorSpace;
-  texture.anisotropy = 8;
+  texture.anisotropy = 16; // Max anisotropic filtering for better quality at angles
+  texture.minFilter = LinearMipmapLinearFilter; // Trilinear filtering for best mipmap quality
+  texture.magFilter = LinearFilter; // Linear interpolation when zoomed in
+  texture.generateMipmaps = true;
 };
 
 // Load low detail texture (shown when zoomed out)

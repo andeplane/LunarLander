@@ -97,7 +97,7 @@ export class ShaderUIController {
 
   /**
    * Setup texture LOD parameters folder
-   * Controls for distance-based texture blending
+   * Controls for distance-based texture blending and hex tiling
    */
   private setupTextureLodFolder(): void {
     const folder = this.gui.addFolder('Texture LOD');
@@ -106,6 +106,26 @@ export class ShaderUIController {
       .name('Blend Distance (m)')
       .onChange((value: number) => {
         this.material.setParam('textureLodDistance', value);
+      });
+    
+    // UV scale control (smaller = more zoomed in, larger = more tiling)
+    folder.add(this.params, 'textureUvScale', 0.05, 1.0, 0.01)
+      .name('UV Scale')
+      .onChange((value: number) => {
+        this.material.setParam('textureUvScale', value);
+      });
+    
+    // Hex tiling controls (0 = disabled for debugging)
+    folder.add(this.params, 'hexPatchScale', 0, 20, 0.5)
+      .name('Hex Patch Scale')
+      .onChange((value: number) => {
+        this.material.setParam('hexPatchScale', value);
+      });
+    
+    folder.add(this.params, 'hexContrastCorrection')
+      .name('Hex Contrast Correct')
+      .onChange((value: boolean) => {
+        this.material.setParam('hexContrastCorrection', value);
       });
     
     folder.open();

@@ -9,10 +9,10 @@ export class TerrainMaterial extends ModifiedStandardMaterial {
       float noise = fbm(v_Position.xz * 3.0, 5);
     
       vec2 p_dist_grass = distortCoords(v_Position.xy, 1.1, noise);
-      float map_grass = clamp(map(p_dist_grass.y, 1.0, 0.8, 0.0, 1.0), 0.0, 1.0);
+      float map_grass = clamp(remap(p_dist_grass.y, 1.0, 0.8, 0.0, 1.0), 0.0, 1.0);
       
       vec2 p_dist_rock = distortCoords(v_Normal.xy, 0.5, noise);
-      float map_rock = clamp(pow(map(p_dist_rock.y, 0.56, 0.67, 1.0, 0.0), 1.0), 0.0, 1.0);
+      float map_rock = clamp(pow(remap(p_dist_rock.y, 0.56, 0.67, 1.0, 0.0), 1.0), 0.0, 1.0);
       
       vec4 ground_color_low = mix(
         vec4(0.7, 0.42, 0.19, 1.0),
@@ -45,7 +45,7 @@ export class TerrainMaterial extends ModifiedStandardMaterial {
       float ground_variation = clamp(pow(fbm(v_Position.xz * 0.03, 2) + 0.3, 5.0), 0.0, 1.0);
       
       vec4 ground_color = mix(ground_color_low, ground_color_high,
-        clamp(map(v_Position.y, -0.0, 2.0, 0.0, 1.0), 0.0, 1.0)
+        clamp(remap(v_Position.y, -0.0, 2.0, 0.0, 1.0), 0.0, 1.0)
       );
       
       ground_color = mix(ground_color, ground_variation_color, ground_variation);

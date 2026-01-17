@@ -182,13 +182,95 @@ export const glslCommon = `
   // UTILITY FUNCTIONS
   // ==========================================
   
-  vec2 distortCoords(in vec2 st, in float strength, in float map) {
-    map -= 0.5;
-    vec2 ou = st + map * strength;
+  vec2 distortCoords(in vec2 st, in float strength, in float mapVal) {
+    mapVal -= 0.5;
+    vec2 ou = st + mapVal * strength;
     return ou;
   }
   
-  float map(float value, float min1, float max1, float min2, float max2) {
+  float remap(float value, float min1, float max1, float min2, float max2) {
     return min2 + (value - min1) * (max2 - min2) / (max1 - min1);
+  }
+
+  // ==========================================
+  // HEX TILING (adapted from Fabrice Neyret's Shadertoy)
+  // https://www.shadertoy.com/view/MdyfDV
+  // ==========================================
+  
+  // Hash function for randomization
+  vec2 hexHash(vec2 p) {
+    return fract(sin(p * mat2(127.1, 311.7, 269.5, 183.3)) * 43758.5453);
+  }
+  
+  // sRGB <-> linear conversions for contrast-corrected blending
+  vec3 srgb2linear(vec3 c) {
+    return pow(max(c, vec3(0.0)), vec3(2.2));
+  }
+  
+  vec3 linear2srgb(vec3 c) {
+    return pow(max(c, vec3(0.0)), vec3(1.0 / 2.2));
+  }
+  
+  // Hex tiling texture sampler - preserves original UV scale
+  // patchScale only controls hex cell density, not texture zoom
+  // patchScale = 0 bypasses hex tiling entirely (for debugging)
+  vec3 textureNoTileHex(sampler2D samp, vec2 uv, float patchScale, bool useContrastCorrection) {
+    // Bypass: patchScale 0 = no hex tiling, just normal sample
+    if (patchScale < 0.5) {
+      return texture2D(samp, uv).rgb;
+    }
+    
+    mat2 M0 = mat2(1.0, 0.0, 0.5, sqrt(3.0) / 2.0);
+    mat2 M = inverse(M0);
+    
+    // Hex grid at patchScale density - only affects which cell we're in
+    vec2 hexCoord = uv * patchScale;
+    vec2 V = M * hexCoord;
+    vec2 I = floor(V);
+    
+    // Gradients based on ORIGINAL uv - preserves texture detail
+    vec2 Gx = dFdx(uv);
+    vec2 Gy = dFdy(uv);
+    
+    // Mean color for contrast correction
+    vec3 meanColor = useContrastCorrection ? texture2D(samp, uv, 99.0).rgb : vec3(0.0);
+    
+    // Sample at ORIGINAL uv with hex offset - no zoom change
+    // Using texture2D - let GPU handle mipmap selection automatically
+    #define HEX_SAMPLE(cellId) (texture2D(samp, uv - hexHash(cellId)).rgb - meanColor * float(useContrastCorrection))
+    
+    vec3 F = vec3(fract(V), 0.0);
+    F.z = 1.0 - F.x - F.y;
+    vec3 W;
+    vec3 fragColor = vec3(0.0);
+    
+    float textureSampleExp = 8.0;
+    float skipThreshold = 0.01;
+    
+    if (F.z > 0.0) {
+      W = vec3(F.z, F.y, F.x);
+      W = pow(W, vec3(textureSampleExp));
+      W = W / dot(W, vec3(1.0));
+      
+      if (W.x > skipThreshold) fragColor += HEX_SAMPLE(I) * W.x;
+      if (W.y > skipThreshold) fragColor += HEX_SAMPLE(I + vec2(0.0, 1.0)) * W.y;
+      if (W.z > skipThreshold) fragColor += HEX_SAMPLE(I + vec2(1.0, 0.0)) * W.z;
+    } else {
+      W = vec3(-F.z, 1.0 - F.y, 1.0 - F.x);
+      W = pow(W, vec3(textureSampleExp));
+      W = W / dot(W, vec3(1.0));
+      
+      if (W.x > skipThreshold) fragColor += HEX_SAMPLE(I + vec2(1.0, 1.0)) * W.x;
+      if (W.y > skipThreshold) fragColor += HEX_SAMPLE(I + vec2(1.0, 0.0)) * W.y;
+      if (W.z > skipThreshold) fragColor += HEX_SAMPLE(I + vec2(0.0, 1.0)) * W.z;
+    }
+    
+    #undef HEX_SAMPLE
+    
+    if (useContrastCorrection) {
+      fragColor = meanColor + fragColor / length(W);
+    }
+    
+    return clamp(fragColor, 0.0, 1.0);
   }
 `;
