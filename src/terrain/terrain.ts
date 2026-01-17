@@ -1,6 +1,6 @@
 import { FbmNoiseBuilder, normalizeFbmRange } from "./noise";
 import { displaceY } from "./displacements";
-import { closeTo, mapRangeSmooth } from "./math-operators";
+import { closeTo, mapRangeSmooth, smoothAbs, smoothPingpong } from "./math-operators";
 import { MathUtils, PlaneGeometry } from "three";
 import { mapLinear } from "three/src/math/MathUtils.js";
 
@@ -89,7 +89,7 @@ export function createTerrainEvaluator(args: TerrainArgs): (x: number, z: number
 
     erosion = MathUtils.smoothstep(erosion, 0, 1);
     erosion = Math.pow(erosion, 1 + erosionSoftness);
-    erosion = MathUtils.clamp(MathUtils.pingpong(erosion * 2, 1) - 0.3, 0, 100);
+    erosion = MathUtils.clamp(smoothPingpong(erosion * 2, 1) - 0.3, 0, 100);
 
     terrainNoise *= MathUtils.lerp(1, erosion, args.erosion);
 
@@ -110,7 +110,7 @@ export function createTerrainEvaluator(args: TerrainArgs): (x: number, z: number
   };
 
   const desertTerrain = (x: number, z: number) => {
-    let terrainNoise = normalizeFbmRange(Math.abs(fbmCanyons(x + args.posX * 25, z + args.posZ * 25) - 0.25));
+    let terrainNoise = normalizeFbmRange(smoothAbs(fbmCanyons(x + args.posX * 25, z + args.posZ * 25) - 0.25, 0.01));
     const riverWidthVariation = normalizeFbmRange(fbmValiation(x + 1000 + args.posX * 25, z + 1000 + args.posZ * 25));
     const riversEdge1 = mapLinear(args.riverWidth, 0, 1, .2, .45) * mapLinear(riverWidthVariation, 0, 1, 0.75, 1.15);
     const riversEdge2 = mapLinear(args.riverWidth, 0, 1, .3, .55) * mapLinear(riverWidthVariation, 0, 1, 0.75, 1.15);
