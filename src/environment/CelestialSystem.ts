@@ -476,8 +476,9 @@ export class CelestialSystem {
    * Set sun light intensity
    */
   set sunIntensity(value: number) {
-    this.sunLight.intensity = value;
-    // Also update earthshine to maintain ratio
+    this.config.sunIntensity = value;
+    // sunLight.intensity will be updated in update() with horizon fade applied
+    // Update earthshine based on base config value (not affected by horizon fade)
     this.earthLight.intensity = value * this.config.earthshineMultiplier;
     this.requestRender();
   }
@@ -494,7 +495,9 @@ export class CelestialSystem {
    */
   set earthshineMultiplier(value: number) {
     this.config.earthshineMultiplier = value;
-    this.earthLight.intensity = this.sunLight.intensity * value;
+    // Use config.sunIntensity (base value) not sunLight.intensity (which is modified by horizon fade)
+    // Earthshine is proportional to base sunlight regardless of sun's position/visibility
+    this.earthLight.intensity = this.config.sunIntensity * value;
     this.requestRender();
   }
   
