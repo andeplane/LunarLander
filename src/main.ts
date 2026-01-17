@@ -75,7 +75,8 @@ const chunkManager = new ChunkManager(
   engine.getScene(),
   chunkConfig,
   terrainGenerator,
-  rockManager
+  rockManager,
+  () => engine.requestRender()
 );
 chunkManager.setCamera(engine.getCamera());
 engine.setChunkManager(chunkManager);
@@ -105,6 +106,9 @@ engine.getCamera().rotation.x -= 0.4;
 engine.getCamera().rotation.y -= 0.2;
 engine.getCamera().rotation.z -= 0.06;
 
+// Force initial render after camera position is set
+engine.requestRender();
+
 // Set up click to enable pointer lock
 canvas.addEventListener('click', () => {
   inputManager.requestPointerLock();
@@ -116,23 +120,31 @@ skybox.loadTexture('/textures/8k_stars_milky_way.jpg');
 
 // Initialize celestial system (sun, Earth, lighting with Moon curvature)
 // Only override position values - all intensity/range defaults come from CelestialSystem
-const celestialSystem = new CelestialSystem(engine.getScene(), {
-  // Sun position - high in the sky, slightly to the side
-  sunAzimuth: Math.PI * 0.3,
-  sunElevation: Math.PI * 0.35,
-  
-  // Earth position - visible in the lunar sky
-  earthAzimuth: Math.PI * 1.15,
-  earthElevation: Math.PI * 0.25,
-});
+const celestialSystem = new CelestialSystem(
+  engine.getScene(),
+  () => engine.requestRender(),
+  {
+    // Sun position - high in the sky, slightly to the side
+    sunAzimuth: Math.PI * 0.3,
+    sunElevation: Math.PI * 0.35,
+    
+    // Earth position - visible in the lunar sky
+    earthAzimuth: Math.PI * 1.15,
+    earthElevation: Math.PI * 0.25,
+  }
+);
 // Set camera reference for spaceship light positioning
 celestialSystem.setCamera(engine.getCamera());
 engine.setCelestialSystem(celestialSystem);
 
 // Initialize shader UI controller (after celestial system so they can be synced)
-const shaderUI = new ShaderUIController(chunkManager.getMaterial(), celestialSystem);
+const shaderUI = new ShaderUIController(
+  chunkManager.getMaterial(),
+  () => engine.requestRender(),
+  celestialSystem
+);
 
-// Load texture LOD system: low detail (far) and high detail (close)
+// Load texture
 const textureLoader = new TextureLoader();
 
 // Configure texture settings helper
@@ -146,23 +158,7 @@ const configureTexture = (texture: Texture) => {
   texture.generateMipmaps = true;
 };
 
-// Load low detail texture (shown when zoomed out)
-textureLoader.load('/textures/surface-low-detail.png', (texture) => {
-  configureTexture(texture);
-  
-  // Apply to materials
-  const terrainMaterial = terrainGenerator.getMaterial();
-  const rockMaterial = rockManager.getMaterial();
-  
-  terrainMaterial.setParam('textureLowDetail', texture);
-  rockMaterial.setParam('textureLowDetail', texture);
-  
-  // Set blend distance to 90 meters
-  terrainMaterial.setParam('textureLodDistance', 90);
-  rockMaterial.setParam('textureLodDistance', 90);
-});
-
-// Load high detail texture (shown when zoomed in)
+// Load high detail texture
 textureLoader.load('/textures/surface-high-detail.png', (texture) => {
   configureTexture(texture);
   

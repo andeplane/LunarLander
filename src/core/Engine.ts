@@ -246,6 +246,14 @@ export class Engine {
   }
 
   /**
+   * Request a render on the next frame
+   * Components can call this to trigger a render when they make visual changes
+   */
+  requestRender(): void {
+    this.needsRender = true;
+  }
+
+  /**
    * Check if camera has moved since last frame
    * Uses epsilon comparison for position and quaternion dot product for rotation
    */

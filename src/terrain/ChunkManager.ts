@@ -69,17 +69,20 @@ export class ChunkManager {
   private cameraForward: Vector3 = new Vector3();
   private debugMode: boolean = false;
   private collisionLodLevel: number = 0;
+  private requestRender: () => void;
 
   constructor(
     scene: Scene,
     config: ChunkConfig,
     terrainGenerator: TerrainGenerator,
-    rockManager: RockManager
+    rockManager: RockManager,
+    requestRender: () => void
   ) {
     this.scene = scene;
     this.config = config;
     this.terrainGenerator = terrainGenerator;
     this.rockManager = rockManager;
+    this.requestRender = requestRender;
     this.debugMode = config.debugWireframe ?? false;
 
     // Base terrain args (without position/resolution - those are per-request)
@@ -222,6 +225,7 @@ export class ChunkManager {
     // Add terrain mesh to chunk
     const distance = this.computeLodDistance(lodLevel);
     chunk.addTerrainMesh(terrainMesh, lodLevel, distance);
+    this.requestRender();
 
     // Create rock meshes via RockManager (if placements exist)
     if (result.rockPlacements && result.rockPlacements.length > 0) {
@@ -237,6 +241,7 @@ export class ChunkManager {
           });
         }
       }
+      this.requestRender();
     }
 
     // Dispatch next request from queue
@@ -306,6 +311,7 @@ export class ChunkManager {
     }
 
     console.log(`Debug wireframe mode: ${this.debugMode ? 'ON' : 'OFF'}`);
+    this.requestRender();
   }
 
   /**
@@ -318,6 +324,7 @@ export class ChunkManager {
 
     const chunk = new Chunk(gridKey, worldX, worldZ, this.config.lodLevels.length);
     chunk.addToScene(this.scene);
+    this.requestRender();
 
     return chunk;
   }

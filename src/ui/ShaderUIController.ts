@@ -11,9 +11,11 @@ export class ShaderUIController {
   private material: MoonMaterial;
   private params: MoonMaterialParams;
   private celestialSystem: CelestialSystem | null = null;
+  private requestRender: () => void;
 
-  constructor(material: MoonMaterial, celestialSystem?: CelestialSystem) {
+  constructor(material: MoonMaterial, requestRender: () => void, celestialSystem?: CelestialSystem) {
     this.material = material;
+    this.requestRender = requestRender;
     this.celestialSystem = celestialSystem ?? null;
     // Get initial params - we'll use onChange handlers instead of Proxy
     this.params = material.getParams();
@@ -47,7 +49,10 @@ export class ShaderUIController {
     
     folder.add(this.params, 'enableColorVariation')
       .name('Enable Color Variation')
-      .onChange((value: boolean) => this.material.setParam('enableColorVariation', value));
+      .onChange((value: boolean) => {
+        this.material.setParam('enableColorVariation', value);
+        this.requestRender();
+      });
 
     folder.open();
   }
@@ -60,15 +65,24 @@ export class ShaderUIController {
     
     folder.add(this.params, 'colorVariationFrequency', 0.001, 0.02, 0.001)
       .name('Variation Frequency')
-      .onChange((value: number) => this.material.setParam('colorVariationFrequency', value));
+      .onChange((value: number) => {
+        this.material.setParam('colorVariationFrequency', value);
+        this.requestRender();
+      });
 
     folder.add(this.params, 'baseColorBlend', 0.0, 1.0, 0.1)
       .name('Base Color Blend')
-      .onChange((value: number) => this.material.setParam('baseColorBlend', value));
+      .onChange((value: number) => {
+        this.material.setParam('baseColorBlend', value);
+        this.requestRender();
+      });
 
     folder.add(this.params, 'brightnessBoost', 1.0, 5.0, 0.1)
       .name('Brightness Boost')
-      .onChange((value: number) => this.material.setParam('brightnessBoost', value));
+      .onChange((value: number) => {
+        this.material.setParam('brightnessBoost', value);
+        this.requestRender();
+      });
   }
 
   /**
@@ -79,7 +93,10 @@ export class ShaderUIController {
     
     folder.add(this.params, 'enableCurvature')
       .name('Enable Curvature')
-      .onChange((value: boolean) => this.material.setParam('enableCurvature', value));
+      .onChange((value: boolean) => {
+        this.material.setParam('enableCurvature', value);
+        this.requestRender();
+      });
 
     folder.add(this.params, 'planetRadius', 1000, 50000, 500)
       .name('Planet Radius (m)')
@@ -90,6 +107,7 @@ export class ShaderUIController {
         if (this.celestialSystem) {
           this.celestialSystem.setPlanetRadius(value);
         }
+        this.requestRender();
       });
     
     folder.open();
@@ -104,17 +122,24 @@ export class ShaderUIController {
     
     folder.add(this.params, 'enableTexture')
       .name('Enable Texture')
-      .onChange((value: boolean) => this.material.setParam('enableTexture', value));
+      .onChange((value: boolean) => {
+        this.material.setParam('enableTexture', value);
+        this.requestRender();
+      });
     
     folder.add(this.params, 'enableHexTiling')
       .name('Enable Hex Tiling')
-      .onChange((value: boolean) => this.material.setParam('enableHexTiling', value));
+      .onChange((value: boolean) => {
+        this.material.setParam('enableHexTiling', value);
+        this.requestRender();
+      });
     
     // UV scale control (smaller = more zoomed in, larger = more tiling)
     folder.add(this.params, 'textureUvScale', 0.05, 1.0, 0.01)
       .name('UV Scale')
       .onChange((value: number) => {
         this.material.setParam('textureUvScale', value);
+        this.requestRender();
       });
     
     // Hex tiling controls (0 = disabled for debugging)
@@ -122,12 +147,14 @@ export class ShaderUIController {
       .name('Hex Patch Scale')
       .onChange((value: number) => {
         this.material.setParam('hexPatchScale', value);
+        this.requestRender();
       });
     
     folder.add(this.params, 'hexContrastCorrection')
       .name('Hex Contrast Correct')
       .onChange((value: boolean) => {
         this.material.setParam('hexContrastCorrection', value);
+        this.requestRender();
       });
     
     folder.open();

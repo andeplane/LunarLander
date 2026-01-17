@@ -103,6 +103,9 @@ export class CelestialSystem {
   // Camera reference for spaceship light positioning
   private camera: THREE.Camera | null = null;
   
+  // Render request callback
+  private requestRender: () => void;
+  
   // Container that rotates with curvature
   private celestialContainer: THREE.Group;
   
@@ -119,8 +122,9 @@ export class CelestialSystem {
   private readonly sunWorldPos = new THREE.Vector3();
   private readonly earthWorldPos = new THREE.Vector3();
   
-  constructor(scene: THREE.Scene, config: CelestialConfig = {}) {
+  constructor(scene: THREE.Scene, requestRender: () => void, config: CelestialConfig = {}) {
     this.scene = scene;
+    this.requestRender = requestRender;
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.planetRadius = DEFAULT_PLANET_RADIUS;
     this.celestialContainer = new THREE.Group();
@@ -447,6 +451,7 @@ export class CelestialSystem {
    */
   setPlanetRadius(radius: number): void {
     this.planetRadius = radius;
+    this.requestRender();
   }
   
   /**
@@ -474,6 +479,7 @@ export class CelestialSystem {
     this.sunLight.intensity = value;
     // Also update earthshine to maintain ratio
     this.earthLight.intensity = value * this.config.earthshineMultiplier;
+    this.requestRender();
   }
   
   /**
@@ -489,6 +495,7 @@ export class CelestialSystem {
   set earthshineMultiplier(value: number) {
     this.config.earthshineMultiplier = value;
     this.earthLight.intensity = this.sunLight.intensity * value;
+    this.requestRender();
   }
   
   /**
@@ -503,6 +510,7 @@ export class CelestialSystem {
    */
   set spaceshipLightIntensity(value: number) {
     this.spaceshipLight.intensity = value;
+    this.requestRender();
   }
   
   /**
@@ -517,6 +525,7 @@ export class CelestialSystem {
    */
   set spaceshipLightRange(value: number) {
     this.spaceshipLight.distance = value;
+    this.requestRender();
   }
   
   /**
@@ -531,6 +540,7 @@ export class CelestialSystem {
    */
   set flashlightIntensity(value: number) {
     this.flashlight.intensity = value;
+    this.requestRender();
   }
   
   /**
@@ -545,6 +555,7 @@ export class CelestialSystem {
    */
   set flashlightRange(value: number) {
     this.flashlight.distance = value;
+    this.requestRender();
   }
   
   /**
@@ -559,6 +570,7 @@ export class CelestialSystem {
    */
   set flashlightAngle(value: number) {
     this.flashlight.angle = value;
+    this.requestRender();
   }
   
   /**
