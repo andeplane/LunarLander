@@ -8,6 +8,7 @@ import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 export interface MoonMaterialParams {
   // Toggles
   enableColorVariation: boolean;
+  enableTexture: boolean;
 
   // Color parameters
   colorVariationFrequency: number; // Color variation frequency
@@ -24,6 +25,7 @@ export interface MoonMaterialParams {
   textureLodDistance?: number; // Distance threshold for blending (in meters, default: 50)
 
   // Hex tiling parameters
+  enableHexTiling?: boolean; // Enable hex tiling to eliminate repetition (default: true)
   hexPatchScale?: number; // Controls hex tile size (larger = smaller tiles = more breakup, default: 6)
   hexContrastCorrection?: boolean; // Enable contrast-corrected blending (default: true)
   
@@ -58,6 +60,7 @@ export class MoonMaterial extends MeshStandardMaterial {
     // Initialize default parameters
     this.params = {
       enableColorVariation: true,
+      enableTexture: true,
       colorVariationFrequency: 0.005,
       baseColorBlend: 0.6,
       brightnessBoost: 1.2,
@@ -66,9 +69,10 @@ export class MoonMaterial extends MeshStandardMaterial {
       textureLowDetail: null,
       textureHighDetail: null,
       textureLodDistance: 50.0, // 50 meters default blend distance
+      enableHexTiling: true, // Enable hex tiling by default
       hexPatchScale: 6.0, // Default hex tile scale
       hexContrastCorrection: true, // Enable contrast correction by default
-      textureUvScale: 0.2, // Default UV scale (texture repeats every 5 meters)
+      textureUvScale: 0.8, // Default UV scale
     };
 
     this.onBeforeCompile = (shader) => {
@@ -77,6 +81,7 @@ export class MoonMaterial extends MeshStandardMaterial {
 
       // Initialize uniforms
       shader.uniforms.uEnableColorVariation = { value: this.params.enableColorVariation ? 1.0 : 0.0 };
+      shader.uniforms.uEnableTexture = { value: this.params.enableTexture ? 1.0 : 0.0 };
       shader.uniforms.uColorVariationFrequency = { value: this.params.colorVariationFrequency };
       shader.uniforms.uBaseColorBlend = { value: this.params.baseColorBlend };
       shader.uniforms.uBrightnessBoost = { value: this.params.brightnessBoost };
@@ -91,13 +96,14 @@ export class MoonMaterial extends MeshStandardMaterial {
       shader.uniforms.uTextureHighDetail = { value: this.params.textureHighDetail || null };
       shader.uniforms.uTextureLodDistance = { value: this.params.textureLodDistance || 50.0 };
       shader.uniforms.uUseTextureLod = { 
-        value: (this.params.textureLowDetail && this.params.textureHighDetail) ? 1.0 : 0.0 
+        value: this.params.textureHighDetail ? 1.0 : 0.0 
       };
       
       // Hex tiling uniforms
+      shader.uniforms.uEnableHexTiling = { value: this.params.enableHexTiling ? 1.0 : 0.0 };
       shader.uniforms.uHexPatchScale = { value: this.params.hexPatchScale || 6.0 };
       shader.uniforms.uHexContrastCorrection = { value: this.params.hexContrastCorrection ? 1.0 : 0.0 };
-      shader.uniforms.uTextureUvScale = { value: this.params.textureUvScale || 0.2 };
+      shader.uniforms.uTextureUvScale = { value: this.params.textureUvScale || 0.8 };
 
       // ==========================================
       // VERTEX SHADER MODIFICATIONS
@@ -172,6 +178,7 @@ export class MoonMaterial extends MeshStandardMaterial {
         // Toggle uniforms
         uniform float uEnableColorVariation;
         uniform float uEnableCurvature;
+        uniform float uEnableTexture;
         
         // Color parameters
         uniform float uColorVariationFrequency;
@@ -191,6 +198,7 @@ export class MoonMaterial extends MeshStandardMaterial {
         uniform float uUseTextureLod;
         
         // Hex tiling uniforms
+        uniform float uEnableHexTiling;
         uniform float uHexPatchScale;
         uniform float uHexContrastCorrection;
         uniform float uTextureUvScale;
@@ -241,28 +249,19 @@ export class MoonMaterial extends MeshStandardMaterial {
         // Blend base color with height-based color
         vec3 finalColor = mix(baseColor, surfaceColor, uBaseColorBlend);
         
-        // Apply distance-based texture LOD blending if available
-        if (uUseTextureLod > 0.5) {
+        // Apply texture if enabled and available
+        if (uEnableTexture > 0.5 && uUseTextureLod > 0.5) {
           // Use world position for UV coordinates to tile seamlessly across chunks
           vec2 uv = terrainPos * uTextureUvScale;
           
-          // Calculate distance from camera to fragment
-          float dist = distance(cameraPosition, vWorldPosition);
-          
-          // Create smooth blend factor based on distance
-          // Blend from low detail (far) to high detail (close)
-          // smoothstep returns 0 when dist >= farDistance, 1 when dist <= nearDistance
-          float nearDistance = uTextureLodDistance * 0.5; // Start blending at half distance
-          float farDistance = uTextureLodDistance * 1.5; // Fully low detail beyond 1.5x distance
-          float blendFactor = 1.0 - smoothstep(nearDistance, farDistance, dist);
-          
-          // Sample both textures with hex tiling to eliminate repetition
-          bool useContrastCorrect = uHexContrastCorrection > 0.5;
-          vec3 texLowDetail = textureNoTileHex(uTextureLowDetail, uv, uHexPatchScale, useContrastCorrect);
-          vec3 texHighDetail = textureNoTileHex(uTextureHighDetail, uv, uHexPatchScale, useContrastCorrect);
-          
-          // Blend between low and high detail textures
-          vec3 texColor = mix(texLowDetail, texHighDetail, blendFactor);
+          // Sample texture - use hex tiling if enabled, otherwise regular sampling
+          vec3 texColor;
+          if (uEnableHexTiling > 0.5) {
+            bool useContrastCorrect = uHexContrastCorrection > 0.5;
+            texColor = textureNoTileHex(uTextureHighDetail, uv, uHexPatchScale, useContrastCorrect);
+          } else {
+            texColor = texture2D(uTextureHighDetail, uv).rgb;
+          }
           finalColor = mix(finalColor, texColor, 1.0);
         }
 
@@ -328,6 +327,7 @@ export class MoonMaterial extends MeshStandardMaterial {
 
     // Update toggle uniforms (convert boolean to float)
     this.shaderUniforms.uEnableColorVariation.value = this.params.enableColorVariation ? 1.0 : 0.0;
+    this.shaderUniforms.uEnableTexture.value = this.params.enableTexture ? 1.0 : 0.0;
 
     // Update color parameters
     this.shaderUniforms.uColorVariationFrequency.value = this.params.colorVariationFrequency;
@@ -343,12 +343,13 @@ export class MoonMaterial extends MeshStandardMaterial {
     this.shaderUniforms.uTextureHighDetail.value = this.params.textureHighDetail || null;
     this.shaderUniforms.uTextureLodDistance.value = this.params.textureLodDistance || 50.0;
     this.shaderUniforms.uUseTextureLod.value = 
-      (this.params.textureLowDetail && this.params.textureHighDetail) ? 1.0 : 0.0;
+      this.params.textureHighDetail ? 1.0 : 0.0;
 
     // Update hex tiling parameters
+    this.shaderUniforms.uEnableHexTiling.value = this.params.enableHexTiling ? 1.0 : 0.0;
     this.shaderUniforms.uHexPatchScale.value = this.params.hexPatchScale || 6.0;
     this.shaderUniforms.uHexContrastCorrection.value = this.params.hexContrastCorrection ? 1.0 : 0.0;
-    this.shaderUniforms.uTextureUvScale.value = this.params.textureUvScale || 0.2;
+    this.shaderUniforms.uTextureUvScale.value = this.params.textureUvScale || 0.8;
 
     // Mark material as needing update
     this.needsUpdate = true;
