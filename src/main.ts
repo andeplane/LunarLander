@@ -2,7 +2,7 @@ import './style.css';
 import { Engine } from './core/Engine';
 import { InputManager } from './core/InputManager';
 import { FlightController } from './camera/FlightController';
-import { Skybox } from './environment/Skybox';
+// Skybox is now handled as a mesh inside CelestialSystem
 import { CelestialSystem } from './environment/CelestialSystem';
 import { ChunkManager, type ChunkConfig } from './terrain/ChunkManager';
 import { TerrainGenerator } from './terrain/TerrainGenerator';
@@ -126,11 +126,7 @@ canvas.addEventListener('click', () => {
   inputManager.requestPointerLock();
 });
 
-// Initialize skybox with Milky Way texture
-const skybox = new Skybox(engine.getScene());
-skybox.loadTexture('/textures/8k_stars_milky_way.jpg');
-
-// Initialize celestial system (sun, Earth, lighting with Moon curvature)
+// Initialize celestial system (sun, Earth, skybox, lighting with Moon curvature)
 // Only override position values - all intensity/range defaults come from CelestialSystem
 const celestialSystem = new CelestialSystem(
   engine.getScene(),
@@ -148,6 +144,9 @@ const celestialSystem = new CelestialSystem(
 // Set camera reference for spaceship light positioning
 celestialSystem.setCamera(engine.getCamera());
 engine.setCelestialSystem(celestialSystem);
+
+// Load skybox texture (now handled by CelestialSystem as a mesh)
+celestialSystem.loadSkyboxTexture('/textures/8k_stars_milky_way.jpg');
 
 // Initialize shader UI controller (after celestial system so they can be synced)
 const shaderUI = new ShaderUIController(
@@ -188,7 +187,6 @@ engine.start();
 // Handle cleanup on page unload
 window.addEventListener('beforeunload', () => {
   shaderUI.dispose();
-  skybox.dispose();
   engine.dispose();
 });
 

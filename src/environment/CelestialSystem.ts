@@ -92,6 +92,8 @@ export class CelestialSystem {
   private sunMaterial!: SunMaterial;
   private earthMesh!: THREE.Mesh;
   private earthMaterial!: EarthMaterial;
+  private skyboxMesh!: THREE.Mesh;
+  private skyboxTexture: THREE.Texture | null = null;
   
   // Lighting - four sources
   private sunLight!: THREE.DirectionalLight;      // Main directional light from sun
@@ -108,10 +110,6 @@ export class CelestialSystem {
   
   // Container that rotates with curvature
   private celestialContainer: THREE.Group;
-  
-  // Base skybox rotation (set by Skybox class - Milky Way overhead)
-  private readonly baseSkyboxRotation = new THREE.Euler(Math.PI / 2, 0, 0);
-  private readonly baseSkyboxQuaternion = new THREE.Quaternion();
   
   // Reusable objects for calculations (avoid per-frame allocations)
   private readonly sunDirection = new THREE.Vector3();
@@ -134,11 +132,9 @@ export class CelestialSystem {
     this.flashlightTarget = new THREE.Object3D();
     this.flashlightTarget.name = 'FlashlightTarget';
     
-    // Store base skybox rotation as quaternion for composition
-    this.baseSkyboxQuaternion.setFromEuler(this.baseSkyboxRotation);
-    
     this.initializeSun();
     this.initializeEarth();
+    this.initializeSkybox();
     this.initializeLighting();
     
     this.scene.add(this.celestialContainer);
@@ -166,6 +162,7 @@ export class CelestialSystem {
     
     this.sunMesh = new THREE.Mesh(geometry, this.sunMaterial);
     this.sunMesh.name = 'Sun';
+    this.sunMesh.frustumCulled = false; // Disable frustum culling to prevent lag on first view
     
     // Position sun based on azimuth and elevation
     this.positionCelestialBody(
@@ -195,6 +192,7 @@ export class CelestialSystem {
     
     this.earthMesh = new THREE.Mesh(geometry, this.earthMaterial);
     this.earthMesh.name = 'Earth';
+    this.earthMesh.frustumCulled = false; // Disable frustum culling to prevent lag on first view
     
     // Position Earth based on azimuth and elevation
     this.positionCelestialBody(
@@ -208,6 +206,66 @@ export class CelestialSystem {
     this.earthMesh.rotation.z = THREE.MathUtils.degToRad(23.5);
     
     this.celestialContainer.add(this.earthMesh);
+  }
+  
+  /**
+   * Initialize the skybox as a large inverted sphere mesh
+   * This is added to the celestialContainer so it rotates with curvature
+   * just like sun and Earth - no Euler conversion issues!
+   */
+  private initializeSkybox(): void {
+    // Create a large sphere that encompasses everything
+    // Using BackSide so we see the inside of the sphere
+    const geometry = new THREE.SphereGeometry(90000, 64, 32);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x000000, // Black until texture loads
+      side: THREE.BackSide,
+    });
+    
+    this.skyboxMesh = new THREE.Mesh(geometry, material);
+    this.skyboxMesh.name = 'Skybox';
+    this.skyboxMesh.frustumCulled = false;
+    
+    // Apply the base rotation to position Milky Way overhead (PI/2 around X)
+    // This is "baked in" to the mesh, so the container's curvature rotation
+    // will be applied on top of it correctly
+    this.skyboxMesh.rotation.x = Math.PI / 2;
+    
+    // Clear scene.background so our mesh is visible
+    this.scene.background = null;
+    
+    this.celestialContainer.add(this.skyboxMesh);
+  }
+  
+  /**
+   * Load the skybox texture
+   * @param texturePath Path to the equirectangular starfield image
+   */
+  loadSkyboxTexture(texturePath: string): void {
+    const loader = new THREE.TextureLoader();
+    
+    loader.load(
+      texturePath,
+      (texture) => {
+        // Configure for correct display on sphere interior
+        texture.colorSpace = THREE.SRGBColorSpace;
+        
+        // Apply to skybox material
+        const material = this.skyboxMesh.material as THREE.MeshBasicMaterial;
+        material.map = texture;
+        material.color.setHex(0xffffff); // Remove black tint
+        material.needsUpdate = true;
+        
+        this.skyboxTexture = texture;
+        this.requestRender();
+        
+        console.log('Skybox texture loaded successfully');
+      },
+      undefined,
+      (error) => {
+        console.error('Failed to load skybox texture:', error);
+      }
+    );
   }
   
   /**
@@ -377,31 +435,9 @@ export class CelestialSystem {
     this.celestialContainer.quaternion.copy(this.curvatureQuaternion);
     
     // Move container to follow camera (celestial objects are at "infinity")
+    // The skybox mesh is inside the container, so it automatically follows the camera
+    // and rotates with the same curvature as sun/Earth - no Euler conversion needed!
     this.celestialContainer.position.copy(cameraPosition);
-    
-    // Apply curvature rotation to skybox (stars)
-    // Compute Euler angles directly instead of quaternion composition
-    // Base rotation: PI/2 around X (Milky Way overhead)
-    // Curvature tilt: decompose into X and Z components based on travel direction (phi)
-    const x = cameraPosition.x;
-    const z = cameraPosition.z;
-    const d = Math.sqrt(x * x + z * z);
-    const theta = d / this.planetRadius;
-    const phi = d > 0.001 ? Math.atan2(z, x) : 0;
-    
-    // Decompose tilt into X and Z rotations
-    // Moving in +X (phi=0): tilt around Z axis
-    // Moving in +Z (phi=90°): tilt around -X axis
-    const tiltX = -theta * Math.sin(phi);
-    const tiltZ = theta * Math.cos(phi);
-    
-    // Apply to background rotation (base X rotation + tilt components)
-    // Note: This is an approximation that works for small-ish theta
-    this.scene.backgroundRotation.set(
-      Math.PI / 2 + tiltX,  // Base + X tilt
-      0,                     // No Y rotation
-      tiltZ                  // Z tilt
-    );
     
     // Update sun direction for Earth lighting and directional light positions
     // Must be called AFTER curvature rotation is applied to container
@@ -649,6 +685,11 @@ export class CelestialSystem {
     this.sunMaterial.dispose();
     this.earthMesh.geometry.dispose();
     this.earthMaterial.dispose();
+    this.skyboxMesh.geometry.dispose();
+    (this.skyboxMesh.material as THREE.MeshBasicMaterial).dispose();
+    if (this.skyboxTexture) {
+      this.skyboxTexture.dispose();
+    }
     this.sunLight.dispose();
     this.earthLight.dispose();
     this.spaceshipLight.dispose();
