@@ -41,3 +41,30 @@ export interface RockGenerationConfig {
   /** Per-LOD multiplier for minDiameter (e.g., [1, 1, 1, 2, 4, 6]) */
   lodMinDiameterScale: number[];
 }
+
+/**
+ * Crater generation configuration based on lunar crater size-frequency distribution
+ * 
+ * Uses power-law distribution: S(D) ≈ 22,000 · D^(-2.4) craters per km²
+ * Based on Apollo 11 site data for craters 2-40m diameter.
+ */
+export interface CraterGenerationConfig {
+  /** Random seed for deterministic crater placement */
+  seed: number;
+  /** Craters per km² at reference size (1m radius) */
+  density: number;
+  /** Minimum crater radius in meters */
+  minRadius: number;
+  /** Maximum crater radius in meters */
+  maxRadius: number;
+  /** Size-frequency distribution exponent (typically -2.0 to -3.0, lunar: -2.4) */
+  powerLawExponent: number;
+  /** Crater depth = radius * depthRatio * 2 (0.2 typical for small craters) */
+  depthRatio: number;
+  /** Rim height as fraction of depth (0-1, typical: 0.04) */
+  rimHeight: number;
+  /** Rim extends beyond crater radius by this fraction (e.g., 0.1 = 10%) */
+  rimWidth: number;
+  /** Floor shape: 0 = parabolic bowl, 1 = flat floor (for large craters) */
+  floorFlatness: number;
+}

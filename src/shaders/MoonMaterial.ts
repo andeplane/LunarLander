@@ -31,6 +31,10 @@ export interface MoonMaterialParams {
   
   // Texture UV scale (default: 0.2 = texture repeats every 5 meters)
   textureUvScale?: number;
+  
+  // Height-based UV scale interpolation
+  nonHexUvScale?: number; // UV scale for non-hex tiling at low altitude (default: 0.22)
+  hexUvScale?: number; // UV scale for hex tiling at high altitude (default: 0.1)
 }
 
 /**
@@ -73,6 +77,8 @@ export class MoonMaterial extends MeshStandardMaterial {
       hexPatchScale: 6.0, // Default hex tile scale
       hexContrastCorrection: true, // Enable contrast correction by default
       textureUvScale: 0.8, // Default UV scale
+      nonHexUvScale: 0.22, // Default non-hex UV scale
+      hexUvScale: 0.1, // Default hex UV scale
     };
 
     this.onBeforeCompile = (shader) => {
@@ -104,6 +110,8 @@ export class MoonMaterial extends MeshStandardMaterial {
       shader.uniforms.uHexPatchScale = { value: this.params.hexPatchScale || 6.0 };
       shader.uniforms.uHexContrastCorrection = { value: this.params.hexContrastCorrection ? 1.0 : 0.0 };
       shader.uniforms.uTextureUvScale = { value: this.params.textureUvScale || 0.8 };
+      shader.uniforms.uNonHexUvScale = { value: this.params.nonHexUvScale || 0.22 };
+      shader.uniforms.uHexUvScale = { value: this.params.hexUvScale || 0.1 };
 
       // ==========================================
       // VERTEX SHADER MODIFICATIONS
@@ -202,6 +210,8 @@ export class MoonMaterial extends MeshStandardMaterial {
         uniform float uHexPatchScale;
         uniform float uHexContrastCorrection;
         uniform float uTextureUvScale;
+        uniform float uNonHexUvScale;
+        uniform float uHexUvScale;
 
         ${glslCommon}
 
@@ -251,17 +261,24 @@ export class MoonMaterial extends MeshStandardMaterial {
         
         // Apply texture if enabled and available
         if (uEnableTexture > 0.5 && uUseTextureLod > 0.5) {
-          // Use world position for UV coordinates to tile seamlessly across chunks
-          vec2 uv = terrainPos * uTextureUvScale;
+          // Height-based interpolation factor for hex tiling based on camera altitude
+          // ≤5m: fully non-hex (factor = 0), ≥10m: fully hex (factor = 1)
+          float cameraHeight = cameraPosition.y;
+          float hexFactor = clamp((cameraHeight - 5.0) / (10.0 - 5.0), 0.0, 1.0);
           
-          // Sample texture - use hex tiling if enabled, otherwise regular sampling
-          vec3 texColor;
-          if (uEnableHexTiling > 0.5) {
-            bool useContrastCorrect = uHexContrastCorrection > 0.5;
-            texColor = textureNoTileHex(uTextureHighDetail, uv, uHexPatchScale, useContrastCorrect);
-          } else {
-            texColor = texture2D(uTextureHighDetail, uv).rgb;
-          }
+          // Calculate separate UVs for non-hex and hex tiling using uniform values
+          vec2 uvNonHex = terrainPos * uNonHexUvScale;
+          vec2 uvHex = terrainPos * uHexUvScale;
+          
+          // Sample non-hex texture (regular sampling)
+          vec3 nonHexColor = texture2D(uTextureHighDetail, uvNonHex).rgb;
+          
+          // Sample hex texture (always use hex tiling when hexFactor > 0)
+          bool useContrastCorrect = uHexContrastCorrection > 0.5;
+          vec3 hexColor = textureNoTileHex(uTextureHighDetail, uvHex, uHexPatchScale, useContrastCorrect);
+          
+          // Interpolate between non-hex and hex based on height
+          vec3 texColor = mix(nonHexColor, hexColor, hexFactor);
           finalColor = mix(finalColor, texColor, 1.0);
         }
 
@@ -350,6 +367,8 @@ export class MoonMaterial extends MeshStandardMaterial {
     this.shaderUniforms.uHexPatchScale.value = this.params.hexPatchScale || 6.0;
     this.shaderUniforms.uHexContrastCorrection.value = this.params.hexContrastCorrection ? 1.0 : 0.0;
     this.shaderUniforms.uTextureUvScale.value = this.params.textureUvScale || 0.8;
+    this.shaderUniforms.uNonHexUvScale.value = this.params.nonHexUvScale || 0.22;
+    this.shaderUniforms.uHexUvScale.value = this.params.hexUvScale || 0.1;
 
     // Mark material as needing update
     this.needsUpdate = true;

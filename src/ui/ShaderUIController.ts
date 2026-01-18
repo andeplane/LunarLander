@@ -134,14 +134,6 @@ export class ShaderUIController {
         this.requestRender();
       });
     
-    // UV scale control (smaller = more zoomed in, larger = more tiling)
-    folder.add(this.params, 'textureUvScale', 0.05, 1.0, 0.01)
-      .name('UV Scale')
-      .onChange((value: number) => {
-        this.material.setParam('textureUvScale', value);
-        this.requestRender();
-      });
-    
     // Hex tiling controls (0 = disabled for debugging)
     folder.add(this.params, 'hexPatchScale', 0, 20, 0.5)
       .name('Hex Patch Scale')
@@ -154,6 +146,21 @@ export class ShaderUIController {
       .name('Hex Contrast Correct')
       .onChange((value: boolean) => {
         this.material.setParam('hexContrastCorrection', value);
+        this.requestRender();
+      });
+    
+    // UV scale controls for height-based interpolation
+    folder.add(this.params, 'nonHexUvScale', 0.05, 1.0, 0.01)
+      .name('Non-Hex UV Scale')
+      .onChange((value: number) => {
+        this.material.setParam('nonHexUvScale', value);
+        this.requestRender();
+      });
+    
+    folder.add(this.params, 'hexUvScale', 0.05, 1.0, 0.01)
+      .name('Hex UV Scale')
+      .onChange((value: number) => {
+        this.material.setParam('hexUvScale', value);
         this.requestRender();
       });
     

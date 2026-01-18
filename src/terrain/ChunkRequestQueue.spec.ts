@@ -300,5 +300,15 @@ function createMockTerrainArgs(): TerrainArgs {
     posX: 0,
     posZ: 0,
     renderDistance: 10,
+    // Crater generation parameters
+    craterSeed: 42,
+    craterDensity: 50,
+    craterMinRadius: 2,
+    craterMaxRadius: 200,
+    craterPowerLawExponent: -2.4,
+    craterDepthRatio: 0.2,
+    craterRimHeight: 0.04,
+    craterRimWidth: 0.1,
+    craterFloorFlatness: 0,
   };
 }

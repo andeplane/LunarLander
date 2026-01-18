@@ -220,11 +220,13 @@ export class CelestialSystem {
     const material = new THREE.MeshBasicMaterial({
       color: 0x000000, // Black until texture loads
       side: THREE.BackSide,
+      depthWrite: false, // Don't write to depth buffer so other objects render in front
     });
     
     this.skyboxMesh = new THREE.Mesh(geometry, material);
     this.skyboxMesh.name = 'Skybox';
     this.skyboxMesh.frustumCulled = false;
+    this.skyboxMesh.renderOrder = -Infinity; // Render first (behind everything)
     
     // Apply the base rotation to position Milky Way overhead (PI/2 around X)
     // This is "baked in" to the mesh, so the container's curvature rotation

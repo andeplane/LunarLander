@@ -9,7 +9,7 @@ import { TerrainGenerator } from './terrain/TerrainGenerator';
 import { RockManager } from './environment/RockManager';
 import { LodDetailLevel } from './terrain/LodUtils';
 import { ShaderUIController } from './ui/ShaderUIController';
-import type { CameraConfig, RockGenerationConfig } from './types';
+import type { CameraConfig, RockGenerationConfig, CraterGenerationConfig } from './types';
 import { TextureLoader, MirroredRepeatWrapping, SRGBColorSpace, Texture, LinearMipmapLinearFilter, LinearFilter } from 'three';
 import { DEFAULT_PLANET_RADIUS } from './core/EngineSettings';
 
@@ -65,6 +65,20 @@ const rockGeneration: RockGenerationConfig = {
   lodMinDiameterScale: [1.0, 1.0, 1.0, 2.0, 4.0, 6.0],
 };
 
+// Crater generation configuration (lunar crater size-frequency distribution)
+// Based on S(D) ≈ 22,000 · D^(-2.4) craters per km² from Apollo 11 site data
+const craterGeneration: CraterGenerationConfig = {
+  seed: 42,                    // Deterministic seed for reproducible placement
+  density: 100,                // Craters per km² (tuned for visual appeal)
+  minRadius: 5,                // Smallest craters (5m radius = 10m diameter)
+  maxRadius: 150,              // Largest craters (150m radius = 300m diameter)
+  powerLawExponent: -2.2,      // Slightly shallower than lunar (-2.4) for more variety
+  depthRatio: 0.15,            // Depth = 15% of diameter (realistic lunar depth)
+  rimHeight: 0.3,              // Rim height = 30% of depth (small raised edge)
+  rimWidth: 0.2,               // Rim extends 20% beyond crater radius
+  floorFlatness: 0,            // Parabolic bowl shape (0 = fully curved)
+};
+
 // Initialize terrain generator and rock manager
 const terrainGenerator = new TerrainGenerator({
   chunkWidth: chunkConfig.chunkWidth,
@@ -81,13 +95,14 @@ const rockManager = new RockManager(
   DEFAULT_PLANET_RADIUS
 );
 
-// Initialize chunk manager (orchestrates terrain + rocks)
+// Initialize chunk manager (orchestrates terrain + rocks + craters)
 const chunkManager = new ChunkManager(
   engine.getScene(),
   chunkConfig,
   terrainGenerator,
   rockManager,
   rockGeneration,
+  craterGeneration,
   () => engine.requestRender()
 );
 chunkManager.setCamera(engine.getCamera());

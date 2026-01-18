@@ -4,7 +4,7 @@ import { TerrainGenerator } from './TerrainGenerator';
 import { RockManager } from '../environment/RockManager';
 import type { TerrainArgs } from './terrain';
 import type { ChunkWorkerResult } from './ChunkWorker';
-import type { RockGenerationConfig } from '../types';
+import type { RockGenerationConfig, CraterGenerationConfig } from '../types';
 import {
   getNeighborKeys,
   parseGridKey,
@@ -80,6 +80,7 @@ export class ChunkManager {
     terrainGenerator: TerrainGenerator,
     rockManager: RockManager,
     rockGenerationConfig: RockGenerationConfig,
+    craterGenerationConfig: CraterGenerationConfig,
     requestRender: () => void
   ) {
     this.scene = scene;
@@ -112,6 +113,16 @@ export class ChunkManager {
       width: config.chunkWidth,
       depth: config.chunkDepth,
       renderDistance: config.renderDistance,
+      // Crater generation parameters
+      craterSeed: craterGenerationConfig.seed,
+      craterDensity: craterGenerationConfig.density,
+      craterMinRadius: craterGenerationConfig.minRadius,
+      craterMaxRadius: craterGenerationConfig.maxRadius,
+      craterPowerLawExponent: craterGenerationConfig.powerLawExponent,
+      craterDepthRatio: craterGenerationConfig.depthRatio,
+      craterRimHeight: craterGenerationConfig.rimHeight,
+      craterRimWidth: craterGenerationConfig.rimWidth,
+      craterFloorFlatness: craterGenerationConfig.floorFlatness,
     };
 
     this.requestQueue = new ChunkRequestQueue({

@@ -1,4 +1,12 @@
 import { generateTerrain, createTerrainEvaluator, type TerrainArgs } from './terrain';
+import { 
+  generateCratersForRegion, 
+  getCraterHeightModAt, 
+  applyCratersToHeightBuffer,
+  parseGridKey,
+  type CraterParams, 
+  type Crater 
+} from './craters';
 import alea from 'alea';
 import type { RockGenerationConfig } from '../types';
 
@@ -181,6 +189,11 @@ const MAX_BURIAL_PERCENT = 0.6; // Maximum percentage of rock below surface (60%
 // Terrain evaluator cached per chunk (reuses exact same logic as generateTerrain)
 let cachedTerrainEvaluator: ((x: number, z: number) => {y: number; biome: number[]}) | null = null;
 
+// Cached craters for current chunk (used by both terrain and rock placement)
+let cachedCraters: Crater[] = [];
+let cachedChunkWorldX = 0;
+let cachedChunkWorldZ = 0;
+
 /**
  * Setup the height sampler by creating the terrain evaluator.
  * Uses the exact same logic as generateTerrain - just caches the evaluator function.
@@ -191,9 +204,29 @@ function setupHeightSampler(terrainArgs: TerrainArgs): void {
 }
 
 /**
+ * Setup crater cache for current chunk.
+ */
+function setupCraterCache(
+  gridKey: string, 
+  chunkWidth: number, 
+  chunkDepth: number, 
+  params: CraterParams
+): void {
+  // Generate craters for this region (including neighbors for seamless edges)
+  cachedCraters = generateCratersForRegion(gridKey, chunkWidth, chunkDepth, params);
+  
+  // Cache chunk world offset for coordinate conversion
+  const [gridX, gridZ] = parseGridKey(gridKey);
+  cachedChunkWorldX = gridX * chunkWidth;
+  cachedChunkWorldZ = gridZ * chunkDepth;
+}
+
+/**
  * Sample terrain height by calling the terrain evaluator directly.
  * Uses the exact same function as generateTerrain - just for a single point.
  * IMPORTANT: Must apply the same strength multiplier as displaceY() in terrain.ts
+ * 
+ * Now includes crater modifications for unified height function.
  */
 function sampleHeightFromVertices(
   _positions: ArrayLike<number>,
@@ -214,7 +247,14 @@ function sampleHeightFromVertices(
   // Apply the same strength multiplier as displaceY() in terrain.ts
   // This ensures rock height matches actual terrain mesh height
   const strength = 2.8 * (1 - smoothLowerPlanes * 0.5);
-  return result.y * strength;
+  const baseHeight = result.y * strength;
+  
+  // Apply crater modifications (convert local to world coordinates)
+  const worldX = x + cachedChunkWorldX;
+  const worldZ = z + cachedChunkWorldZ;
+  const craterMod = getCraterHeightModAt(worldX, worldZ, cachedCraters);
+  
+  return baseHeight + craterMod;
 }
 
 /**
@@ -592,15 +632,52 @@ function hashString(str: string): number {
 self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
   const { terrainArgs, gridKey, lodLevel, rockLibrarySize, rockConfig, stableAxes } = m.data;
 
+  // Setup crater cache FIRST (before terrain generation)
+  // This ensures both terrain and rock placement use the same craters
+  const craterParams: CraterParams = {
+    seed: terrainArgs.craterSeed,
+    density: terrainArgs.craterDensity,
+    minRadius: terrainArgs.craterMinRadius,
+    maxRadius: terrainArgs.craterMaxRadius,
+    powerLawExponent: terrainArgs.craterPowerLawExponent,
+    depthRatio: terrainArgs.craterDepthRatio,
+    rimHeight: terrainArgs.craterRimHeight,
+    rimWidth: terrainArgs.craterRimWidth,
+    floorFlatness: terrainArgs.craterFloorFlatness,
+  };
+  setupCraterCache(gridKey, terrainArgs.width, terrainArgs.depth, craterParams);
+
   // Generate terrain geometry
   const geometry = generateTerrain(terrainArgs);
 
-  // Extract terrain attributes
-  const positions = geometry.attributes.position.array;
-  const normals = geometry.attributes.normal.array;
+  // Extract terrain attributes (positions is mutable Float32Array)
+  const positions = geometry.attributes.position.array as Float32Array;
+  let normals = geometry.attributes.normal.array;
   const index = geometry.index?.array;
 
+  // Apply cached craters to the terrain height buffer
+  // Convert to local chunk space for mesh modification
+  const localCraters: Crater[] = cachedCraters.map(crater => ({
+    ...crater,
+    centerX: crater.centerX - cachedChunkWorldX,
+    centerZ: crater.centerZ - cachedChunkWorldZ,
+  }));
+  
+  // Apply to mesh (enable debug for chunk 0,0)
+  const debugLog = gridKey === '0,0';
+  applyCratersToHeightBuffer(positions, terrainArgs.width, terrainArgs.depth, localCraters, debugLog);
+  
+  if (cachedCraters.length > 0) {
+    console.log(`[Crater] Chunk ${gridKey}: Applied ${cachedCraters.length} craters`);
+  }
+
+  // Recompute normals after crater application
+  geometry.attributes.position.needsUpdate = true;
+  geometry.computeVertexNormals();
+  normals = geometry.attributes.normal.array;
+
   // Generate rock placements using scientific lunar distribution
+  // Rocks will now sit on the cratered terrain
   const rockPlacements = generateRockPlacements(
     positions,
     terrainArgs,

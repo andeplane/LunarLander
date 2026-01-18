@@ -28,6 +28,16 @@ export type TerrainArgs = {
   posX: number;
   posZ: number;
   renderDistance: number;
+  // Crater generation parameters
+  craterSeed: number;
+  craterDensity: number;           // Craters per km² at reference size
+  craterMinRadius: number;         // Minimum crater radius in meters
+  craterMaxRadius: number;         // Maximum crater radius in meters
+  craterPowerLawExponent: number;  // Size-frequency distribution exponent
+  craterDepthRatio: number;        // Crater depth = radius * ratio
+  craterRimHeight: number;         // Rim height as fraction of depth
+  craterRimWidth: number;          // Rim extends beyond radius by this fraction
+  craterFloorFlatness: number;     // 0 = parabolic bowl, 1 = flat floor
 };
 
 /**
