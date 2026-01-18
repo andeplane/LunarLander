@@ -1,4 +1,4 @@
-import { BufferGeometry, IcosahedronGeometry, Vector3 } from 'three';
+import { BufferGeometry, IcosahedronGeometry, Vector3, Matrix3 } from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { createNoise3D, type NoiseFunction3D } from 'simplex-noise';
 import alea from 'alea';
@@ -356,6 +356,124 @@ export class RockBuilder {
     RockBuilder.applyScrapingAndNoise(geometry, seed, options);
 
     return geometry;
+  }
+
+  /**
+   * Calculate moment of inertia tensor from geometry vertices.
+   * Assumes uniform density and unit mass.
+   * 
+   * Formula: I_ij = Σ(vertices) [δ_ij * (x² + y² + z²) - x_i * x_j]
+   * where δ_ij is Kronecker delta (1 if i==j, 0 otherwise)
+   * 
+   * @param geometry - BufferGeometry with vertex positions
+   * @returns 3x3 moment of inertia tensor as Matrix3
+   */
+  private static calculateMomentOfInertiaTensor(geometry: BufferGeometry): Matrix3 {
+    const positions = geometry.attributes.position;
+    const positionArray = positions.array as Float32Array;
+    const vertexCount = positions.count;
+
+    // Initialize tensor components
+    let Ixx = 0, Iyy = 0, Izz = 0;
+    let Ixy = 0, Ixz = 0, Iyz = 0;
+
+    // Calculate center of mass (should be at origin after geometry.center())
+    let cx = 0, cy = 0, cz = 0;
+    for (let i = 0; i < vertexCount; i++) {
+      cx += positionArray[i * 3];
+      cy += positionArray[i * 3 + 1];
+      cz += positionArray[i * 3 + 2];
+    }
+    cx /= vertexCount;
+    cy /= vertexCount;
+    cz /= vertexCount;
+
+    // Calculate moment of inertia tensor
+    for (let i = 0; i < vertexCount; i++) {
+      const x = positionArray[i * 3] - cx;
+      const y = positionArray[i * 3 + 1] - cy;
+      const z = positionArray[i * 3 + 2] - cz;
+
+      const r2 = x * x + y * y + z * z;
+
+      // Diagonal components: I_ii = Σ(r² - x_i²) = Σ(x_j² + x_k²) where j,k ≠ i
+      Ixx += r2 - x * x; // y² + z²
+      Iyy += r2 - y * y; // x² + z²
+      Izz += r2 - z * z; // x² + y²
+
+      // Off-diagonal components: I_ij = -Σ(x_i * x_j)
+      Ixy -= x * y;
+      Ixz -= x * z;
+      Iyz -= y * z;
+    }
+
+    // Normalize by vertex count (assuming uniform mass distribution)
+    const invN = 1.0 / vertexCount;
+    Ixx *= invN;
+    Iyy *= invN;
+    Izz *= invN;
+    Ixy *= invN;
+    Ixz *= invN;
+    Iyz *= invN;
+
+    // Create Matrix3 (column-major order)
+    return new Matrix3().set(
+      Ixx, Ixy, Ixz,
+      Ixy, Iyy, Iyz,
+      Ixz, Iyz, Izz
+    );
+  }
+
+  /**
+   * Extract principal axes from moment of inertia tensor using power iteration.
+   * Returns the stable axis (principal axis with largest moment of inertia).
+   * 
+   * @param tensor - 3x3 moment of inertia tensor
+   * @returns Normalized Vector3 representing the stable axis (principal eigenvector)
+   */
+  private static extractPrincipalAxes(tensor: Matrix3): Vector3 {
+    // Use power iteration to find the largest eigenvalue/eigenvector
+    // This is simpler than full eigendecomposition and sufficient for our needs
+    
+    let v = new Vector3(1, 0, 0); // Initial guess
+    const temp = new Vector3();
+    
+    // Power iteration: v = (A * v) / ||A * v||
+    // Converges to the eigenvector with largest eigenvalue
+    for (let iter = 0; iter < 20; iter++) {
+      // Multiply tensor by vector: temp = tensor * v
+      const vx = v.x, vy = v.y, vz = v.z;
+      temp.set(
+        tensor.elements[0] * vx + tensor.elements[3] * vy + tensor.elements[6] * vz,
+        tensor.elements[1] * vx + tensor.elements[4] * vy + tensor.elements[7] * vz,
+        tensor.elements[2] * vx + tensor.elements[5] * vy + tensor.elements[8] * vz
+      );
+      
+      // Normalize
+      const len = temp.length();
+      if (len < 1e-6) {
+        // If vector becomes zero, restart with random direction
+        v.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+        continue;
+      }
+      
+      temp.multiplyScalar(1.0 / len);
+      v.copy(temp);
+    }
+    
+    return v.normalize();
+  }
+
+  /**
+   * Calculate and return the stable axis (principal axis) for a rock geometry.
+   * The stable axis is the direction the rock naturally wants to orient (like a spinning top).
+   * 
+   * @param geometry - BufferGeometry to analyze
+   * @returns Normalized Vector3 representing the stable axis
+   */
+  static calculateStableAxis(geometry: BufferGeometry): Vector3 {
+    const tensor = RockBuilder.calculateMomentOfInertiaTensor(geometry);
+    return RockBuilder.extractPrincipalAxes(tensor);
   }
 
   /**

@@ -1,4 +1,4 @@
-import { BufferGeometry, InstancedMesh, Matrix4 } from 'three';
+import { BufferGeometry, InstancedMesh, Matrix4, Vector3 } from 'three';
 import { RockBuilder } from './RockBuilder';
 import { MoonMaterial } from '../shaders/MoonMaterial';
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
@@ -19,6 +19,9 @@ export class RockManager {
   // Store prototypes by detail level (3, 4, 5) instead of LOD level
   // This avoids generating duplicate libraries for LODs that share the same detail level
   private prototypesByDetail: Map<number, BufferGeometry[]> = new Map();
+  // Store stable axes (principal axes) for each prototype by detail level
+  // Each entry is an array of Vector3, one per prototype
+  private stableAxesByDetail: Map<number, Vector3[]> = new Map();
   private material: MoonMaterial;
   private librarySize: number;
   private chunkWidth: number;
@@ -126,10 +129,28 @@ export class RockManager {
       console.log(`  Detail ${detail} (~${expectedTriangles} triangles)`);
       const libraries = RockBuilder.generateLibrary(this.librarySize, { detail });
       this.prototypesByDetail.set(detail, libraries);
+
+      // Calculate and store stable axes for each prototype
+      const stableAxes: Vector3[] = [];
+      for (const geometry of libraries) {
+        const stableAxis = RockBuilder.calculateStableAxis(geometry);
+        stableAxes.push(stableAxis);
+      }
+      this.stableAxesByDetail.set(detail, stableAxes);
     }
 
     const elapsed = performance.now() - startTime;
     console.log(`Rock prototype libraries generated in ${elapsed.toFixed(1)}ms`);
+  }
+
+  /**
+   * Get stable axes (principal axes) for prototypes at a given detail level.
+   * 
+   * @param detailLevel - Detail level (7, 10, or 15)
+   * @returns Array of Vector3 representing stable axes, one per prototype
+   */
+  getStableAxesForDetail(detailLevel: number): Vector3[] | undefined {
+    return this.stableAxesByDetail.get(detailLevel);
   }
 
   /**

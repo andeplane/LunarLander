@@ -377,12 +377,34 @@ export class ChunkManager {
         const key = `${request.gridKey}:${request.lodLevel}`;
         this.inFlight.add(key);
         workerState.busy = true;
+
+        // Get stable axes for this LOD level
+        const detail = RockManager.getDetailForLod(
+          request.lodLevel,
+          this.config.chunkWidth,
+          this.config.chunkDepth,
+          this.config.lodLevels
+        );
+        const stableAxes = this.rockManager.getStableAxesForDetail(detail);
+        
+        // Flatten stable axes array to Float32Array [x1, y1, z1, x2, y2, z2, ...]
+        let stableAxesFlat: Float32Array | undefined;
+        if (stableAxes) {
+          stableAxesFlat = new Float32Array(stableAxes.length * 3);
+          for (let i = 0; i < stableAxes.length; i++) {
+            stableAxesFlat[i * 3] = stableAxes[i].x;
+            stableAxesFlat[i * 3 + 1] = stableAxes[i].y;
+            stableAxesFlat[i * 3 + 2] = stableAxes[i].z;
+          }
+        }
+
         workerState.worker.postMessage({
           terrainArgs: request.terrainArgs,
           gridKey: request.gridKey,
           lodLevel: request.lodLevel,
           rockLibrarySize: this.rockManager.getLibrarySize(),
           rockConfig: this.rockGenerationConfig,
+          stableAxes: stableAxesFlat,
         });
       }
     }
