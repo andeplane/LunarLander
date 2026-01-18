@@ -663,13 +663,8 @@ self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
     centerZ: crater.centerZ - cachedChunkWorldZ,
   }));
   
-  // Apply to mesh (enable debug for chunk 0,0)
-  const debugLog = gridKey === '0,0';
-  applyCratersToHeightBuffer(positions, terrainArgs.width, terrainArgs.depth, localCraters, debugLog);
-  
-  if (cachedCraters.length > 0) {
-    console.log(`[Crater] Chunk ${gridKey}: Applied ${cachedCraters.length} craters`);
-  }
+  // Apply to mesh
+  applyCratersToHeightBuffer(positions, terrainArgs.width, terrainArgs.depth, localCraters);
 
   // Recompute normals after crater application
   geometry.attributes.position.needsUpdate = true;

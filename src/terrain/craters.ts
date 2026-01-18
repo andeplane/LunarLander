@@ -395,34 +395,12 @@ export function applyCratersToHeightBuffer(
   positions: Float32Array,
   _chunkWidth: number,
   _chunkDepth: number,
-  craters: Crater[],
-  debugLog: boolean = false
+  craters: Crater[]
 ): void {
   if (craters.length === 0) return;
   
   const vertexCount = positions.length / 3;
   let modifiedCount = 0;
-  
-  // Debug: log vertex bounds and first crater info
-  if (debugLog) {
-    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-    let minY = Infinity, maxY = -Infinity;
-    for (let i = 0; i < vertexCount; i++) {
-      const x = positions[i * 3];
-      const y = positions[i * 3 + 1];
-      const z = positions[i * 3 + 2];
-      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
-      minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
-    }
-    console.log(`[Crater Debug] Vertex bounds: X=[${minX.toFixed(1)}, ${maxX.toFixed(1)}], Y=[${minY.toFixed(2)}, ${maxY.toFixed(2)}], Z=[${minZ.toFixed(1)}, ${maxZ.toFixed(1)}]`);
-    console.log(`[Crater Debug] Total craters to apply: ${craters.length}`);
-    
-    if (craters.length > 0) {
-      const c = craters[0];
-      console.log(`[Crater Debug] First crater: center=(${c.centerX.toFixed(1)}, ${c.centerZ.toFixed(1)}), radius=${c.radius.toFixed(1)}, depth=${c.depth.toFixed(2)}, rimOuter=${c.rimOuterRadius.toFixed(1)}`);
-    }
-  }
   
   // For each vertex, compute crater influence
   for (let i = 0; i < vertexCount; i++) {
@@ -465,19 +443,10 @@ export function applyCratersToHeightBuffer(
     if (totalHeightMod < 0) {
       positions[i * 3 + 1] = y + totalHeightMod;
       modifiedCount++;
-      
-      // Debug: log first modification
-      if (debugLog && modifiedCount === 1) {
-        console.log(`[Crater Debug] First vertex mod: pos=(${x.toFixed(1)}, ${y.toFixed(2)}, ${z.toFixed(1)}), heightMod=${totalHeightMod.toFixed(2)}, newY=${(y + totalHeightMod).toFixed(2)}`);
-      }
     } else if (hasRim) {
       positions[i * 3 + 1] = y + maxRim;
       modifiedCount++;
     }
-  }
-  
-  if (debugLog) {
-    console.log(`[Crater Debug] Modified ${modifiedCount} of ${vertexCount} vertices`);
   }
 }
 
@@ -517,9 +486,8 @@ export function applyCratersToChunk(
     centerZ: crater.centerZ - chunkWorldZ,
   }));
   
-  // Apply craters to height buffer (enable debug for chunk 0,0)
-  const debugLog = gridKey === '0,0';
-  applyCratersToHeightBuffer(positions, chunkWidth, chunkDepth, localCraters, debugLog);
+  // Apply craters to height buffer
+  applyCratersToHeightBuffer(positions, chunkWidth, chunkDepth, localCraters);
   
   return craters.length;
 }
