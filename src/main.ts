@@ -161,7 +161,7 @@ celestialSystem.setCamera(engine.getCamera());
 engine.setCelestialSystem(celestialSystem);
 
 // Load skybox texture (now handled by CelestialSystem as a mesh)
-celestialSystem.loadSkyboxTexture('/textures/8k_stars_milky_way.jpg');
+celestialSystem.loadSkyboxTexture(`${import.meta.env.BASE_URL}textures/8k_stars_milky_way.jpg`);
 
 // Initialize shader UI controller (after celestial system so they can be synced)
 const shaderUI = new ShaderUIController(
@@ -185,7 +185,7 @@ const configureTexture = (texture: Texture) => {
 };
 
 // Load high detail texture
-textureLoader.load('/textures/surface-high-detail.png', (texture) => {
+textureLoader.load(`${import.meta.env.BASE_URL}textures/surface-high-detail.png`, (texture) => {
   configureTexture(texture);
   
   // Apply to materials
