@@ -54,6 +54,9 @@ export class Engine {
   private previousCameraPosition: THREE.Vector3 = new THREE.Vector3();
   private previousCameraQuaternion: THREE.Quaternion = new THREE.Quaternion();
   private needsRender: boolean = true; // Always render first frame
+  
+  // Reusable vector for camera direction calculation
+  private cameraForward: THREE.Vector3 = new THREE.Vector3();
 
   constructor(canvas: HTMLCanvasElement) {
     // Initialize renderer
@@ -163,6 +166,9 @@ export class Engine {
     const agl = terrainHeight !== null ? (cameraPos.y - terrainHeight).toFixed(2) : 'N/A';
     const terrainH = terrainHeight !== null ? terrainHeight.toFixed(2) : 'N/A';
     
+    // Calculate camera forward direction in world space
+    this.camera.getWorldDirection(this.cameraForward);
+    
     // Curvature debug info
     const planetRadius = this.celestialSystem?.getPlanetRadius() ?? DEFAULT_PLANET_RADIUS;
     const d = Math.sqrt(cameraPos.x * cameraPos.x + cameraPos.z * cameraPos.z);
@@ -176,6 +182,11 @@ export class Engine {
       X: ${cameraPos.x.toFixed(1)}m<br>
       Y: ${cameraPos.y.toFixed(1)}m<br>
       Z: ${cameraPos.z.toFixed(1)}m<br>
+      <br>
+      <strong>Camera Direction</strong><br>
+      X: ${this.cameraForward.x.toFixed(3)}<br>
+      Y: ${this.cameraForward.y.toFixed(3)}<br>
+      Z: ${this.cameraForward.z.toFixed(3)}<br>
       <br>
       <strong>Curvature</strong><br>
       Distance: ${d.toFixed(1)}m<br>
@@ -327,9 +338,21 @@ export class Engine {
     // Check for camera position debug (C key)
     if (this.inputManager?.isKeyJustPressed('c')) {
       const pos = this.camera.position;
-      const rot = this.camera.rotation;
-      console.log(`Camera Position: x=${pos.x.toFixed(2)}, y=${pos.y.toFixed(2)}, z=${pos.z.toFixed(2)}`);
-      console.log(`Camera Rotation: x=${rot.x.toFixed(4)}, y=${rot.y.toFixed(4)}, z=${rot.z.toFixed(4)}`);
+      this.camera.getWorldDirection(this.cameraForward);
+      
+      const positionStr = `Position: (${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)})`;
+      const directionStr = `Direction: (${this.cameraForward.x.toFixed(3)}, ${this.cameraForward.y.toFixed(3)}, ${this.cameraForward.z.toFixed(3)})`;
+      const copyText = `${positionStr}\n${directionStr}`;
+      
+      console.log(positionStr);
+      console.log(directionStr);
+      
+      // Copy to clipboard
+      navigator.clipboard.writeText(copyText).then(() => {
+        console.log('Camera position and direction copied to clipboard');
+      }).catch((err) => {
+        console.error('Failed to copy to clipboard:', err);
+      });
     }
 
 
