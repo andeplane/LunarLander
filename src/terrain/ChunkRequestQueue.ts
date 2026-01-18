@@ -103,7 +103,12 @@ export function defaultPriorityCalculator(
     ? (maxLodLevel - lodLevel) * 1000000
     : 0;
 
-  return distance + directionFactor + lodPriority;
+  // When LOD levels are equal, distance should dominate
+  // Scale directionFactor to be smaller than distance differences
+  // Use a smaller multiplier so distance is the primary factor
+  const scaledDirectionFactor = directionFactor * 0.1;
+
+  return distance + scaledDirectionFactor + lodPriority;
 }
 
 const defaultDependencies: ChunkRequestQueueDependencies = {

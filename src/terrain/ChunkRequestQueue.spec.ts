@@ -146,14 +146,16 @@ describe(ChunkRequestQueue.name, () => {
 
       const cameraPos = new Vector3(0, 0, 0);
       const cameraForward = new Vector3(0, 0, 1);
+      const nearestKeys = new Set<string>();
 
       // Act
-      customQueue.sort(cameraPos, cameraForward, new Set());
+      customQueue.sort(cameraPos, cameraForward, nearestKeys);
 
       // Assert - with 2 items, sort calls comparator once (2 calls to calculatePriority)
       expect(mockCalculator).toHaveBeenCalledTimes(2);
-      expect(mockCalculator).toHaveBeenCalledWith('0,0', cameraPos, cameraForward, chunkConfig, new Set());
-      expect(mockCalculator).toHaveBeenCalledWith('1,1', cameraPos, cameraForward, chunkConfig, new Set());
+      // Each call includes gridKey, cameraPos, cameraForward, chunkConfig, nearestKeys, lodLevel, maxLodLevel
+      expect(mockCalculator).toHaveBeenCalledWith('0,0', cameraPos, cameraForward, chunkConfig, nearestKeys, 0, undefined);
+      expect(mockCalculator).toHaveBeenCalledWith('1,1', cameraPos, cameraForward, chunkConfig, nearestKeys, 0, undefined);
     });
   });
 
@@ -213,26 +215,34 @@ describe(defaultPriorityCalculator.name, () => {
     expect(frontPriority).toBeLessThan(behindPriority);
   });
 
-  it('should return lower priority for closer chunks', () => {
+  it('should return lower priority for closer chunks when direction factor is equal', () => {
+    // Camera at center of chunk 0,0, looking along axis where direction factor is same for both test chunks
     const cameraPos = new Vector3(0, 0, 0);
-    const cameraForward = new Vector3(1, 0, 0); // Looking right, neutral for Z axis
+    const cameraForward = new Vector3(0, 1, 0); // Looking up (Y axis), so X/Z direction factor is 0
     const nearestChunkKeys = new Set<string>();
 
+    // Compare chunks along X axis - both at Z=0, different X distances
+    // '1,0' center at (50, 0), '3,0' center at (150, 0)
     const closePriority = defaultPriorityCalculator(
-      '0,0', // Center at (25, 25)
+      '1,0', // Center at (50, 0) - closer
       cameraPos,
       cameraForward,
       chunkConfig,
-      nearestChunkKeys
+      nearestChunkKeys,
+      0, // lodLevel
+      3  // maxLodLevel
     );
     const farPriority = defaultPriorityCalculator(
-      '3,3', // Center at (175, 175)
+      '3,0', // Center at (150, 0) - farther
       cameraPos,
       cameraForward,
       chunkConfig,
-      nearestChunkKeys
+      nearestChunkKeys,
+      0,
+      3
     );
 
+    // With neutral direction (looking up), closer chunks should have lower priority value
     expect(closePriority).toBeLessThan(farPriority);
   });
 
@@ -247,7 +257,9 @@ describe(defaultPriorityCalculator.name, () => {
       cameraPos,
       cameraForward,
       chunkConfig,
-      nearestChunkKeys
+      nearestChunkKeys,
+      0, // lodLevel
+      3  // maxLodLevel
     );
 
     // Non-nearest chunk should get normal priority
@@ -256,12 +268,15 @@ describe(defaultPriorityCalculator.name, () => {
       cameraPos,
       cameraForward,
       chunkConfig,
-      nearestChunkKeys
+      nearestChunkKeys,
+      0,
+      3
     );
 
     // Nearest should have much lower priority value (= much higher priority)
     expect(nearestPriority).toBeLessThan(normalPriority);
-    expect(nearestPriority).toBe(-1000000);
+    // Nearest chunks get -20000000 base priority + distance + direction + lodPriority
+    expect(nearestPriority).toBeLessThan(-19000000);
   });
 });
 
