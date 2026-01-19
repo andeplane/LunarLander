@@ -822,11 +822,25 @@ export class ChunkManager {
   /**
    * Update sun direction for horizon occlusion calculation
    * Should be called each frame with the current sun direction in world space
+   * Applies to both terrain and rocks
    * 
    * @param direction Sun direction vector (normalized, in world space)
    */
   setSunDirection(direction: Vector3): void {
     this.terrainGenerator.setSunDirection(direction);
+    this.rockManager.setSunDirection(direction);
+  }
+
+  /**
+   * Set sun horizon fade factor
+   * Should be called each frame with the current horizon fade (0 = below horizon, 1 = above horizon)
+   * Applies to both terrain and rocks
+   * 
+   * @param fade Horizon fade factor (0-1)
+   */
+  setSunHorizonFade(fade: number): void {
+    this.terrainGenerator.setSunHorizonFade(fade);
+    this.rockManager.setSunHorizonFade(fade);
   }
 
   /**

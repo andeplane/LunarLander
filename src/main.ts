@@ -199,6 +199,39 @@ textureLoader.load(`${import.meta.env.BASE_URL}textures/surface-high-detail.png`
 // Start the render loop
 engine.start();
 
+// Expose for debugging (access via window.debug in console)
+(window as any).debug = {
+  engine,
+  getTerrainMaterial: () => {
+    const mat = terrainGenerator.getMaterial();
+    // Wrap setParam to auto-trigger re-render
+    const originalSetParam = mat.setParam.bind(mat);
+    mat.setParam = (key: any, value: any) => {
+      originalSetParam(key, value);
+      engine.requestRender();
+    };
+    return mat;
+  },
+  getRockMaterial: () => {
+    const mat = rockManager.getMaterial();
+    const originalSetParam = mat.setParam.bind(mat);
+    mat.setParam = (key: any, value: any) => {
+      originalSetParam(key, value);
+      engine.requestRender();
+    };
+    return mat;
+  },
+  setDebugMode: (mode: number) => {
+    terrainGenerator.getMaterial().setParam('debugMode', mode);
+    rockManager.getMaterial().setParam('debugMode', mode);
+    engine.requestRender();
+    console.log(`Debug mode set to ${mode}`);
+    console.log('Modes: 0=normal, 1=meshNormal, 2=microNormal, 3=worldNorm, 4=detailFade, 5=viewDir, 6=gl_FrontFacing');
+  },
+  render: () => engine.requestRender()
+};
+console.log('Debug: window.debug.setDebugMode(1-6) to visualize shader values');
+
 // Handle cleanup on page unload
 window.addEventListener('beforeunload', () => {
   shaderUI.dispose();

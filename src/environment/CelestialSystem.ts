@@ -120,6 +120,9 @@ export class CelestialSystem {
   private readonly sunWorldPos = new THREE.Vector3();
   private readonly earthWorldPos = new THREE.Vector3();
   
+  // Current sun horizon fade (0 = below horizon, 1 = above horizon)
+  private currentSunHorizonFade: number = 1.0;
+  
   constructor(scene: THREE.Scene, requestRender: () => void, config: CelestialConfig = {}) {
     this.scene = scene;
     this.requestRender = requestRender;
@@ -457,12 +460,19 @@ export class CelestialSystem {
       // THREE.MathUtils.smoothstep signature is (x, min, max)
       const horizonFade = THREE.MathUtils.smoothstep(sunElevation, -0.1, 0.1);
       
+      // Store for external access
+      this.currentSunHorizonFade = horizonFade;
+      
       // Apply fade to sun light intensity only
       this.sunLight.intensity = this.config.sunIntensity * horizonFade;
       
       // DON'T fade earthshine with sun - Earth is a separate light source
       // that may still be above the horizon when the sun is below
       // Earthshine intensity remains constant based on config
+    } else {
+      // Sun is at origin or invalid - treat as below horizon
+      this.currentSunHorizonFade = 0.0;
+      this.sunLight.intensity = 0.0;
     }
     
     // Update spaceship light to follow camera
@@ -648,6 +658,14 @@ export class CelestialSystem {
    */
   getSunDirectionForTerrain(): THREE.Vector3 {
     return this.sunWorldPos.clone().normalize();
+  }
+
+  /**
+   * Get the sun horizon fade factor (0 = below horizon, 1 = above horizon)
+   * This matches the fade applied to sunLight.intensity
+   */
+  getSunHorizonFade(): number {
+    return this.currentSunHorizonFade;
   }
   
   /**

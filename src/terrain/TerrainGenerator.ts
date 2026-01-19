@@ -227,6 +227,16 @@ export class TerrainGenerator {
   }
 
   /**
+   * Set sun horizon fade factor
+   * Should be called each frame with the current horizon fade (0 = below horizon, 1 = above horizon)
+   * 
+   * @param fade Horizon fade factor (0-1)
+   */
+  setSunHorizonFade(fade: number): void {
+    this.material.setSunHorizonFade(fade);
+  }
+
+  /**
    * Clean up resources
    */
   dispose(): void {

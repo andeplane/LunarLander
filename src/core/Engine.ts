@@ -370,11 +370,13 @@ export class Engine {
     if (this.celestialSystem) {
       this.celestialSystem.update(this.camera.position, deltaTime);
       
-      // Update sun direction for horizon occlusion in terrain shader
+      // Update sun direction and horizon fade for terrain and rocks
       // Use getSunDirectionForTerrain() which gives direction TO the sun
       if (this.chunkManager) {
         const sunDirection = this.celestialSystem.getSunDirectionForTerrain();
+        const sunHorizonFade = this.celestialSystem.getSunHorizonFade();
         this.chunkManager.setSunDirection(sunDirection);
+        this.chunkManager.setSunHorizonFade(sunHorizonFade);
       }
     }
 

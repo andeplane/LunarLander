@@ -251,6 +251,26 @@ export class RockManager {
   }
 
   /**
+   * Update sun direction for horizon occlusion calculation
+   * Should be called each frame with the current sun direction in world space
+   * 
+   * @param direction Sun direction vector (normalized, in world space)
+   */
+  setSunDirection(direction: Vector3): void {
+    this.material.setSunDirection(direction);
+  }
+
+  /**
+   * Set sun horizon fade factor
+   * Should be called each frame with the current horizon fade (0 = below horizon, 1 = above horizon)
+   * 
+   * @param fade Horizon fade factor (0-1)
+   */
+  setSunHorizonFade(fade: number): void {
+    this.material.setSunHorizonFade(fade);
+  }
+
+  /**
    * Get a specific prototype geometry by index and LOD level.
    * 
    * @param index - Prototype index (wraps around if > library size)

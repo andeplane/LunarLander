@@ -147,6 +147,113 @@ export const glslCommon = `
   }
 
   // ==========================================
+  // DERIVATIVE-BASED NOISE (Elevated-inspired)
+  // Returns vec3(noise, dNoise/dx, dNoise/dy)
+  // https://iquilezles.org/articles/morenoise
+  // ==========================================
+  
+  // Rotation matrix to break axis alignment between octaves
+  const mat2 m2 = mat2(0.8, -0.6, 0.6, 0.8);
+  
+  // Hash function for value noise
+  float hash2D(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+  }
+  
+  // 2D Value noise with analytical derivatives
+  // Returns vec3(noise value, dNoise/dx, dNoise/dy)
+  vec3 noised2D(vec2 x) {
+    vec2 p = floor(x);
+    vec2 f = fract(x);
+    
+    // Quintic interpolation for smoother derivatives
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+    
+    // Sample four corners
+    float a = hash2D(p + vec2(0.0, 0.0));
+    float b = hash2D(p + vec2(1.0, 0.0));
+    float c = hash2D(p + vec2(0.0, 1.0));
+    float d = hash2D(p + vec2(1.0, 1.0));
+    
+    // Bilinear interpolation
+    float k0 = a;
+    float k1 = b - a;
+    float k2 = c - a;
+    float k4 = a - b - c + d;
+    
+    float value = k0 + k1 * u.x + k2 * u.y + k4 * u.x * u.y;
+    
+    // Analytical derivatives
+    vec2 derivatives = du * (vec2(k1, k2) + k4 * u.yx);
+    
+    return vec3(value, derivatives);
+  }
+  
+  // FBM with derivatives for normal computation (Elevated-inspired)
+  // Uses derivative accumulation for erosion-like dampening effect
+  // Returns vec3(height, dHeight/dx, dHeight/dy)
+  vec3 fbmDerivatives(vec2 p, int octaves, float frequency, float amplitude) {
+    float value = 0.0;
+    vec2 derivatives = vec2(0.0);
+    vec2 derivativeSum = vec2(0.0); // Accumulated derivatives for erosion effect
+    
+    float amp = amplitude;
+    float freq = frequency;
+    
+    for (int i = 0; i < 8; i++) {
+      if (i >= octaves) break;
+      
+      vec3 n = noised2D(p * freq);
+      
+      // Erosion-inspired dampening: ridges become sharper as derivatives accumulate
+      float erosionFactor = 1.0 / (1.0 + dot(derivativeSum, derivativeSum));
+      
+      value += amp * n.x * erosionFactor;
+      derivatives += amp * n.yz * erosionFactor;
+      derivativeSum += n.yz;
+      
+      // Rotate coordinates between octaves to break axis alignment
+      p = m2 * p;
+      freq *= 2.0;
+      amp *= 0.5;
+    }
+    
+    return vec3(value, derivatives);
+  }
+  
+  // Compute micro-detail normal from FBM derivatives
+  // Returns a normal vector that can be blended with the mesh normal
+  vec3 computeMicroNormal(vec2 pos, float frequency, float strength, int octaves) {
+    vec3 fbmResult = fbmDerivatives(pos, octaves, frequency, 1.0);
+    
+    // Convert derivatives to normal perturbation
+    // Normal = normalize(vec3(-dh/dx, 1.0, -dh/dy)) where h is height
+    vec3 microNormal = normalize(vec3(
+      -fbmResult.y * strength,
+      1.0,
+      -fbmResult.z * strength
+    ));
+    
+    return microNormal;
+  }
+  
+  // Blend micro-normal with mesh normal
+  // meshNormal: the interpolated vertex normal (world space)
+  // microNormal: the computed micro-detail normal (tangent space, Y-up)
+  // Returns blended normal in world space
+  // Simple additive approach - no tangent frame, no NaN possible
+  vec3 blendNormals(vec3 meshNormal, vec3 microNormal, float blendFactor) {
+    // microNormal is approximately (perturbX, 1.0, perturbZ) from the noise derivatives
+    // We extract just the XZ perturbation and add it to the mesh normal
+    // This is simple but works well for mostly-horizontal terrain
+    vec3 perturbation = vec3(microNormal.x, 0.0, microNormal.z) * blendFactor;
+    return normalize(meshNormal + perturbation);
+  }
+
+  // ==========================================
   // FBM (Fractal Brownian Motion)
   // ==========================================
   
