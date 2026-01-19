@@ -1,4 +1,4 @@
-import { BufferGeometry, IcosahedronGeometry, Vector3, Matrix3 } from 'three';
+import { type BufferGeometry, IcosahedronGeometry, Vector3, Matrix3 } from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { createNoise3D, type NoiseFunction3D } from 'simplex-noise';
 import alea from 'alea';
@@ -17,6 +17,7 @@ import alea from 'alea';
  * 
  * This creates realistic angular rocks with flat faces and rounded areas.
  */
+// biome-ignore lint/complexity/noStaticOnlyClass: Static class used intentionally for shared reusable vector (_v1) to avoid GC pressure
 export class RockBuilder {
   // Reusable temp vectors (avoid GC pressure in hot loops)
   private static readonly _v1 = new Vector3();
@@ -82,7 +83,7 @@ export class RockBuilder {
     const r0z = cz - nz * strength;
     
     const radiusSq = radius * radius;
-    let verticesAffected = 0;
+    let _verticesAffected = 0;
     
     for (let i = 0; i < vertexCount; i++) {
       // Get ORIGINAL vertex position
@@ -117,7 +118,7 @@ export class RockBuilder {
         displacements[i * 3 + 2] += dispZ * weight;
         weights[i] += weight;
         
-        verticesAffected++;
+        _verticesAffected++;
       }
     }
   }
@@ -435,7 +436,7 @@ export class RockBuilder {
     // Use power iteration to find the largest eigenvalue/eigenvector
     // This is simpler than full eigendecomposition and sufficient for our needs
     
-    let v = new Vector3(1, 0, 0); // Initial guess
+    const v = new Vector3(1, 0, 0); // Initial guess
     const temp = new Vector3();
     
     // Power iteration: v = (A * v) / ||A * v||

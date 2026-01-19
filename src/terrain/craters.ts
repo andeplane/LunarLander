@@ -71,9 +71,9 @@ function sampleCraterRadius(
   exponent: number
 ): number {
   const u = random();
-  const minPow = Math.pow(minR, exponent);
-  const maxPow = Math.pow(maxR, exponent);
-  return Math.pow(minPow + u * (maxPow - minPow), 1 / exponent);
+  const minPow = minR ** exponent;
+  const maxPow = maxR ** exponent;
+  return (minPow + u * (maxPow - minPow)) ** (1 / exponent);
 }
 
 /**
@@ -400,7 +400,7 @@ export function applyCratersToHeightBuffer(
   if (craters.length === 0) return;
   
   const vertexCount = positions.length / 3;
-  let modifiedCount = 0;
+  let _modifiedCount = 0;
   
   // For each vertex, compute crater influence
   for (let i = 0; i < vertexCount; i++) {
@@ -442,10 +442,10 @@ export function applyCratersToHeightBuffer(
     // Depression takes priority over rim (newer craters destroy older rims)
     if (totalHeightMod < 0) {
       positions[i * 3 + 1] = y + totalHeightMod;
-      modifiedCount++;
+      _modifiedCount++;
     } else if (hasRim) {
       positions[i * 3 + 1] = y + maxRim;
-      modifiedCount++;
+      _modifiedCount++;
     }
   }
 }

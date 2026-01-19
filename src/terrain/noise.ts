@@ -1,5 +1,5 @@
 import alea from 'alea';
-import { createNoise2D, NoiseFunction2D } from 'simplex-noise';
+import { createNoise2D, type NoiseFunction2D } from 'simplex-noise';
 import { MathUtils } from 'three';
 
 export type FbmArgs = {
@@ -73,11 +73,13 @@ export function createFbmNoise(args: FbmArgs) {
   return (x: number, y: number) => {
     let value = 0;
     let amp = args.amplitude;
-    let freq = args.frequency;
+    const freq = args.frequency;
+    let xCoord = x;
+    let yCoord = y;
     for (let i = 0; i < args.octaves; i++) {
-      value += amp * noises[i](freq * x, freq * y);
-      x *= args.lacunarity;
-      y *= args.lacunarity;
+      value += amp * noises[i](freq * xCoord, freq * yCoord);
+      xCoord *= args.lacunarity;
+      yCoord *= args.lacunarity;
       amp *= args.gain;
     }
     return value + args.smoothLowerPlanes;

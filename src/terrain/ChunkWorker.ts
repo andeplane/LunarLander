@@ -63,7 +63,7 @@ export interface ChunkWorkerResult {
  * @param exponent - Power-law exponent (typically -2.5)
  */
 function rockDensityAbove(diameter: number, densityConstant: number, exponent: number): number {
-  return densityConstant * Math.pow(diameter, exponent);
+  return densityConstant * diameter ** exponent;
 }
 
 /**
@@ -99,10 +99,10 @@ function sampleRockDiameter(
 ): number {
   const u = random();
 
-  const dMinPow = Math.pow(dMin, exponent);
-  const dMaxPow = Math.pow(dMax, exponent);
+  const dMinPow = dMin ** exponent;
+  const dMaxPow = dMax ** exponent;
 
-  return Math.pow(dMinPow + u * (dMaxPow - dMinPow), 1 / exponent);
+  return (dMinPow + u * (dMaxPow - dMinPow)) ** (1 / exponent);
 }
 
 /**
@@ -229,7 +229,7 @@ function setupCraterCache(
  * Now includes crater modifications for unified height function.
  */
 function sampleHeightFromVertices(
-  _positions: ArrayLike<number>,
+  _positions: ArrayLike<number> | null,
   _resolution: number,
   _chunkWidth: number,
   _chunkDepth: number,
@@ -276,10 +276,10 @@ function calculateSlope(
   }
 
   // Sample heights at 4 nearby points
-  const h1 = sampleHeightFromVertices(null as any, 0, 0, 0, x + GRADIENT_DELTA, z, smoothLowerPlanes);
-  const h2 = sampleHeightFromVertices(null as any, 0, 0, 0, x - GRADIENT_DELTA, z, smoothLowerPlanes);
-  const h3 = sampleHeightFromVertices(null as any, 0, 0, 0, x, z + GRADIENT_DELTA, smoothLowerPlanes);
-  const h4 = sampleHeightFromVertices(null as any, 0, 0, 0, x, z - GRADIENT_DELTA, smoothLowerPlanes);
+  const h1 = sampleHeightFromVertices(null, 0, 0, 0, x + GRADIENT_DELTA, z, smoothLowerPlanes);
+  const h2 = sampleHeightFromVertices(null, 0, 0, 0, x - GRADIENT_DELTA, z, smoothLowerPlanes);
+  const h3 = sampleHeightFromVertices(null, 0, 0, 0, x, z + GRADIENT_DELTA, smoothLowerPlanes);
+  const h4 = sampleHeightFromVertices(null, 0, 0, 0, x, z - GRADIENT_DELTA, smoothLowerPlanes);
 
   // Calculate gradient components
   const gradX = (h1 - h2) / (2 * GRADIENT_DELTA);
@@ -308,10 +308,10 @@ function calculateSurfaceNormal(
   }
 
   // Sample heights at 4 nearby points
-  const h1 = sampleHeightFromVertices(null as any, 0, 0, 0, x + GRADIENT_DELTA, z, smoothLowerPlanes);
-  const h2 = sampleHeightFromVertices(null as any, 0, 0, 0, x - GRADIENT_DELTA, z, smoothLowerPlanes);
-  const h3 = sampleHeightFromVertices(null as any, 0, 0, 0, x, z + GRADIENT_DELTA, smoothLowerPlanes);
-  const h4 = sampleHeightFromVertices(null as any, 0, 0, 0, x, z - GRADIENT_DELTA, smoothLowerPlanes);
+  const h1 = sampleHeightFromVertices(null, 0, 0, 0, x + GRADIENT_DELTA, z, smoothLowerPlanes);
+  const h2 = sampleHeightFromVertices(null, 0, 0, 0, x - GRADIENT_DELTA, z, smoothLowerPlanes);
+  const h3 = sampleHeightFromVertices(null, 0, 0, 0, x, z + GRADIENT_DELTA, smoothLowerPlanes);
+  const h4 = sampleHeightFromVertices(null, 0, 0, 0, x, z - GRADIENT_DELTA, smoothLowerPlanes);
 
   // Calculate gradient components
   const gradX = (h1 - h2) / (2 * GRADIENT_DELTA);
@@ -590,7 +590,10 @@ function generateRockPlacements(
     if (!placementsByPrototype.has(prototypeId)) {
       placementsByPrototype.set(prototypeId, []);
     }
-    placementsByPrototype.get(prototypeId)!.push(matrix);
+    const matrices = placementsByPrototype.get(prototypeId);
+    if (matrices) {
+      matrices.push(matrix);
+    }
   }
 
   // Convert to RockPlacement array

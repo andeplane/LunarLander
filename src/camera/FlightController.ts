@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { CameraConfig } from '../types';
-import { InputManager } from '../core/InputManager';
-import { ChunkManager } from '../terrain/ChunkManager';
+import type { InputManager } from '../core/InputManager';
+import type { ChunkManager } from '../terrain/ChunkManager';
 
 /**
  * Flight controller responsible for:

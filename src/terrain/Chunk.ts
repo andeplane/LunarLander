@@ -1,4 +1,4 @@
-import { LOD, Mesh, InstancedMesh, Scene } from 'three';
+import { LOD, type Mesh, type InstancedMesh, type Scene } from 'three';
 
 /**
  * Clean high-level container for a terrain chunk.

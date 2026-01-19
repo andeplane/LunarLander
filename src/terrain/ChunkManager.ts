@@ -1,6 +1,6 @@
-import { Scene, Vector3, Camera, PerspectiveCamera, MeshBasicMaterial, Color } from 'three';
+import { type Scene, Vector3, type Camera, type PerspectiveCamera, MeshBasicMaterial, Color } from 'three';
 import { Chunk } from './Chunk';
-import { TerrainGenerator } from './TerrainGenerator';
+import type { TerrainGenerator } from './TerrainGenerator';
 import { RockManager } from '../environment/RockManager';
 import type { TerrainArgs } from './terrain';
 import type { ChunkWorkerResult } from './ChunkWorker';
@@ -10,7 +10,7 @@ import {
   parseGridKey,
   getDistanceToChunk,
   getLodLevelForScreenSize,
-  LodDetailLevel,
+  type LodDetailLevel,
   projectToScreenSpace,
   type NeighborLods
 } from './LodUtils';
@@ -507,7 +507,10 @@ export class ChunkManager {
         this.chunks.set(gridKey, chunk);
       }
 
-      const chunk = this.chunks.get(gridKey)!;
+      const chunk = this.chunks.get(gridKey);
+      if (!chunk) {
+        continue; // Skip if chunk creation failed
+      }
 
       if (!chunk.hasLodLevel(this.collisionLodLevel)) {
         this.requestChunkLod(gridKey, this.collisionLodLevel);

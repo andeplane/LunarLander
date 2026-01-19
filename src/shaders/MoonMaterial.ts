@@ -1,4 +1,4 @@
-import { MeshStandardMaterial, Color, Texture, Vector3 } from 'three';
+import { MeshStandardMaterial, Color, type Texture, Vector3 } from 'three';
 import { glslCommon } from './glsl_common';
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 
@@ -74,7 +74,7 @@ export interface MoonMaterialParams {
  * - Optional texture slot for future use
  */
 export class MoonMaterial extends MeshStandardMaterial {
-  private shaderUniforms: { [key: string]: { value: any } } | null = null;
+  private shaderUniforms: { [key: string]: { value: unknown } } | null = null;
   private params: MoonMaterialParams;
 
   constructor() {
@@ -604,7 +604,7 @@ export class MoonMaterial extends MeshStandardMaterial {
    * @param direction Sun direction vector (normalized, in world space)
    */
   setSunDirection(direction: Vector3): void {
-    if (this.shaderUniforms && this.shaderUniforms.uSunDirection) {
+    if (this.shaderUniforms?.uSunDirection) {
       this.shaderUniforms.uSunDirection.value.copy(direction);
     }
   }
@@ -616,7 +616,7 @@ export class MoonMaterial extends MeshStandardMaterial {
    * @param fade Horizon fade factor (0-1)
    */
   setSunHorizonFade(fade: number): void {
-    if (this.shaderUniforms && this.shaderUniforms.uSunHorizonFade) {
+    if (this.shaderUniforms?.uSunHorizonFade) {
       this.shaderUniforms.uSunHorizonFade.value = fade;
     }
   }

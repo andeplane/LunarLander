@@ -1,4 +1,4 @@
-import { Vector3 } from 'three';
+import type { Vector3 } from 'three';
 import type { TerrainArgs } from './terrain';
 import { parseGridKey, getChunkWorldCenter } from './LodUtils';
 

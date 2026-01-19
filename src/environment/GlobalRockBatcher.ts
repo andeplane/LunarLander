@@ -1,6 +1,6 @@
-import { InstancedMesh, Matrix4, Scene, Vector3, BufferGeometry } from 'three';
+import { InstancedMesh, Matrix4, type Scene, type Vector3, type BufferGeometry } from 'three';
 import { RockManager } from './RockManager';
-import { MoonMaterial } from '../shaders/MoonMaterial';
+import type { MoonMaterial } from '../shaders/MoonMaterial';
 import { projectToScreenSpace, LodDetailLevel, parseGridKey } from '../terrain/LodUtils';
 import type { RockPlacement } from '../terrain/ChunkWorker';
 
@@ -145,7 +145,7 @@ export class GlobalRockBatcher {
       const mesh = this.getOrCreateMesh(prototypeId, detailLevel);
       
       // Get next free index
-      let startIndex = this.nextFreeIndex.get(meshKey) ?? 0;
+      const startIndex = this.nextFreeIndex.get(meshKey) ?? 0;
       
       // Check if we have enough space
       if (startIndex + instanceCount > this.maxInstancesPerMesh) {

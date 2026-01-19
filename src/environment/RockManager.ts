@@ -1,4 +1,4 @@
-import { BufferGeometry, InstancedMesh, Matrix4, Vector3 } from 'three';
+import { type BufferGeometry, InstancedMesh, Matrix4, type Vector3 } from 'three';
 import { RockBuilder } from './RockBuilder';
 import { MoonMaterial } from '../shaders/MoonMaterial';
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
@@ -35,7 +35,7 @@ export class RockManager {
    * Formula: 20 * (detail + 1)^2
    */
   static getTriangleCount(detail: number): number {
-    return 20 * Math.pow(detail + 1, 2);
+    return 20 * (detail + 1) ** 2;
   }
 
   /**
@@ -213,8 +213,8 @@ export class RockManager {
         // Camera can be at (-chunkWidth/2, -chunkDepth/2), vertex at (renderDistance*chunkWidth + chunkWidth/2, renderDistance*chunkDepth + chunkDepth/2)
         // Distance = (renderDistance + 1) * chunkWidth in each dimension
         const maxChunkDistance = Math.sqrt(
-          Math.pow((this.renderDistance + 1) * this.chunkWidth, 2) +
-          Math.pow((this.renderDistance + 1) * this.chunkDepth, 2)
+          ((this.renderDistance + 1) * this.chunkWidth) ** 2 +
+          ((this.renderDistance + 1) * this.chunkDepth) ** 2
         );
         
         // Maximum curvature drop based on maximum possible camera distance

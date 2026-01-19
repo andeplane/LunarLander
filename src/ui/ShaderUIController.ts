@@ -1,6 +1,6 @@
 import { GUI } from 'lil-gui';
-import { MoonMaterial, type MoonMaterialParams } from '../shaders/MoonMaterial';
-import { CelestialSystem } from '../environment/CelestialSystem';
+import type { MoonMaterial, MoonMaterialParams } from '../shaders/MoonMaterial';
+import type { CelestialSystem } from '../environment/CelestialSystem';
 
 /**
  * UI Controller for MoonMaterial shader parameters and lighting

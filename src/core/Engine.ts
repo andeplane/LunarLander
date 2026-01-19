@@ -3,10 +3,10 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { FlightController } from '../camera/FlightController';
-import { ChunkManager } from '../terrain/ChunkManager';
-import { CelestialSystem } from '../environment/CelestialSystem';
-import { InputManager } from './InputManager';
+import type { FlightController } from '../camera/FlightController';
+import type { ChunkManager } from '../terrain/ChunkManager';
+import type { CelestialSystem } from '../environment/CelestialSystem';
+import type { InputManager } from './InputManager';
 import { DEFAULT_PLANET_RADIUS } from './EngineSettings';
 
 /**

@@ -76,8 +76,8 @@ export class TerrainGenerator {
       // Camera can be at (-chunkWidth/2, -chunkDepth/2), vertex at (renderDistance*chunkWidth + chunkWidth/2, renderDistance*chunkDepth + chunkDepth/2)
       // Distance = (renderDistance + 1) * chunkWidth in each dimension
       const maxChunkDistance = Math.sqrt(
-        Math.pow((this.config.renderDistance + 1) * this.config.chunkWidth, 2) +
-        Math.pow((this.config.renderDistance + 1) * this.config.chunkDepth, 2)
+        ((this.config.renderDistance + 1) * this.config.chunkWidth) ** 2 +
+        ((this.config.renderDistance + 1) * this.config.chunkDepth) ** 2
       );
       
       // Maximum curvature drop based on maximum possible camera distance

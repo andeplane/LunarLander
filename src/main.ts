@@ -7,10 +7,12 @@ import { CelestialSystem } from './environment/CelestialSystem';
 import { ChunkManager, type ChunkConfig } from './terrain/ChunkManager';
 import { TerrainGenerator } from './terrain/TerrainGenerator';
 import { RockManager } from './environment/RockManager';
+import type { MoonMaterial } from './shaders/MoonMaterial';
+import type { MoonMaterialParams } from './shaders/MoonMaterial';
 import { LodDetailLevel } from './terrain/LodUtils';
 import { ShaderUIController } from './ui/ShaderUIController';
 import type { CameraConfig, RockGenerationConfig, CraterGenerationConfig } from './types';
-import { TextureLoader, MirroredRepeatWrapping, SRGBColorSpace, Texture, LinearMipmapLinearFilter, LinearFilter } from 'three';
+import { TextureLoader, MirroredRepeatWrapping, SRGBColorSpace, type Texture, LinearMipmapLinearFilter, LinearFilter } from 'three';
 import { DEFAULT_PLANET_RADIUS } from './core/EngineSettings';
 
 /**
@@ -19,7 +21,10 @@ import { DEFAULT_PLANET_RADIUS } from './core/EngineSettings';
  */
 
 // Get canvas element
-const app = document.querySelector<HTMLDivElement>('#app')!;
+const app = document.querySelector<HTMLDivElement>('#app');
+if (!app) {
+  throw new Error('Could not find #app element');
+}
 const canvas = document.createElement('canvas');
 app.appendChild(canvas);
 
@@ -200,13 +205,22 @@ textureLoader.load(`${import.meta.env.BASE_URL}textures/surface-high-detail.png`
 engine.start();
 
 // Expose for debugging (access via window.debug in console)
-(window as any).debug = {
+interface DebugWindow extends Window {
+  debug?: {
+    engine: typeof engine;
+    getTerrainMaterial: () => MoonMaterial;
+    getRockMaterial: () => MoonMaterial;
+    setDebugMode: (mode: number) => void;
+    render: () => void;
+  };
+}
+(window as DebugWindow).debug = {
   engine,
   getTerrainMaterial: () => {
     const mat = terrainGenerator.getMaterial();
     // Wrap setParam to auto-trigger re-render
     const originalSetParam = mat.setParam.bind(mat);
-    mat.setParam = (key: any, value: any) => {
+    mat.setParam = <K extends keyof MoonMaterialParams>(key: K, value: MoonMaterialParams[K]) => {
       originalSetParam(key, value);
       engine.requestRender();
     };
@@ -215,7 +229,7 @@ engine.start();
   getRockMaterial: () => {
     const mat = rockManager.getMaterial();
     const originalSetParam = mat.setParam.bind(mat);
-    mat.setParam = (key: any, value: any) => {
+    mat.setParam = <K extends keyof MoonMaterialParams>(key: K, value: MoonMaterialParams[K]) => {
       originalSetParam(key, value);
       engine.requestRender();
     };

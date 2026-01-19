@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BufferGeometry } from 'three';
+import type { BufferGeometry } from 'three';
 
 export function displaceY(
   geometry: BufferGeometry,
@@ -19,7 +19,7 @@ export function displaceY(
     biome[i * 3 + 1] = result.biome[1];
     biome[i * 3 + 2] = result.biome[2];
 
-    let newY = result.y * strength;
+    const newY = result.y * strength;
     position.setY(i, newY );
   }
 
