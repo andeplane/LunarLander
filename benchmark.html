@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lunar Explorer - Benchmark</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+      
+      :root {
+        --bg-primary: #0a0a0f;
+        --bg-secondary: #12121a;
+        --bg-tertiary: #1a1a24;
+        --bg-hover: #22222e;
+        --text-primary: #e8e8ed;
+        --text-secondary: #9898a8;
+        --text-muted: #68687a;
+        --accent: #6366f1;
+        --accent-hover: #818cf8;
+        --accent-muted: rgba(99, 102, 241, 0.15);
+        --success: #22c55e;
+        --warning: #f59e0b;
+        --error: #ef4444;
+        --border: #2a2a3a;
+        --border-light: #3a3a4a;
+      }
+      
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      
+      body {
+        font-family: 'Space Grotesk', system-ui, sans-serif;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        min-height: 100vh;
+        line-height: 1.6;
+      }
+      
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 2rem;
+      }
+      
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 2rem;
+        padding-bottom: 1.5rem;
+        border-bottom: 1px solid var(--border);
+      }
+      
+      h1 {
+        font-size: 1.75rem;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+      
+      h1 span {
+        color: var(--text-muted);
+        font-weight: 400;
+      }
+      
+      .back-link {
+        color: var(--text-secondary);
+        text-decoration: none;
+        font-size: 0.875rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        transition: color 0.2s;
+      }
+      
+      .back-link:hover {
+        color: var(--accent);
+      }
+      
+      .layout {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 2rem;
+      }
+      
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+      
+      .panel {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.25rem;
+      }
+      
+      .panel-title {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-muted);
+        margin-bottom: 1rem;
+      }
+      
+      .control-group {
+        margin-bottom: 1rem;
+      }
+      
+      .control-group:last-child {
+        margin-bottom: 0;
+      }
+      
+      label {
+        display: block;
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        margin-bottom: 0.5rem;
+      }
+      
+      select, input[type="number"] {
+        width: 100%;
+        padding: 0.625rem 0.875rem;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        color: var(--text-primary);
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.875rem;
+        transition: border-color 0.2s, box-shadow 0.2s;
+      }
+      
+      select:hover, input[type="number"]:hover {
+        border-color: var(--border-light);
+      }
+      
+      select:focus, input[type="number"]:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-muted);
+      }
+      
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+        padding: 0.75rem 1.25rem;
+        font-family: 'Space Grotesk', system-ui, sans-serif;
+        font-size: 0.875rem;
+        font-weight: 500;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s;
+        width: 100%;
+      }
+      
+      .btn-primary {
+        background: var(--accent);
+        color: white;
+      }
+      
+      .btn-primary:hover:not(:disabled) {
+        background: var(--accent-hover);
+      }
+      
+      .btn-primary:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      
+      .btn-secondary {
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+        border: 1px solid var(--border);
+      }
+      
+      .btn-secondary:hover:not(:disabled) {
+        background: var(--bg-hover);
+        border-color: var(--border-light);
+      }
+      
+      .btn-group {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      
+      .main-content {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+      
+      .results-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      
+      .results-header h2 {
+        font-size: 1.125rem;
+        font-weight: 600;
+      }
+      
+      .results-actions {
+        display: flex;
+        gap: 0.75rem;
+      }
+      
+      .results-actions .btn {
+        width: auto;
+        padding: 0.5rem 1rem;
+        font-size: 0.8125rem;
+      }
+      
+      .results-table-container {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      
+      .results-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.875rem;
+      }
+      
+      .results-table th {
+        background: var(--bg-tertiary);
+        padding: 0.875rem 1rem;
+        text-align: left;
+        font-weight: 500;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-muted);
+        border-bottom: 1px solid var(--border);
+      }
+      
+      .results-table td {
+        padding: 0.875rem 1rem;
+        border-bottom: 1px solid var(--border);
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 0.8125rem;
+      }
+      
+      .results-table tr:last-child td {
+        border-bottom: none;
+      }
+      
+      .results-table tr:hover td {
+        background: var(--bg-hover);
+      }
+      
+      .results-table .category {
+        font-family: 'Space Grotesk', system-ui, sans-serif;
+        font-weight: 500;
+        color: var(--text-primary);
+      }
+      
+      .results-table .number {
+        color: var(--accent);
+      }
+      
+      .results-table .fast {
+        color: var(--success);
+      }
+      
+      .results-table .medium {
+        color: var(--warning);
+      }
+      
+      .results-table .slow {
+        color: var(--error);
+      }
+      
+      .empty-state {
+        padding: 4rem 2rem;
+        text-align: center;
+        color: var(--text-muted);
+      }
+      
+      .empty-state-icon {
+        font-size: 3rem;
+        margin-bottom: 1rem;
+        opacity: 0.5;
+      }
+      
+      .status-indicator {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+      }
+      
+      .status-indicator .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--text-muted);
+      }
+      
+      .status-indicator.running .dot {
+        background: var(--accent);
+        animation: pulse 1s infinite;
+      }
+      
+      .status-indicator.complete .dot {
+        background: var(--success);
+      }
+      
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+      }
+      
+      .progress-bar {
+        width: 100%;
+        height: 4px;
+        background: var(--bg-tertiary);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-top: 0.75rem;
+      }
+      
+      .progress-bar-fill {
+        height: 100%;
+        background: var(--accent);
+        transition: width 0.3s ease;
+        width: 0%;
+      }
+      
+      .checkbox-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      
+      .checkbox-item {
+        display: flex;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0.375rem 0.625rem;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.8125rem;
+        font-family: 'JetBrains Mono', monospace;
+        transition: all 0.2s;
+      }
+      
+      .checkbox-item:hover {
+        border-color: var(--border-light);
+      }
+      
+      .checkbox-item.selected {
+        background: var(--accent-muted);
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      
+      .checkbox-item input {
+        display: none;
+      }
+      
+      @media (max-width: 900px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>Benchmark <span>/ Performance Testing</span></h1>
+        <a href="/" class="back-link">
+          <span>←</span> Back to Explorer
+        </a>
+      </header>
+      
+      <div class="layout">
+        <aside class="sidebar">
+          <div class="panel">
+            <div class="panel-title">Terrain Benchmark</div>
+            <div class="control-group">
+              <label>Resolutions</label>
+              <div class="checkbox-group" id="terrain-resolutions">
+                <label class="checkbox-item selected">
+                  <input type="checkbox" value="16" checked> 16
+                </label>
+                <label class="checkbox-item selected">
+                  <input type="checkbox" value="32" checked> 32
+                </label>
+                <label class="checkbox-item selected">
+                  <input type="checkbox" value="64" checked> 64
+                </label>
+                <label class="checkbox-item selected">
+                  <input type="checkbox" value="128" checked> 128
+                </label>
+                <label class="checkbox-item selected">
+                  <input type="checkbox" value="256" checked> 256
+                </label>
+                <label class="checkbox-item">
+                  <input type="checkbox" value="512"> 512
+                </label>
+                <label class="checkbox-item">
+                  <input type="checkbox" value="1024"> 1024
+                </label>
+                <label class="checkbox-item">
+                  <input type="checkbox" value="2048"> 2048
+                </label>
+              </div>
+            </div>
+            <div class="control-group">
+              <label>Iterations</label>
+              <input type="number" id="terrain-iterations" value="3" min="1" max="20">
+            </div>
+            <div class="btn-group">
+              <button class="btn btn-primary" id="run-terrain">Run Terrain Benchmark</button>
+            </div>
+          </div>
+          
+          <div class="panel">
+            <div class="panel-title">Rock Benchmark</div>
+            <div class="control-group">
+              <label>Detail Levels</label>
+              <div class="checkbox-group" id="rock-details">
+                <label class="checkbox-item selected">
+                  <input type="checkbox" value="7" checked> 7
+                </label>
+                <label class="checkbox-item selected">
+                  <input type="checkbox" value="10" checked> 10
+                </label>
+                <label class="checkbox-item selected">
+                  <input type="checkbox" value="15" checked> 15
+                </label>
+              </div>
+            </div>
+            <div class="control-group">
+              <label>Library Size</label>
+              <input type="number" id="rock-library-size" value="30" min="1" max="100">
+            </div>
+            <div class="control-group">
+              <label>Iterations</label>
+              <input type="number" id="rock-iterations" value="3" min="1" max="20">
+            </div>
+            <div class="btn-group">
+              <button class="btn btn-primary" id="run-rocks">Run Rock Benchmark</button>
+            </div>
+          </div>
+          
+          <div class="panel">
+            <div class="panel-title">Full Chunk Benchmark</div>
+            <div class="control-group">
+              <label>LOD Levels</label>
+              <div class="checkbox-group" id="chunk-lods">
+                <label class="checkbox-item selected">
+                  <input type="checkbox" value="0" checked> 0
+                </label>
+                <label class="checkbox-item selected">
+                  <input type="checkbox" value="2" checked> 2
+                </label>
+                <label class="checkbox-item selected">
+                  <input type="checkbox" value="4" checked> 4
+                </label>
+                <label class="checkbox-item">
+                  <input type="checkbox" value="6"> 6
+                </label>
+                <label class="checkbox-item">
+                  <input type="checkbox" value="8"> 8
+                </label>
+              </div>
+            </div>
+            <div class="control-group">
+              <label>Iterations</label>
+              <input type="number" id="chunk-iterations" value="3" min="1" max="20">
+            </div>
+            <div class="btn-group">
+              <button class="btn btn-primary" id="run-chunks">Run Chunk Benchmark</button>
+            </div>
+          </div>
+          
+          <div class="panel">
+            <div class="panel-title">Actions</div>
+            <div class="btn-group">
+              <button class="btn btn-primary" id="run-all">Run All Benchmarks</button>
+              <button class="btn btn-secondary" id="clear-results">Clear Results</button>
+              <button class="btn btn-secondary" id="export-results">Export JSON</button>
+            </div>
+            <div class="status-indicator" id="status">
+              <span class="dot"></span>
+              <span class="text">Ready</span>
+            </div>
+            <div class="progress-bar" id="progress-container" style="display: none;">
+              <div class="progress-bar-fill" id="progress-fill"></div>
+            </div>
+          </div>
+        </aside>
+        
+        <main class="main-content">
+          <div class="results-header">
+            <h2>Results</h2>
+            <div class="results-actions">
+              <button class="btn btn-secondary" id="sort-by-time">Sort by Time</button>
+              <button class="btn btn-secondary" id="sort-by-category">Sort by Category</button>
+            </div>
+          </div>
+          
+          <div class="results-table-container">
+            <table class="results-table" id="results-table">
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th>Config</th>
+                  <th>Mean (ms)</th>
+                  <th>Min (ms)</th>
+                  <th>Max (ms)</th>
+                  <th>Vertices</th>
+                  <th>Triangles</th>
+                  <th>Throughput</th>
+                </tr>
+              </thead>
+              <tbody id="results-body">
+                <tr>
+                  <td colspan="8">
+                    <div class="empty-state">
+                      <div class="empty-state-icon">⏱</div>
+                      <div>Run a benchmark to see results</div>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </main>
+      </div>
+    </div>
+    
+    <script type="module" src="/src/benchmark/main.ts"></script>
+  </body>
+</html>

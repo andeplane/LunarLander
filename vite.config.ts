@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite'
+import { resolve } from 'path'
 
 /**
  * Determine the base path for GitHub Pages deployment
@@ -27,6 +28,14 @@ export default defineConfig({
   base: getBasePath(),
   // TypeScript is handled automatically by Vite
   // Asset handling is configured by default
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        benchmark: resolve(__dirname, 'benchmark.html'),
+      },
+    },
+  },
   server: {
     port: 3000,
     open: true
