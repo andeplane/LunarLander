@@ -15,6 +15,9 @@ import { LoadingManager } from './ui/LoadingManager';
 import type { CameraConfig, RockGenerationConfig, CraterGenerationConfig } from './types';
 import { TextureLoader, MirroredRepeatWrapping, SRGBColorSpace, type Texture, LinearMipmapLinearFilter, LinearFilter } from 'three';
 import { DEFAULT_PLANET_RADIUS } from './core/EngineSettings';
+import { PhysicsWorld } from './physics/PhysicsWorld';
+import { TerrainColliderManager } from './physics/TerrainColliderManager';
+import { BallManager } from './physics/BallManager';
 
 /**
  * Main entry point for Lunar Explorer
@@ -128,6 +131,47 @@ engine.setFlightController(flightController);
 
 // Set input manager in engine
 engine.setInputManager(inputManager);
+
+// Initialize physics system (async)
+const physicsWorld = new PhysicsWorld();
+physicsWorld.initialize().then(() => {
+  console.log('[Physics] Rapier initialized');
+  
+  // Create terrain collider manager
+  const terrainColliderManager = new TerrainColliderManager(
+    physicsWorld.getWorld(),
+    chunkManager,
+    chunkConfig.chunkWidth,
+    chunkConfig.chunkDepth,
+    chunkConfig.lodLevels,
+    { physicsRange: 2 }
+  );
+  
+  // Create ball manager
+  const ballManager = new BallManager(
+    physicsWorld.getWorld(),
+    engine.getScene(),
+    {
+      ballRadius: 0.3,
+      shootSpeed: 20,
+      maxBalls: 100,
+      restitution: 0.7,
+      friction: 0.3,
+      ballColor: 0xff4444,
+    }
+  );
+  
+  // Wire up physics system
+  physicsWorld.setTerrainColliderManager(terrainColliderManager);
+  physicsWorld.setBallManager(ballManager);
+  engine.setPhysicsWorld(physicsWorld);
+  engine.setTerrainColliderManager(terrainColliderManager);
+  engine.setBallManager(ballManager);
+  
+  console.log('[Physics] Physics system ready. Press Space to shoot balls.');
+}).catch((err) => {
+  console.error('[Physics] Failed to initialize:', err);
+});
 
 // Set initial camera position above terrain
 const initialX = -3;
@@ -307,6 +351,7 @@ console.log('  Mouse - Look around');
 console.log('  Scroll - Adjust speed');
 console.log('  Escape - Release mouse');
 console.log('  O - Toggle debug wireframe (shows LOD chunks)');
+console.log('  Space - Shoot ball');
 
 // Expose setCameraPosition to window for debugging
 (window as unknown as { setCameraPosition: (x: number, y: number, z: number) => void }).setCameraPosition = (x: number, y: number, z: number) => {

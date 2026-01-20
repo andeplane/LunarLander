@@ -693,6 +693,13 @@ export class ChunkManager {
   }
 
   /**
+   * Get a chunk by grid key (for physics system)
+   */
+  getChunk(gridKey: string): Chunk | undefined {
+    return this.chunks.get(gridKey);
+  }
+
+  /**
    * Get number of active chunks
    */
   getActiveChunkCount(): number {

@@ -20,7 +20,7 @@ export function displaceY(
     biome[i * 3 + 2] = result.biome[2];
 
     const newY = result.y * strength;
-    position.setY(i, newY );
+    position.setY(i, newY);
   }
 
   geometry.setAttribute("biome", new THREE.Float32BufferAttribute(biome, 3));

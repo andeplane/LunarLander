@@ -7,6 +7,9 @@ import type { FlightController } from '../camera/FlightController';
 import type { ChunkManager } from '../terrain/ChunkManager';
 import type { CelestialSystem } from '../environment/CelestialSystem';
 import type { InputManager } from './InputManager';
+import type { PhysicsWorld } from '../physics/PhysicsWorld';
+import type { TerrainColliderManager } from '../physics/TerrainColliderManager';
+import type { BallManager } from '../physics/BallManager';
 import { DEFAULT_PLANET_RADIUS } from './EngineSettings';
 
 /**
@@ -27,6 +30,9 @@ export class Engine {
   private chunkManager: ChunkManager | null = null;
   private celestialSystem: CelestialSystem | null = null;
   private inputManager: InputManager | null = null;
+  private physicsWorld: PhysicsWorld | null = null;
+  private terrainColliderManager: TerrainColliderManager | null = null;
+  private ballManager: BallManager | null = null;
   
   // Post-processing
   private composer: EffectComposer;
@@ -236,6 +242,27 @@ export class Engine {
   }
 
   /**
+   * Set the physics world for physics simulation
+   */
+  setPhysicsWorld(physics: PhysicsWorld): void {
+    this.physicsWorld = physics;
+  }
+
+  /**
+   * Set the terrain collider manager (called from main.ts after physics init)
+   */
+  setTerrainColliderManager(manager: TerrainColliderManager): void {
+    this.terrainColliderManager = manager;
+  }
+
+  /**
+   * Set the ball manager (called from main.ts after physics init)
+   */
+  setBallManager(manager: BallManager): void {
+    this.ballManager = manager;
+  }
+
+  /**
    * Get the Three.js scene
    */
   getScene(): THREE.Scene {
@@ -355,6 +382,12 @@ export class Engine {
       });
     }
 
+    // Check for ball shooting (Space key)
+    if (this.inputManager?.isKeyJustPressed(' ') && this.ballManager) {
+      this.ballManager.shootBall(this.camera);
+      this.requestRender();
+    }
+
 
     // Update flight controller
     if (this.flightController) {
@@ -364,6 +397,16 @@ export class Engine {
     // Update chunk manager with camera position
     if (this.chunkManager) {
       this.chunkManager.update(this.camera.position);
+    }
+
+    // Update terrain colliders (must happen before physics step)
+    if (this.terrainColliderManager) {
+      this.terrainColliderManager.update(this.camera.position);
+    }
+
+    // Update physics simulation
+    if (this.physicsWorld && this.physicsWorld.isReady()) {
+      this.physicsWorld.step(deltaTime);
     }
 
     // Update celestial system (sun, Earth, curvature)
@@ -466,6 +509,9 @@ export class Engine {
    */
   dispose(): void {
     this.stop();
+    if (this.physicsWorld) {
+      this.physicsWorld.dispose();
+    }
     if (this.chunkManager) {
       this.chunkManager.dispose();
     }

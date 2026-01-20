@@ -5,10 +5,12 @@
  * - Shooting balls from camera position
  * - Syncing Three.js meshes with Rapier rigid bodies
  * - Cleaning up old balls when limit is exceeded
+ * - Using CurvedStandardMaterial so balls visually match curved terrain
  */
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { CurvedStandardMaterial } from '../shaders/CurvedStandardMaterial';
+import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 
 interface Ball {
   rigidBody: RAPIER.RigidBody;
@@ -40,7 +42,6 @@ export class BallManager {
   private material: CurvedStandardMaterial;
   private geometry: THREE.SphereGeometry;
   private config: Required<BallManagerConfig>;
-  private physicsWorld: unknown = null; // PhysicsWorld instance for heightfield queries
 
   constructor(
     world: RAPIER.World,
@@ -54,11 +55,13 @@ export class BallManager {
     // Shared geometry for all balls (16 segments for decent sphere)
     this.geometry = new THREE.SphereGeometry(this.config.ballRadius, 16, 16);
 
-    // Shared material with curvature support
+    // Shared material with curvature support (matches terrain curvature)
     this.material = new CurvedStandardMaterial({
       color: this.config.ballColor,
       roughness: 0.4,
       metalness: 0.6,
+      planetRadius: DEFAULT_PLANET_RADIUS,
+      enableCurvature: true,
     });
   }
 
@@ -140,15 +143,12 @@ export class BallManager {
   }
 
   /**
-   * Set PhysicsWorld instance for heightfield queries (debugging).
-   */
-  setPhysicsWorld(pw: unknown): void {
-    this.physicsWorld = pw;
-  }
-
-  /**
    * Update all ball meshes to match their physics body positions.
    * Should be called after physics step.
+   * 
+   * Note: Physics positions are in flat world space, but meshes use
+   * CurvedStandardMaterial which applies curvature in the vertex shader,
+   * so balls will visually match the curved terrain.
    * 
    * @returns true if there are any balls (scene needs re-render)
    */
@@ -156,31 +156,13 @@ export class BallManager {
     if (this.balls.length === 0) return false;
     
     for (const ball of this.balls) {
-      // Get position from physics body
+      // Get position from physics body (flat world space)
       const pos = ball.rigidBody.translation();
-      const vel = ball.rigidBody.linvel();
       ball.mesh.position.set(pos.x, pos.y, pos.z);
 
       // Get rotation from physics body
       const rot = ball.rigidBody.rotation();
       ball.mesh.quaternion.set(rot.x, rot.y, rot.z, rot.w);
-      
-      // #region agent log
-      // Detect when ball is falling through terrain (Y velocity negative, but Y position is below expected terrain)
-      if (vel.y < -1 && this.physicsWorld) {
-        const hfQuery = this.physicsWorld.queryHeightfieldHeight(pos.x, pos.z);
-        if (hfQuery.height !== null) {
-          const expectedTerrainY = hfQuery.height;
-          const ballBottomY = pos.y - this.config.ballRadius;
-          const depthBelowTerrain = expectedTerrainY - ballBottomY;
-          
-          // Log if ball is significantly below terrain
-          if (depthBelowTerrain > 0.5) {
-            fetch('http://127.0.0.1:7248/ingest/2514d39a-3d94-4487-980a-5421d6b147c9',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BallManager.ts:update',message:'BALL BELOW TERRAIN',data:{ballPos:[pos.x.toFixed(2),pos.y.toFixed(2),pos.z.toFixed(2)],velY:vel.y.toFixed(2),expectedTerrainY:expectedTerrainY.toFixed(2),ballBottomY:ballBottomY.toFixed(2),depthBelowTerrain:depthBelowTerrain.toFixed(2),gridKey:hfQuery.gridKey,sampleInfo:hfQuery.sampleInfo},timestamp:Date.now(),sessionId:'debug-session',runId:'below-terrain',hypothesisId:'BELOW'})}).catch(()=>{});
-          }
-        }
-      }
-      // #endregion
     }
     
     return true;
