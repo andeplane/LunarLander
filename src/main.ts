@@ -11,6 +11,7 @@ import type { MoonMaterial } from './shaders/MoonMaterial';
 import type { MoonMaterialParams } from './shaders/MoonMaterial';
 import { LodDetailLevel } from './terrain/LodUtils';
 import { ShaderUIController } from './ui/ShaderUIController';
+import { LoadingManager } from './ui/LoadingManager';
 import type { CameraConfig, RockGenerationConfig, CraterGenerationConfig } from './types';
 import { TextureLoader, MirroredRepeatWrapping, SRGBColorSpace, type Texture, LinearMipmapLinearFilter, LinearFilter } from 'three';
 import { DEFAULT_PLANET_RADIUS } from './core/EngineSettings';
@@ -27,6 +28,9 @@ if (!app) {
 }
 const canvas = document.createElement('canvas');
 app.appendChild(canvas);
+
+// Initialize loading manager early
+const loadingManager = new LoadingManager();
 
 // Initialize engine
 const engine = new Engine(canvas);
@@ -159,6 +163,11 @@ const celestialSystem = new CelestialSystem(
     // Earth position - visible in the lunar sky
     earthAzimuth: Math.PI * 1.15,
     earthElevation: Math.PI * 0.25,
+    
+    // Loading callback for Earth textures (4 textures)
+    onEarthTextureLoad: () => {
+      loadingManager.onTextureLoaded();
+    },
   }
 );
 // Set camera reference for spaceship light positioning
@@ -166,7 +175,12 @@ celestialSystem.setCamera(engine.getCamera());
 engine.setCelestialSystem(celestialSystem);
 
 // Load skybox texture (now handled by CelestialSystem as a mesh)
-celestialSystem.loadSkyboxTexture(`${import.meta.env.BASE_URL}textures/8k_stars_milky_way.jpg`);
+celestialSystem.loadSkyboxTexture(
+  `${import.meta.env.BASE_URL}textures/8k_stars_milky_way.jpg`,
+  () => {
+    loadingManager.onTextureLoaded();
+  }
+);
 
 // Initialize shader UI controller (after celestial system so they can be synced)
 const shaderUI = new ShaderUIController(
@@ -190,19 +204,49 @@ const configureTexture = (texture: Texture) => {
 };
 
 // Load high detail texture
-textureLoader.load(`${import.meta.env.BASE_URL}textures/surface-high-detail.png`, (texture) => {
-  configureTexture(texture);
-  
-  // Apply to materials
-  const terrainMaterial = terrainGenerator.getMaterial();
-  const rockMaterial = rockManager.getMaterial();
-  
-  terrainMaterial.setParam('textureHighDetail', texture);
-  rockMaterial.setParam('textureHighDetail', texture);
-});
+textureLoader.load(
+  `${import.meta.env.BASE_URL}textures/surface-high-detail.png`,
+  (texture) => {
+    configureTexture(texture);
+    
+    // Apply to materials
+    const terrainMaterial = terrainGenerator.getMaterial();
+    const rockMaterial = rockManager.getMaterial();
+    
+    terrainMaterial.setParam('textureHighDetail', texture);
+    rockMaterial.setParam('textureHighDetail', texture);
+    
+    // Report texture loaded
+    loadingManager.onTextureLoaded();
+  }
+);
 
 // Start the render loop
 engine.start();
+
+// Poll for chunk readiness (check every frame until nearest chunk has max LOD)
+const checkChunkReady = () => {
+  if (loadingManager.isLoadingComplete()) {
+    return; // Already complete, stop checking
+  }
+  
+  const camera = engine.getCamera();
+  const cameraX = camera.position.x;
+  const cameraZ = camera.position.z;
+  
+  // Check if chunk at camera position has max LOD (level 0)
+  if (chunkManager.hasMaxLodAt(cameraX, cameraZ)) {
+    loadingManager.onChunkReady();
+  }
+  
+  // Continue checking until loading is complete
+  requestAnimationFrame(checkChunkReady);
+};
+
+// Start checking for chunk readiness after a brief delay to allow initial chunk generation
+setTimeout(() => {
+  checkChunkReady();
+}, 100);
 
 // Expose for debugging (access via window.debug in console)
 interface DebugWindow extends Window {

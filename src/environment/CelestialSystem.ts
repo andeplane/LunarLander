@@ -59,6 +59,9 @@ export interface CelestialConfig {
   sunElevation?: number;     // Vertical angle above horizon
   earthAzimuth?: number;
   earthElevation?: number;
+  
+  // Loading callbacks
+  onEarthTextureLoad?: () => void; // Called for each Earth texture load (4 times)
 }
 
 const DEFAULT_CONFIG: Required<CelestialConfig> = {
@@ -191,6 +194,7 @@ export class CelestialSystem {
       nightMapPath: `${import.meta.env.BASE_URL}textures/8k_earth_nightmap.jpg`,
       cloudsMapPath: `${import.meta.env.BASE_URL}textures/8k_earth_clouds.jpg`,
       specularMapPath: `${import.meta.env.BASE_URL}textures/8k_earth_specular_map.jpg`,
+      onTextureLoad: this.config.onEarthTextureLoad,
     });
     
     this.earthMesh = new THREE.Mesh(geometry, this.earthMaterial);
@@ -245,8 +249,9 @@ export class CelestialSystem {
   /**
    * Load the skybox texture
    * @param texturePath Path to the equirectangular starfield image
+   * @param onLoad Optional callback when texture loads successfully
    */
-  loadSkyboxTexture(texturePath: string): void {
+  loadSkyboxTexture(texturePath: string, onLoad?: () => void): void {
     const loader = new THREE.TextureLoader();
     
     loader.load(
@@ -265,6 +270,11 @@ export class CelestialSystem {
         this.requestRender();
         
         console.log('Skybox texture loaded successfully');
+        
+        // Call onLoad callback if provided
+        if (onLoad) {
+          onLoad();
+        }
       },
       undefined,
       (error) => {

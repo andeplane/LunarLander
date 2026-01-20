@@ -748,6 +748,24 @@ export class ChunkManager {
   }
 
   /**
+   * Check if the chunk at the given world position has the maximum LOD level (level 0) available.
+   * @param x World X coordinate
+   * @param z World Z coordinate
+   * @returns true if chunk exists and has max LOD, false otherwise
+   */
+  hasMaxLodAt(x: number, z: number): boolean {
+    const gridX = Math.round(x / this.config.chunkWidth);
+    const gridZ = Math.round(z / this.config.chunkDepth);
+    const gridKey = `${gridX},${gridZ}`;
+
+    const chunk = this.chunks.get(gridKey);
+    if (!chunk) return false;
+
+    // Check if chunk has max LOD (level 0)
+    return chunk.hasLodLevel(0);
+  }
+
+  /**
    * Debug: Log distance and LOD information for all chunks
    */
   logChunkDistancesAndLods(cameraPosition: Vector3): void {

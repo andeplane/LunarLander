@@ -22,10 +22,75 @@
         width: 100vw;
         height: 100vh;
       }
+      
+      #loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: rgba(0, 0, 0, 0.85);
+        backdrop-filter: blur(10px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        transition: opacity 0.5s ease-out;
+      }
+      
+      #loading-overlay.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+      
+      .loading-content {
+        text-align: center;
+        color: #ffffff;
+        font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+      }
+      
+      .loading-title {
+        font-size: 2rem;
+        font-weight: 600;
+        margin-bottom: 2rem;
+        color: #e0e0e0;
+      }
+      
+      .loading-bar-container {
+        width: 300px;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 2px;
+        overflow: hidden;
+        margin: 0 auto 1rem;
+      }
+      
+      .loading-bar {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #ffffff 0%, #cccccc 100%);
+        border-radius: 2px;
+        transition: width 0.3s ease-out;
+      }
+      
+      .loading-text {
+        font-size: 0.9rem;
+        color: #b0b0b0;
+        margin-top: 0.5rem;
+      }
     </style>
   </head>
   <body>
     <div id="app"></div>
+    <div id="loading-overlay">
+      <div class="loading-content">
+        <div class="loading-title">Lunar Explorer</div>
+        <div class="loading-bar-container">
+          <div class="loading-bar" id="loading-bar"></div>
+        </div>
+        <div class="loading-text">Loading...</div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

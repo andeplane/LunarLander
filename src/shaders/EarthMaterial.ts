@@ -96,6 +96,7 @@ export interface EarthMaterialOptions {
   nightMapPath: string;
   cloudsMapPath: string;
   specularMapPath: string;
+  onTextureLoad?: () => void; // Optional callback for each texture load
 }
 
 export class EarthMaterial extends THREE.ShaderMaterial {
@@ -104,19 +105,39 @@ export class EarthMaterial extends THREE.ShaderMaterial {
   constructor(options: EarthMaterialOptions) {
     const textureLoader = new THREE.TextureLoader();
     
-    // Load textures with proper settings
-    const dayMap = textureLoader.load(options.dayMapPath);
+    // Load textures with proper settings and callbacks
+    const dayMap = textureLoader.load(
+      options.dayMapPath,
+      () => {
+        if (options.onTextureLoad) options.onTextureLoad();
+      }
+    );
     dayMap.colorSpace = THREE.SRGBColorSpace;
     dayMap.anisotropy = 8;
     
-    const nightMap = textureLoader.load(options.nightMapPath);
+    const nightMap = textureLoader.load(
+      options.nightMapPath,
+      () => {
+        if (options.onTextureLoad) options.onTextureLoad();
+      }
+    );
     nightMap.colorSpace = THREE.SRGBColorSpace;
     nightMap.anisotropy = 8;
     
-    const cloudsMap = textureLoader.load(options.cloudsMapPath);
+    const cloudsMap = textureLoader.load(
+      options.cloudsMapPath,
+      () => {
+        if (options.onTextureLoad) options.onTextureLoad();
+      }
+    );
     cloudsMap.anisotropy = 8;
     
-    const specularMap = textureLoader.load(options.specularMapPath);
+    const specularMap = textureLoader.load(
+      options.specularMapPath,
+      () => {
+        if (options.onTextureLoad) options.onTextureLoad();
+      }
+    );
     specularMap.anisotropy = 8;
     
     const sunDirectionUniform = new THREE.Uniform(new THREE.Vector3(1, 0, 0));
