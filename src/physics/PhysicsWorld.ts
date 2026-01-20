@@ -79,19 +79,24 @@ export class PhysicsWorld {
   /**
    * Step the physics simulation forward by deltaTime seconds.
    * Should be called every frame.
+   * 
+   * @returns true if any physics objects are moving (need rendering), false otherwise
    */
-  step(_deltaTime: number): void {
+  step(_deltaTime: number): boolean {
     if (!this.world || !this.isInitialized) {
-      return;
+      return false;
     }
 
     // Step physics simulation
     this.world.step();
 
     // Update ball meshes to match physics positions
+    // Returns true if any balls are moving
     if (this.ballManager) {
-      this.ballManager.update();
+      return this.ballManager.update();
     }
+    
+    return false;
   }
 
   /**

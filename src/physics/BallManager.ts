@@ -150,10 +150,13 @@ export class BallManager {
    * CurvedStandardMaterial which applies curvature in the vertex shader,
    * so balls will visually match the curved terrain.
    * 
-   * @returns true if there are any balls (scene needs re-render)
+   * @returns true if any balls are moving (velocity > threshold), false otherwise
    */
   update(): boolean {
     if (this.balls.length === 0) return false;
+    
+    const VELOCITY_THRESHOLD = 0.01; // Minimum velocity to consider "moving" (m/s)
+    let hasMovingBalls = false;
     
     for (const ball of this.balls) {
       // Get position from physics body (flat world space)
@@ -163,9 +166,16 @@ export class BallManager {
       // Get rotation from physics body
       const rot = ball.rigidBody.rotation();
       ball.mesh.quaternion.set(rot.x, rot.y, rot.z, rot.w);
+      
+      // Check if ball is moving (has significant velocity)
+      const vel = ball.rigidBody.linvel();
+      const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
+      if (speed > VELOCITY_THRESHOLD) {
+        hasMovingBalls = true;
+      }
     }
     
-    return true;
+    return hasMovingBalls;
   }
 
   /**

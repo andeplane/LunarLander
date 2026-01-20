@@ -405,8 +405,12 @@ export class Engine {
     }
 
     // Update physics simulation
+    // If physics objects are moving, request render
     if (this.physicsWorld && this.physicsWorld.isReady()) {
-      this.physicsWorld.step(deltaTime);
+      const physicsObjectsMoving = this.physicsWorld.step(deltaTime);
+      if (physicsObjectsMoving) {
+        this.requestRender();
+      }
     }
 
     // Update celestial system (sun, Earth, curvature)
