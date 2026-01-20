@@ -32,39 +32,39 @@ import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 
 export interface CelestialConfig {
   // Sun configuration
-  sunDistance?: number;      // Distance from camera (visual only)
-  sunSize?: number;          // Visual size of sun sphere
-  sunIntensity?: number;     // Light intensity
+  sunDistance: number;      // Distance from camera (visual only)
+  sunSize: number;          // Visual size of sun sphere
+  sunIntensity: number;     // Light intensity
   
   // Earth configuration
-  earthDistance?: number;    // Distance from camera (visual only)
-  earthSize?: number;        // Visual size of Earth sphere
+  earthDistance: number;    // Distance from camera (visual only)
+  earthSize: number;        // Visual size of Earth sphere
   
   // Earthshine (reflected light from Earth)
-  earthshineMultiplier?: number;  // Multiplier of sun intensity (0-1)
+  earthshineMultiplier: number;  // Multiplier of sun intensity (0-1)
   
   // Spaceship light (local illumination)
-  spaceshipLightIntensity?: number;
-  spaceshipLightRange?: number;   // Range in meters
+  spaceshipLightIntensity: number;
+  spaceshipLightRange: number;   // Range in meters
   
   // Flashlight (directional cone pointing where camera looks)
-  flashlightIntensity?: number;
-  flashlightRange?: number;       // Range in meters
-  flashlightAngle?: number;       // Cone angle in radians
-  flashlightPenumbra?: number;    // Edge softness (0-1)
+  flashlightIntensity: number;
+  flashlightRange: number;       // Range in meters
+  flashlightAngle: number;       // Cone angle in radians
+  flashlightPenumbra: number;    // Edge softness (0-1)
   
   // Initial positions (angles in radians)
   // Measured from the reference "up" at origin
-  sunAzimuth?: number;       // Horizontal angle
-  sunElevation?: number;     // Vertical angle above horizon
-  earthAzimuth?: number;
-  earthElevation?: number;
+  sunAzimuth: number;       // Horizontal angle
+  sunElevation: number;     // Vertical angle above horizon
+  earthAzimuth: number;
+  earthElevation: number;
   
   // Loading callbacks
   onEarthTextureLoad?: () => void; // Called for each Earth texture load (4 times)
 }
 
-const DEFAULT_CONFIG: Required<CelestialConfig> = {
+const DEFAULT_CONFIG: CelestialConfig = {
   sunDistance: 50000,    // Far enough to look like skybox object
   sunSize: 500,          // Visual size
   sunIntensity: 5.0,
@@ -85,7 +85,7 @@ const DEFAULT_CONFIG: Required<CelestialConfig> = {
 
 export class CelestialSystem {
   private scene: THREE.Scene;
-  private config: Required<CelestialConfig>;
+  private config: CelestialConfig;
   
   // Planet radius for curvature (synced with terrain shader)
   private planetRadius: number;
@@ -126,10 +126,13 @@ export class CelestialSystem {
   // Current sun horizon fade (0 = below horizon, 1 = above horizon)
   private currentSunHorizonFade: number = 1.0;
   
-  constructor(scene: THREE.Scene, requestRender: () => void, config: CelestialConfig = {}) {
+  constructor(scene: THREE.Scene, requestRender: () => void, config: Partial<CelestialConfig> = {}) {
     this.scene = scene;
     this.requestRender = requestRender;
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = { 
+      ...DEFAULT_CONFIG, 
+      ...config,
+    };
     this.planetRadius = DEFAULT_PLANET_RADIUS;
     this.celestialContainer = new THREE.Group();
     this.celestialContainer.name = 'CelestialSystem';

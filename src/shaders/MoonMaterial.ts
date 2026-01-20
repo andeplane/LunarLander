@@ -62,6 +62,45 @@ export interface MoonMaterialParams {
 }
 
 /**
+ * Shader uniforms interface for MoonMaterial
+ */
+interface MoonMaterialUniforms {
+  uEnableColorVariation: { value: number };
+  uEnableTexture: { value: number };
+  uColorVariationFrequency: { value: number };
+  uBaseColorBlend: { value: number };
+  uBrightnessBoost: { value: number };
+  uEnableCurvature: { value: number };
+  uPlanetRadius: { value: number };
+  uSunDirection: { value: Vector3 };
+  uTextureLowDetail: { value: Texture | null };
+  uTextureHighDetail: { value: Texture | null };
+  uTextureLodDistance: { value: number };
+  uUseTextureLod: { value: number };
+  uEnableHexTiling: { value: number };
+  uHexPatchScale: { value: number };
+  uHexContrastCorrection: { value: number };
+  uTextureUvScale: { value: number };
+  uNonHexUvScale: { value: number };
+  uHexUvScale: { value: number };
+  uEnableMicroDetail: { value: number };
+  uMicroDetailStrength: { value: number };
+  uMicroDetailFrequency: { value: number };
+  uMicroDetailOctaves: { value: number };
+  uMicroDetailFadeStart: { value: number };
+  uMicroDetailFadeEnd: { value: number };
+  uEnableFresnelRim: { value: number };
+  uFresnelRimStrength: { value: number };
+  uFresnelRimPower: { value: number };
+  uFresnelRimColor: { value: Vector3 };
+  uEnableSpecular: { value: number };
+  uSpecularStrength: { value: number };
+  uSpecularPower: { value: number };
+  uSunHorizonFade: { value: number };
+  uDebugMode: { value: number };
+}
+
+/**
  * MoonMaterial - Unified lunar surface shader for terrain and rocks
  * 
  * Works with both regular meshes (terrain) and instanced meshes (rocks).
@@ -74,7 +113,7 @@ export interface MoonMaterialParams {
  * - Optional texture slot for future use
  */
 export class MoonMaterial extends MeshStandardMaterial {
-  private shaderUniforms: { [key: string]: { value: unknown } } | null = null;
+  private shaderUniforms: MoonMaterialUniforms | null = null;
   private params: MoonMaterialParams;
 
   constructor() {
@@ -128,7 +167,7 @@ export class MoonMaterial extends MeshStandardMaterial {
 
     this.onBeforeCompile = (shader) => {
       // Store reference to uniforms for later updates
-      this.shaderUniforms = shader.uniforms;
+      this.shaderUniforms = shader.uniforms as unknown as MoonMaterialUniforms;
 
       // Initialize uniforms
       shader.uniforms.uEnableColorVariation = { value: this.params.enableColorVariation ? 1.0 : 0.0 };

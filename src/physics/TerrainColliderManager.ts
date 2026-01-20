@@ -197,8 +197,6 @@ export class TerrainColliderManager {
         const meshVertexIndex = meshRow * meshVertexCount + meshCol;
         
         const y = positions.getY(meshVertexIndex);
-        const x = positions.getX(meshVertexIndex);
-        const z = positions.getZ(meshVertexIndex);
         
         // Storage: index = X * stride + Z (matching demo-rapier-three)
         // col = X index, row = Z index
