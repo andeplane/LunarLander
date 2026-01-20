@@ -258,6 +258,69 @@ function sampleHeightFromVertices(
 }
 
 /**
+ * Extract interior vertices from an extended mesh (with skirt).
+ * Removes the outer row/column of vertices to get the original chunk size.
+ * 
+ * @param extendedPositions - Positions from extended mesh (with skirt)
+ * @param extendedNormals - Normals from extended mesh
+ * @param extendedBiome - Biome data from extended mesh (optional)
+ * @param extendedUv - UV data from extended mesh (optional)
+ * @param extendedRes - Resolution of extended mesh (original resolution + 2)
+ * @param targetRes - Target resolution (original resolution)
+ * @returns Extracted positions, normals, biome, and UV for interior vertices only
+ */
+function extractInterior(
+  extendedPositions: Float32Array,
+  extendedNormals: Float32Array,
+  extendedBiome: Float32Array | undefined,
+  extendedUv: Float32Array | undefined,
+  extendedRes: number,  // resolution + 2
+  targetRes: number     // resolution
+): { 
+  positions: Float32Array; 
+  normals: Float32Array;
+  biome: Float32Array | undefined;
+  uv: Float32Array | undefined;
+} {
+  const targetVerticesPerRow = targetRes + 1;
+  const extendedVerticesPerRow = extendedRes + 1;
+  const positions = new Float32Array(targetVerticesPerRow * targetVerticesPerRow * 3);
+  const normals = new Float32Array(targetVerticesPerRow * targetVerticesPerRow * 3);
+  const biome = extendedBiome ? new Float32Array(targetVerticesPerRow * targetVerticesPerRow * 3) : undefined;
+  const uv = extendedUv ? new Float32Array(targetVerticesPerRow * targetVerticesPerRow * 2) : undefined;
+  
+  for (let z = 0; z < targetVerticesPerRow; z++) {
+    for (let x = 0; x < targetVerticesPerRow; x++) {
+      // Skip first row/column of extended mesh (the skirt)
+      const srcIdx = ((z + 1) * extendedVerticesPerRow + (x + 1)) * 3;
+      const dstIdx = (z * targetVerticesPerRow + x) * 3;
+      
+      positions[dstIdx] = extendedPositions[srcIdx];
+      positions[dstIdx + 1] = extendedPositions[srcIdx + 1];
+      positions[dstIdx + 2] = extendedPositions[srcIdx + 2];
+      
+      normals[dstIdx] = extendedNormals[srcIdx];
+      normals[dstIdx + 1] = extendedNormals[srcIdx + 1];
+      normals[dstIdx + 2] = extendedNormals[srcIdx + 2];
+      
+      if (biome && extendedBiome) {
+        biome[dstIdx] = extendedBiome[srcIdx];
+        biome[dstIdx + 1] = extendedBiome[srcIdx + 1];
+        biome[dstIdx + 2] = extendedBiome[srcIdx + 2];
+      }
+      
+      if (uv && extendedUv) {
+        const srcUvIdx = ((z + 1) * extendedVerticesPerRow + (x + 1)) * 2;
+        const dstUvIdx = (z * targetVerticesPerRow + x) * 2;
+        uv[dstUvIdx] = extendedUv[srcUvIdx];
+        uv[dstUvIdx + 1] = extendedUv[srcUvIdx + 1];
+      }
+    }
+  }
+  return { positions, normals, biome, uv };
+}
+
+/**
  * Calculate surface gradient (slope) at a given position.
  * Samples heights at nearby points to compute gradient vector.
  * 
@@ -650,15 +713,28 @@ self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
   };
   setupCraterCache(gridKey, terrainArgs.width, terrainArgs.depth, craterParams);
 
-  // Generate terrain geometry
-  const geometry = generateTerrain(terrainArgs);
+  // Generate extended terrain geometry (with +1 vertex skirt on each edge)
+  // This allows edge vertices to have full face neighborhoods for correct normals
+  const extendedResolution = terrainArgs.resolution + 2; // +2 segments = +1 vertex per edge
+  const vertexSpacing = terrainArgs.width / terrainArgs.resolution;
+  const extendedWidth = terrainArgs.width + 2 * vertexSpacing;
+  const extendedDepth = terrainArgs.depth + 2 * vertexSpacing;
+  
+  // Create extended terrain args
+  // The terrain evaluator will automatically sample correct positions for extended vertices
+  const extendedTerrainArgs: TerrainArgs = {
+    ...terrainArgs,
+    resolution: extendedResolution,
+    width: extendedWidth,
+    depth: extendedDepth,
+  };
+  
+  const geometry = generateTerrain(extendedTerrainArgs);
 
   // Extract terrain attributes (positions is mutable Float32Array)
-  const positions = geometry.attributes.position.array as Float32Array;
-  let normals = geometry.attributes.normal.array;
-  const index = geometry.index?.array;
+  const extendedPositions = geometry.attributes.position.array as Float32Array;
 
-  // Apply cached craters to the terrain height buffer
+  // Apply cached craters to the extended terrain height buffer
   // Convert to local chunk space for mesh modification
   const localCraters: Crater[] = cachedCraters.map(crater => ({
     ...crater,
@@ -666,13 +742,46 @@ self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
     centerZ: crater.centerZ - cachedChunkWorldZ,
   }));
   
-  // Apply to mesh
-  applyCratersToHeightBuffer(positions, terrainArgs.width, terrainArgs.depth, localCraters);
-
-  // Recompute normals after crater application
+  // Apply to extended mesh (using extended dimensions)
+  applyCratersToHeightBuffer(extendedPositions, extendedWidth, extendedDepth, localCraters);
+  
+  // Update geometry and compute normals on extended mesh
   geometry.attributes.position.needsUpdate = true;
   geometry.computeVertexNormals();
-  normals = geometry.attributes.normal.array;
+  const extendedNormals = geometry.attributes.normal.array as Float32Array;
+  const extendedBiome = geometry.attributes.biome?.array as Float32Array | undefined;
+  const extendedUv = geometry.attributes.uv?.array as Float32Array | undefined;
+  
+  // Extract interior vertices (remove skirt)
+  const { positions, normals, biome, uv } = extractInterior(
+    extendedPositions,
+    extendedNormals,
+    extendedBiome,
+    extendedUv,
+    extendedResolution,
+    terrainArgs.resolution
+  );
+  
+  // Generate index for interior mesh (standard grid indices)
+  const targetVerticesPerRow = terrainArgs.resolution + 1;
+  const index = new Uint32Array(terrainArgs.resolution * terrainArgs.resolution * 2 * 3);
+  let idx = 0;
+  for (let z = 0; z < terrainArgs.resolution; z++) {
+    for (let x = 0; x < terrainArgs.resolution; x++) {
+      const a = z * targetVerticesPerRow + x;
+      const b = z * targetVerticesPerRow + (x + 1);
+      const c = (z + 1) * targetVerticesPerRow + x;
+      const d = (z + 1) * targetVerticesPerRow + (x + 1);
+      
+      index[idx++] = a;
+      index[idx++] = c;
+      index[idx++] = b;
+      
+      index[idx++] = b;
+      index[idx++] = c;
+      index[idx++] = d;
+    }
+  }
 
   // Generate rock placements using scientific lunar distribution
   // Rocks will now sit on the cratered terrain
@@ -690,8 +799,8 @@ self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
   const result: ChunkWorkerResult = {
     positions,
     normals,
-    uvs: geometry.attributes.uv?.array,
-    biome: geometry.attributes.biome?.array,
+    uvs: uv,
+    biome: biome,
     index,
     rockPlacements,
     gridKey,

@@ -472,13 +472,13 @@ export class MoonMaterial extends MeshStandardMaterial {
           
           if (uDebugMode < 1.5) {
             // Mode 1: meshNormal - should NOT change with camera rotation
-            debugColor = meshNormal * 0.5 + 0.5;
+            debugColor = normalize(meshNormal) * 0.5 + 0.5;
           } else if (uDebugMode < 2.5) {
             // Mode 2: microNormal - should NOT change with camera rotation
-            debugColor = microNormal * 0.5 + 0.5;
+            debugColor = normalize(microNormal) * 0.5 + 0.5;
           } else if (uDebugMode < 3.5) {
             // Mode 3: worldNorm (blended) - should NOT change with camera rotation
-            debugColor = worldNorm * 0.5 + 0.5;
+            debugColor = normalize(worldNorm) * 0.5 + 0.5;
           } else if (uDebugMode < 4.5) {
             // Mode 4: detailFade - should NOT change with camera rotation
             debugColor = vec3(detailFade);
@@ -515,7 +515,7 @@ export class MoonMaterial extends MeshStandardMaterial {
         `
         // In debug mode, output debug color directly and skip ALL lighting
         if (uDebugMode > 0.5) {
-          // Output debug color directly, bypassing all lighting
+          // Output normalized normal XYZ -> RGB
           gl_FragColor = vec4(diffuseColor.rgb, 1.0);
           return;
         }

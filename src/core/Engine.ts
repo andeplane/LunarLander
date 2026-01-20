@@ -37,6 +37,7 @@ export class Engine {
   // Post-processing
   private composer: EffectComposer;
   private bloomPass: UnrealBloomPass;
+  private outputPass: OutputPass;
   
   // Time tracking
   private clock: THREE.Clock = new THREE.Clock();
@@ -103,8 +104,8 @@ export class Engine {
     this.composer.addPass(this.bloomPass);
     
     // Output pass - applies tone mapping and color space conversion
-    const outputPass = new OutputPass();
-    this.composer.addPass(outputPass);
+    this.outputPass = new OutputPass();
+    this.composer.addPass(this.outputPass);
 
     // Initialize offscreen render target for stats collection
     // This prevents visual glitches when collecting stats
@@ -505,6 +506,15 @@ export class Engine {
     this.statsRenderTarget.setSize(width, height);
     
     // Force re-render after resize
+    this.needsRender = true;
+  }
+
+  /**
+   * Enable or disable post-processing effects (bloom, tone mapping, etc.)
+   */
+  setPostProcessingEnabled(enabled: boolean): void {
+    this.bloomPass.enabled = enabled;
+    this.outputPass.enabled = enabled;
     this.needsRender = true;
   }
 

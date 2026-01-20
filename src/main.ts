@@ -326,6 +326,8 @@ interface DebugWindow extends Window {
   setDebugMode: (mode: number) => {
     terrainGenerator.getMaterial().setParam('debugMode', mode);
     rockManager.getMaterial().setParam('debugMode', mode);
+    // Disable all post-processing in debug mode (bloom, tone mapping wash out colors)
+    engine.setPostProcessingEnabled(mode === 0);
     engine.requestRender();
     console.log(`Debug mode set to ${mode}`);
     console.log('Modes: 0=normal, 1=meshNormal, 2=microNormal, 3=worldNorm, 4=detailFade, 5=viewDir, 6=gl_FrontFacing');
