@@ -194,6 +194,45 @@ canvas.addEventListener('click', () => {
   inputManager.requestPointerLock();
 });
 
+// FPS mode hint overlay — shown for 2.5s when pointer lock is acquired
+const pointerLockHint = document.createElement('div');
+pointerLockHint.textContent = '🖱️ Press ESC to release mouse';
+Object.assign(pointerLockHint.style, {
+  position: 'fixed',
+  top: '20px',
+  left: '50%',
+  transform: 'translateX(-50%)',
+  background: 'rgba(0, 0, 0, 0.65)',
+  color: '#fff',
+  padding: '8px 18px',
+  borderRadius: '8px',
+  fontSize: '14px',
+  fontFamily: 'system-ui, sans-serif',
+  pointerEvents: 'none',
+  opacity: '0',
+  transition: 'opacity 0.3s ease',
+  zIndex: '9999',
+});
+document.body.appendChild(pointerLockHint);
+
+let hintTimeout: ReturnType<typeof setTimeout> | null = null;
+
+document.addEventListener('pointerlockchange', () => {
+  if (document.pointerLockElement) {
+    // Pointer just locked — show hint
+    if (hintTimeout) clearTimeout(hintTimeout);
+    pointerLockHint.style.opacity = '1';
+    hintTimeout = setTimeout(() => {
+      pointerLockHint.style.opacity = '0';
+    }, 2500);
+  } else {
+    // Pointer released — hide immediately
+    if (hintTimeout) { clearTimeout(hintTimeout); hintTimeout = null; }
+    pointerLockHint.style.opacity = '0';
+  }
+});
+
+
 // Initialize celestial system (sun, Earth, skybox, lighting with Moon curvature)
 // Only override position values - all intensity/range defaults come from CelestialSystem
 const celestialSystem = new CelestialSystem(
