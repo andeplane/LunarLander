@@ -47,7 +47,7 @@ describe('createFbmNoise', () => {
     frequency: 0.1,
     amplitude: 1,
     gain: 0.5,
-    smoothLowerPlanes: 0,
+    offset: 0,
     seed: 42,
   };
 
@@ -67,9 +67,9 @@ describe('createFbmNoise', () => {
     expect(Math.abs(value1 - value2)).toBeLessThan(0.1);
   });
 
-  it('should apply smoothLowerPlanes offset', () => {
-    const noOffset = createFbmNoise({ ...defaultArgs, smoothLowerPlanes: 0 });
-    const withOffset = createFbmNoise({ ...defaultArgs, smoothLowerPlanes: 0.5 });
+  it('should apply additive offset', () => {
+    const noOffset = createFbmNoise({ ...defaultArgs, offset: 0 });
+    const withOffset = createFbmNoise({ ...defaultArgs, offset: 0.5 });
     
     const point = [100, 200];
     const valueNoOffset = noOffset(point[0], point[1]);

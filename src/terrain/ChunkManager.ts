@@ -370,8 +370,8 @@ export class ChunkManager {
     const args: TerrainArgs = {
       ...this.baseTerrainArgs,
       resolution,
-      posX: gridX * this.config.chunkWidth / 25,
-      posZ: gridZ * this.config.chunkDepth / 25,
+      posX: gridX * this.config.chunkWidth,
+      posZ: gridZ * this.config.chunkDepth,
     };
 
     this.requestQueue.add({ gridKey, lodLevel, terrainArgs: args });

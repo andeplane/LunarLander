@@ -9,7 +9,7 @@ import { TerrainGenerator } from './terrain/TerrainGenerator';
 import { RockManager } from './environment/RockManager';
 import type { MoonMaterial } from './shaders/MoonMaterial';
 import type { MoonMaterialParams } from './shaders/MoonMaterial';
-import { LodDetailLevel } from './terrain/LodUtils';
+import { DEFAULT_LOD_LEVELS, LodDetailLevel } from './terrain/LodUtils';
 import { ShaderUIController } from './ui/ShaderUIController';
 import { LoadingManager } from './ui/LoadingManager';
 import { TouchControls } from './ui/TouchControls';
@@ -39,12 +39,6 @@ const loadingManager = new LoadingManager();
 // Track: surface-high-detail + skybox + 4 Earth textures
 loadingManager.registerTextures(6);
 
-// Initialize engine
-const engine = new Engine(canvas);
-
-// Initialize input manager
-const inputManager = new InputManager();
-
 // Camera configuration (from PRD section 9.2)
 const cameraConfig: CameraConfig = {
   fov: 70,
@@ -56,16 +50,20 @@ const cameraConfig: CameraConfig = {
   acceleration: 5.0,    // Smoothing factor
   mouseSensitivity: 0.002,
   minAltitudeAGL: 0.5,    // Minimum altitude above ground (meters)
-  slowdownAltitude: 50, // Start slowing at this AGL (meters)
-  slowdownFactor: 0.0, // Speed multiplier at minimum altitude
 };
+
+// Initialize engine (camera frustum comes from cameraConfig)
+const engine = new Engine(canvas, cameraConfig);
+
+// Initialize input manager
+const inputManager = new InputManager();
 
 // Chunk configuration
 const chunkConfig: ChunkConfig = {
   renderDistance: 10,    // Chunks to load in each direction
   chunkWidth: 400,       // World units per chunk
   chunkDepth: 400,       // World units per chunk
-  lodLevels: [1024, 512, 256, 128, 64, 32, 16, 8, 4], // Resolution levels (highest to lowest)
+  lodLevels: [...DEFAULT_LOD_LEVELS], // Resolution levels (highest to lowest)
   lodDetailLevel: LodDetailLevel.Balanced,   // Target screen-space triangle size
   workerCount: undefined, // Auto-detect from CPU cores (default: hardwareConcurrency - 1, capped at 8)
 };
