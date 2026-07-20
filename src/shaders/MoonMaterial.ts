@@ -19,19 +19,14 @@ export interface MoonMaterialParams {
   enableCurvature: boolean;
   planetRadius: number; // Virtual planet radius in meters
 
-  // Texture LOD parameters
-  textureLowDetail?: Texture | null; // Low detail texture (shown when far)
-  textureHighDetail?: Texture | null; // High detail texture (shown when close)
-  textureLodDistance?: number; // Distance threshold for blending (in meters, default: 50)
+  // Texture parameters
+  textureHighDetail?: Texture | null; // Surface detail texture
 
   // Hex tiling parameters
   enableHexTiling?: boolean; // Enable hex tiling to eliminate repetition (default: true)
-  hexPatchScale?: number; // Controls hex tile size (larger = smaller tiles = more breakup, default: 6)
+  hexPatchScale?: number; // Controls hex tile size (larger = smaller tiles = more breakup, default: 6, 0 = debug bypass)
   hexContrastCorrection?: boolean; // Enable contrast-corrected blending (default: true)
-  
-  // Texture UV scale (default: 0.2 = texture repeats every 5 meters)
-  textureUvScale?: number;
-  
+
   // Height-based UV scale interpolation
   nonHexUvScale?: number; // UV scale for non-hex tiling at low altitude (default: 0.22)
   hexUvScale?: number; // UV scale for hex tiling at high altitude (default: 0.1)
@@ -73,14 +68,11 @@ interface MoonMaterialUniforms {
   uEnableCurvature: { value: number };
   uPlanetRadius: { value: number };
   uSunDirection: { value: Vector3 };
-  uTextureLowDetail: { value: Texture | null };
   uTextureHighDetail: { value: Texture | null };
-  uTextureLodDistance: { value: number };
-  uUseTextureLod: { value: number };
+  uUseTexture: { value: number };
   uEnableHexTiling: { value: number };
   uHexPatchScale: { value: number };
   uHexContrastCorrection: { value: number };
-  uTextureUvScale: { value: number };
   uNonHexUvScale: { value: number };
   uHexUvScale: { value: number };
   uEnableMicroDetail: { value: number };
@@ -133,13 +125,10 @@ export class MoonMaterial extends MeshStandardMaterial {
       brightnessBoost: 1.2,
       enableCurvature: true,
       planetRadius: DEFAULT_PLANET_RADIUS,
-      textureLowDetail: null,
       textureHighDetail: null,
-      textureLodDistance: 50.0, // 50 meters default blend distance
       enableHexTiling: true, // Enable hex tiling by default
       hexPatchScale: 6.0, // Default hex tile scale
       hexContrastCorrection: true, // Enable contrast correction by default
-      textureUvScale: 0.8, // Default UV scale
       nonHexUvScale: 0.22, // Default non-hex UV scale
       hexUvScale: 0.1, // Default hex UV scale
       
@@ -181,51 +170,48 @@ export class MoonMaterial extends MeshStandardMaterial {
       // Sun direction uniform for horizon occlusion
       shader.uniforms.uSunDirection = { value: new Vector3(0, 1, 0) };
       
-      // Texture LOD uniforms
-      shader.uniforms.uTextureLowDetail = { value: this.params.textureLowDetail || null };
-      shader.uniforms.uTextureHighDetail = { value: this.params.textureHighDetail || null };
-      shader.uniforms.uTextureLodDistance = { value: this.params.textureLodDistance || 50.0 };
-      shader.uniforms.uUseTextureLod = { 
-        value: this.params.textureHighDetail ? 1.0 : 0.0 
+      // Texture uniforms
+      shader.uniforms.uTextureHighDetail = { value: this.params.textureHighDetail ?? null };
+      shader.uniforms.uUseTexture = {
+        value: this.params.textureHighDetail ? 1.0 : 0.0
       };
-      
+
       // Hex tiling uniforms
       shader.uniforms.uEnableHexTiling = { value: this.params.enableHexTiling ? 1.0 : 0.0 };
-      shader.uniforms.uHexPatchScale = { value: this.params.hexPatchScale || 6.0 };
+      shader.uniforms.uHexPatchScale = { value: this.params.hexPatchScale ?? 6.0 };
       shader.uniforms.uHexContrastCorrection = { value: this.params.hexContrastCorrection ? 1.0 : 0.0 };
-      shader.uniforms.uTextureUvScale = { value: this.params.textureUvScale || 0.8 };
-      shader.uniforms.uNonHexUvScale = { value: this.params.nonHexUvScale || 0.22 };
-      shader.uniforms.uHexUvScale = { value: this.params.hexUvScale || 0.1 };
-      
+      shader.uniforms.uNonHexUvScale = { value: this.params.nonHexUvScale ?? 0.22 };
+      shader.uniforms.uHexUvScale = { value: this.params.hexUvScale ?? 0.1 };
+
       // Micro-detail uniforms (Elevated-inspired)
       shader.uniforms.uEnableMicroDetail = { value: this.params.enableMicroDetail ? 1.0 : 0.0 };
-      shader.uniforms.uMicroDetailStrength = { value: this.params.microDetailStrength || 0.3 };
-      shader.uniforms.uMicroDetailFrequency = { value: this.params.microDetailFrequency || 2.0 };
-      shader.uniforms.uMicroDetailOctaves = { value: this.params.microDetailOctaves || 4 };
-      shader.uniforms.uMicroDetailFadeStart = { value: this.params.microDetailFadeStart || 5.0 };
-      shader.uniforms.uMicroDetailFadeEnd = { value: this.params.microDetailFadeEnd || 100.0 };
-      
+      shader.uniforms.uMicroDetailStrength = { value: this.params.microDetailStrength ?? 0.3 };
+      shader.uniforms.uMicroDetailFrequency = { value: this.params.microDetailFrequency ?? 2.0 };
+      shader.uniforms.uMicroDetailOctaves = { value: this.params.microDetailOctaves ?? 4 };
+      shader.uniforms.uMicroDetailFadeStart = { value: this.params.microDetailFadeStart ?? 5.0 };
+      shader.uniforms.uMicroDetailFadeEnd = { value: this.params.microDetailFadeEnd ?? 100.0 };
+
       // Enhanced lighting uniforms
       shader.uniforms.uEnableFresnelRim = { value: this.params.enableFresnelRim ? 1.0 : 0.0 };
-      shader.uniforms.uFresnelRimStrength = { value: this.params.fresnelRimStrength || 0.15 };
-      shader.uniforms.uFresnelRimPower = { value: this.params.fresnelRimPower || 3.0 };
-      shader.uniforms.uFresnelRimColor = { 
+      shader.uniforms.uFresnelRimStrength = { value: this.params.fresnelRimStrength ?? 0.15 };
+      shader.uniforms.uFresnelRimPower = { value: this.params.fresnelRimPower ?? 3.0 };
+      shader.uniforms.uFresnelRimColor = {
         value: new Vector3(
-          this.params.fresnelRimColor?.[0] || 0.6,
-          this.params.fresnelRimColor?.[1] || 0.6,
-          this.params.fresnelRimColor?.[2] || 0.7
+          this.params.fresnelRimColor?.[0] ?? 0.6,
+          this.params.fresnelRimColor?.[1] ?? 0.6,
+          this.params.fresnelRimColor?.[2] ?? 0.7
         )
       };
-      
+
       shader.uniforms.uEnableSpecular = { value: this.params.enableSpecular ? 1.0 : 0.0 };
-      shader.uniforms.uSpecularStrength = { value: this.params.specularStrength || 0.12 };
-      shader.uniforms.uSpecularPower = { value: this.params.specularPower || 8.0 };
-      
+      shader.uniforms.uSpecularStrength = { value: this.params.specularStrength ?? 0.12 };
+      shader.uniforms.uSpecularPower = { value: this.params.specularPower ?? 8.0 };
+
       // Sun horizon fade uniform (0 = below horizon, 1 = above horizon)
       shader.uniforms.uSunHorizonFade = { value: this.params.sunHorizonFade ?? 1.0 };
-      
+
       // Debug mode uniform
-      shader.uniforms.uDebugMode = { value: this.params.debugMode || 0.0 };
+      shader.uniforms.uDebugMode = { value: this.params.debugMode ?? 0.0 };
 
       // ==========================================
       // VERTEX SHADER MODIFICATIONS
@@ -313,17 +299,14 @@ export class MoonMaterial extends MeshStandardMaterial {
         // Sun direction for horizon occlusion
         uniform vec3 uSunDirection;
         
-        // Texture LOD uniforms
-        uniform sampler2D uTextureLowDetail;
+        // Texture uniforms
         uniform sampler2D uTextureHighDetail;
-        uniform float uTextureLodDistance;
-        uniform float uUseTextureLod;
-        
+        uniform float uUseTexture;
+
         // Hex tiling uniforms
         uniform float uEnableHexTiling;
         uniform float uHexPatchScale;
         uniform float uHexContrastCorrection;
-        uniform float uTextureUvScale;
         uniform float uNonHexUvScale;
         uniform float uHexUvScale;
         
@@ -435,7 +418,7 @@ export class MoonMaterial extends MeshStandardMaterial {
         vec3 finalColor = mix(baseColor, surfaceColor, uBaseColorBlend);
         
         // Apply texture if enabled and available
-        if (uEnableTexture > 0.5 && uUseTextureLod > 0.5) {
+        if (uEnableTexture > 0.5 && uUseTexture > 0.5) {
           // Height-based interpolation factor for hex tiling based on camera altitude
           // ≤5m: fully non-hex (factor = 0), ≥10m: fully hex (factor = 1)
           float cameraHeight = cameraPosition.y;
@@ -452,9 +435,9 @@ export class MoonMaterial extends MeshStandardMaterial {
           bool useContrastCorrect = uHexContrastCorrection > 0.5;
           vec3 hexColor = textureNoTileHex(uTextureHighDetail, uvHex, uHexPatchScale, useContrastCorrect);
           
-          // Interpolate between non-hex and hex based on height
-          vec3 texColor = mix(nonHexColor, hexColor, hexFactor);
-          finalColor = mix(finalColor, texColor, 1.0);
+          // Interpolate between non-hex and hex based on height.
+          // The texture fully replaces the procedural color when texturing is on.
+          finalColor = mix(nonHexColor, hexColor, hexFactor);
         }
 
         // ==========================================
@@ -607,9 +590,11 @@ export class MoonMaterial extends MeshStandardMaterial {
   }
 
   /**
-   * Update a parameter and refresh uniforms
+   * Update a parameter and refresh uniforms.
+   * No-op when the value is unchanged (callers may invoke this every frame).
    */
   setParam<K extends keyof MoonMaterialParams>(key: K, value: MoonMaterialParams[K]): void {
+    if (Object.is(this.params[key], value)) return;
     this.params[key] = value;
     this.updateUniforms();
   }
@@ -629,9 +614,18 @@ export class MoonMaterial extends MeshStandardMaterial {
   }
 
   /**
-   * Set all parameters at once
+   * Set all parameters at once.
+   * Skips the uniform refresh when no value actually changed.
    */
   setParams(params: Partial<MoonMaterialParams>): void {
+    let changed = false;
+    for (const key of Object.keys(params) as (keyof MoonMaterialParams)[]) {
+      if (!Object.is(this.params[key], params[key])) {
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) return;
     Object.assign(this.params, params);
     this.updateUniforms();
   }
@@ -679,50 +673,49 @@ export class MoonMaterial extends MeshStandardMaterial {
     this.shaderUniforms.uEnableCurvature.value = this.params.enableCurvature ? 1.0 : 0.0;
     this.shaderUniforms.uPlanetRadius.value = this.params.planetRadius;
 
-    // Update texture LOD parameters
-    this.shaderUniforms.uTextureLowDetail.value = this.params.textureLowDetail || null;
-    this.shaderUniforms.uTextureHighDetail.value = this.params.textureHighDetail || null;
-    this.shaderUniforms.uTextureLodDistance.value = this.params.textureLodDistance || 50.0;
-    this.shaderUniforms.uUseTextureLod.value = 
+    // Update texture parameters
+    this.shaderUniforms.uTextureHighDetail.value = this.params.textureHighDetail ?? null;
+    this.shaderUniforms.uUseTexture.value =
       this.params.textureHighDetail ? 1.0 : 0.0;
 
     // Update hex tiling parameters
     this.shaderUniforms.uEnableHexTiling.value = this.params.enableHexTiling ? 1.0 : 0.0;
-    this.shaderUniforms.uHexPatchScale.value = this.params.hexPatchScale || 6.0;
+    this.shaderUniforms.uHexPatchScale.value = this.params.hexPatchScale ?? 6.0;
     this.shaderUniforms.uHexContrastCorrection.value = this.params.hexContrastCorrection ? 1.0 : 0.0;
-    this.shaderUniforms.uTextureUvScale.value = this.params.textureUvScale || 0.8;
-    this.shaderUniforms.uNonHexUvScale.value = this.params.nonHexUvScale || 0.22;
-    this.shaderUniforms.uHexUvScale.value = this.params.hexUvScale || 0.1;
-    
+    this.shaderUniforms.uNonHexUvScale.value = this.params.nonHexUvScale ?? 0.22;
+    this.shaderUniforms.uHexUvScale.value = this.params.hexUvScale ?? 0.1;
+
     // Update micro-detail parameters
     this.shaderUniforms.uEnableMicroDetail.value = this.params.enableMicroDetail ? 1.0 : 0.0;
-    this.shaderUniforms.uMicroDetailStrength.value = this.params.microDetailStrength || 0.3;
-    this.shaderUniforms.uMicroDetailFrequency.value = this.params.microDetailFrequency || 2.0;
-    this.shaderUniforms.uMicroDetailOctaves.value = this.params.microDetailOctaves || 4;
-    this.shaderUniforms.uMicroDetailFadeStart.value = this.params.microDetailFadeStart || 5.0;
-    this.shaderUniforms.uMicroDetailFadeEnd.value = this.params.microDetailFadeEnd || 100.0;
-    
+    this.shaderUniforms.uMicroDetailStrength.value = this.params.microDetailStrength ?? 0.3;
+    this.shaderUniforms.uMicroDetailFrequency.value = this.params.microDetailFrequency ?? 2.0;
+    this.shaderUniforms.uMicroDetailOctaves.value = this.params.microDetailOctaves ?? 4;
+    this.shaderUniforms.uMicroDetailFadeStart.value = this.params.microDetailFadeStart ?? 5.0;
+    this.shaderUniforms.uMicroDetailFadeEnd.value = this.params.microDetailFadeEnd ?? 100.0;
+
     // Update enhanced lighting parameters
     this.shaderUniforms.uEnableFresnelRim.value = this.params.enableFresnelRim ? 1.0 : 0.0;
-    this.shaderUniforms.uFresnelRimStrength.value = this.params.fresnelRimStrength || 0.15;
-    this.shaderUniforms.uFresnelRimPower.value = this.params.fresnelRimPower || 3.0;
+    this.shaderUniforms.uFresnelRimStrength.value = this.params.fresnelRimStrength ?? 0.15;
+    this.shaderUniforms.uFresnelRimPower.value = this.params.fresnelRimPower ?? 3.0;
     this.shaderUniforms.uFresnelRimColor.value.set(
-      this.params.fresnelRimColor?.[0] || 0.6,
-      this.params.fresnelRimColor?.[1] || 0.6,
-      this.params.fresnelRimColor?.[2] || 0.7
+      this.params.fresnelRimColor?.[0] ?? 0.6,
+      this.params.fresnelRimColor?.[1] ?? 0.6,
+      this.params.fresnelRimColor?.[2] ?? 0.7
     );
-    
+
     this.shaderUniforms.uEnableSpecular.value = this.params.enableSpecular ? 1.0 : 0.0;
-    this.shaderUniforms.uSpecularStrength.value = this.params.specularStrength || 0.12;
-    this.shaderUniforms.uSpecularPower.value = this.params.specularPower || 8.0;
-    
+    this.shaderUniforms.uSpecularStrength.value = this.params.specularStrength ?? 0.12;
+    this.shaderUniforms.uSpecularPower.value = this.params.specularPower ?? 8.0;
+
     // Update sun horizon fade
     this.shaderUniforms.uSunHorizonFade.value = this.params.sunHorizonFade ?? 1.0;
-    
-    // Update debug mode
-    this.shaderUniforms.uDebugMode.value = this.params.debugMode || 0.0;
 
-    // Mark material as needing update
-    this.needsUpdate = true;
+    // Update debug mode
+    this.shaderUniforms.uDebugMode.value = this.params.debugMode ?? 0.0;
+
+    // NOTE: needsUpdate is intentionally NOT set here. All params map to uniform
+    // value updates, which Three.js picks up without recompiling the program.
+    // Setting needsUpdate every call forced a full getProgram cache lookup
+    // (including stringifying the onBeforeCompile closure) every frame.
   }
 }
