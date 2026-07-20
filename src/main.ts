@@ -162,7 +162,9 @@ physicsWorld.initialize().then(() => {
       restitution: 0.7,
       friction: 0.3,
       ballColor: 0xff4444,
-    }
+    },
+    // Height sampler: prevents balls from spawning beneath the terrain
+    (x, z) => chunkManager.getHeightAt(x, z)
   );
   
   // Wire up physics system
