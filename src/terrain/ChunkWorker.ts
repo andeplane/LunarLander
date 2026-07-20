@@ -500,14 +500,18 @@ function computeStableOrientation(
 
 /**
  * Generate rock placements for a chunk using scientific lunar distribution.
- * 
- * Uses power-law distribution N(>D) = A * D^-2.5 to calculate expected rock count
- * for the LOD's minimum diameter, then generates exactly that many rocks.
- * 
- * All rocks generated are visible at this LOD (no wasteful filtering).
- * Diameters are sampled from truncated power-law [lodMinDiam, maxDiam].
+ *
+ * Uses power-law distribution N(>D) = A * D^-2.5 to calculate the full rock
+ * population for the base minimum diameter, then generates every rock with a
+ * per-rock RNG stream seeded by (gridKey, rockIndex). Diameters are always
+ * sampled from the full truncated power-law [baseMinDiam, maxDiam], so a
+ * given rock has the same size, position, and shape at every LOD — the LOD
+ * only filters out rocks below its minimum visible diameter. (Sampling from
+ * [lodMinDiam, maxDiam] instead would re-map the same random draw to a
+ * different diameter per LOD, making rocks visibly grow/shrink on LOD
+ * transitions.)
  */
-function generateRockPlacements(
+export function generateRockPlacements(
   positions: ArrayLike<number>,
   terrainArgs: TerrainArgs,
   lodLevel: number,
@@ -516,25 +520,32 @@ function generateRockPlacements(
   rockConfig: RockGenerationConfig,
   stableAxes?: Float32Array
 ): RockPlacement[] {
-  // Create seeded random generator based on grid key
   const seed = hashString(gridKey);
-  const random = alea(seed);
 
   const chunkWidth = terrainArgs.width;
   const chunkDepth = terrainArgs.depth;
   const chunkArea = chunkWidth * chunkDepth;
   const resolution = terrainArgs.resolution;
 
-  // Get LOD-specific minimum diameter
+  // LOD-independent base minimum diameter (the finest LOD's threshold)
+  // defines the full rock population for this chunk
+  const baseMinDiameter = getMinDiameterForLod(
+    0,
+    rockConfig.minDiameter,
+    rockConfig.lodMinDiameterScale
+  );
+
+  // This LOD's visibility threshold: rocks smaller than this are skipped,
+  // not re-sized
   const lodMinDiameter = getMinDiameterForLod(
     lodLevel,
     rockConfig.minDiameter,
     rockConfig.lodMinDiameterScale
   );
 
-  // Calculate expected rock count using scientific distribution
+  // Full population count from the scientific distribution
   const rockCount = expectedRocksPerChunk(
-    lodMinDiameter,
+    baseMinDiameter,
     chunkArea,
     rockConfig.densityConstant,
     rockConfig.powerLawExponent
@@ -546,9 +557,26 @@ function generateRockPlacements(
   // Group placements by prototype ID
   const placementsByPrototype: Map<number, Float32Array[]> = new Map();
 
-  // Generate exactly the expected number of rocks for this LOD
-  // All generated rocks are visible (no filtering needed)
+  // Generate the full population; each rock gets its own RNG stream so its
+  // attributes never depend on which other rocks were generated or skipped
   for (let i = 0; i < rockCount; i++) {
+    const random = alea(seed, i);
+
+    // Sample rock diameter from the full truncated power-law
+    // [baseMinDiam, maxDiam] — identical at every LOD
+    const diameter = sampleRockDiameter(
+      random,
+      baseMinDiameter,
+      rockConfig.maxDiameter,
+      rockConfig.powerLawExponent
+    );
+
+    // Coarser LODs only show larger rocks; skip before the expensive
+    // placement work
+    if (diameter < lodMinDiameter) {
+      continue;
+    }
+
     // Generate initial random position in local chunk space (centered at origin)
     const initialX = (random() - 0.5) * chunkWidth;
     const initialZ = (random() - 0.5) * chunkDepth;
@@ -559,14 +587,6 @@ function generateRockPlacements(
       initialZ,
       terrainArgs.smoothLowerPlanes,
       random
-    );
-
-    // Sample rock diameter from truncated power-law [lodMinDiam, maxDiam]
-    const diameter = sampleRockDiameter(
-      random,
-      lodMinDiameter,
-      rockConfig.maxDiameter,
-      rockConfig.powerLawExponent
     );
 
     // Assign prototype ID (deterministic from RNG)
@@ -672,7 +692,7 @@ function hashString(str: string): number {
 // Worker Message Handler
 // ============================================================================
 
-self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
+const handleChunkMessage = (m: MessageEvent<ChunkWorkerMessage>): void => {
   const { terrainArgs, gridKey, lodLevel, rockLibrarySize, rockConfig, stableAxes } = m.data;
 
   // Setup crater cache FIRST (before terrain generation)
@@ -795,3 +815,9 @@ self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
 
   postMessage(result, { transfer });
 };
+
+// `self` only exists in the worker; the module is also imported under node
+// (vitest) for the exported placement functions
+if (typeof self !== 'undefined') {
+  self.onmessage = handleChunkMessage;
+}
