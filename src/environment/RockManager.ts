@@ -1,5 +1,5 @@
 import { type BufferGeometry, InstancedMesh, Matrix4, Vector3 } from 'three';
-import { RockBuilder } from './RockBuilder';
+import { RockBuilder, type RockLibraryBuilder } from './RockBuilder';
 import { MoonMaterial } from '../shaders/MoonMaterial';
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 import type { RockPlacement } from '../terrain/ChunkWorker';
@@ -23,7 +23,24 @@ interface TrackedBounds {
 const _worldCenter = new Vector3();
 
 /**
- * RockManager pre-generates LOD-based libraries of rock prototype geometries
+ * In-progress prototype library for one detail level. Prototypes and stable
+ * axes accumulate here (via idle warmup steps or a synchronous catch-up in
+ * ensureDetailLevel) until the level is complete and promoted to the
+ * prototypesByDetail/stableAxesByDetail maps.
+ */
+interface PartialLibrary {
+  builder: RockLibraryBuilder;
+  prototypes: BufferGeometry[];
+  stableAxes: Vector3[];
+}
+
+/** Time budget (ms) per warmup slice when requestIdleCallback is unavailable. */
+const WARMUP_BUDGET_MS = 8;
+/** Minimum idle time (ms) we require before doing another unit of warmup work. */
+const IDLE_TIME_FLOOR_MS = 1;
+
+/**
+ * RockManager generates LOD-based libraries of rock prototype geometries
  * and creates InstancedMesh from worker-computed placement data.
  *
  * Rock detail is mapped directly to chunk LOD level:
@@ -31,15 +48,31 @@ const _worldCenter = new Vector3();
  * - LOD 2-3: detail 10 (~2420 triangles) for medium chunks
  * - LOD 4+: detail 7 (~1280 triangles) for distant chunks
  *
- * No heavy computation on main thread - just assembles meshes from pre-computed data.
+ * Prototype generation (geometry build + stable-axis power iteration) is
+ * expensive — librarySize prototypes per detail level — so it is NOT done in
+ * the constructor. Instead it is spread over idle time one prototype at a
+ * time (requestIdleCallback with a setTimeout fallback), and any level that
+ * is requested before its warmup finished is completed synchronously on
+ * first use. Generation is seeded per prototype index, so lazy/incremental
+ * building yields exactly the same rocks as the old eager path.
  */
 export class RockManager {
+  // Detail levels used by getDetailForLod, finest first: the finest level is
+  // needed for the closest chunks, so warm it up before the coarser ones.
+  private static readonly DETAIL_LEVELS: readonly number[] = [15, 10, 7];
+
   // Store prototypes by detail level (7, 10, 15) instead of LOD level
   // This avoids generating duplicate libraries for LODs that share the same detail level
   private prototypesByDetail: Map<number, BufferGeometry[]> = new Map();
   // Store stable axes (principal axes) for each prototype by detail level
   // Each entry is an array of Vector3, one per prototype
   private stableAxesByDetail: Map<number, Vector3[]> = new Map();
+  // In-progress libraries per detail level (idle warmup or partial sync work)
+  private partialByDetail: Map<number, PartialLibrary> = new Map();
+  // Pending idle-callback/timeout handle for the background warmup, if any
+  private warmupHandle: number | ReturnType<typeof setTimeout> | null = null;
+  private warmupUsesIdleCallback = false;
+  private disposed = false;
   // Live rock meshes and their base bounding spheres, so per-frame culling
   // bounds can be tightened from the actual camera distance. Entries remove
   // themselves when a mesh is disposed (Chunk.clearRockMeshes / dispose).
@@ -125,53 +158,158 @@ export class RockManager {
     this.material.setParam('enableCurvature', true);
     this.material.setParam('planetRadius', planetRadius);
 
-    // Generate LOD-based prototype libraries at startup
-    this.generatePrototypeLibraries();
+    // Prototype libraries are NOT generated here: building
+    // DETAIL_LEVELS.length * librarySize geometries plus stable axes blocks
+    // the main thread for hundreds of ms during startup. Instead, spread the
+    // work over idle time; any level requested earlier is completed
+    // synchronously on first use (see ensureDetailLevel).
+    this.scheduleWarmup();
   }
 
   /**
-   * Generate rock prototype libraries by detail level.
-   * Only generates unique libraries (detail 7, 10, 15) to avoid duplicates.
-   * Called once at construction.
-   * 
-   * Triangle counts use formula: 20 * (detail + 1)^2
-   * - Detail 7: 1280 triangles
-   * - Detail 10: 2420 triangles  
-   * - Detail 15: 5120 triangles
+   * Whether the prototype library for a detail level has been fully built.
+   * Exposed for tests/diagnostics.
    */
-  private generatePrototypeLibraries(): void {
-    console.log(`Generating ${this.librarySize} rock prototypes per detail level...`);
-    const startTime = performance.now();
+  isDetailLevelReady(detailLevel: number): boolean {
+    return this.prototypesByDetail.has(detailLevel);
+  }
 
-    // Generate only unique detail levels (7, 10, 15)
-    // Multiple LOD levels share the same detail level, so we avoid duplicate generation
-    const detailLevels = [7, 10, 15];
-    for (const detail of detailLevels) {
-      const expectedTriangles = RockManager.getTriangleCount(detail);
-      console.log(`  Detail ${detail} (~${expectedTriangles} triangles)`);
-      const libraries = RockBuilder.generateLibrary(this.librarySize, { detail });
-      this.prototypesByDetail.set(detail, libraries);
-
-      // Calculate and store stable axes for each prototype
-      const stableAxes: Vector3[] = [];
-      for (const geometry of libraries) {
-        const stableAxis = RockBuilder.calculateStableAxis(geometry);
-        stableAxes.push(stableAxis);
-      }
-      this.stableAxesByDetail.set(detail, stableAxes);
+  /**
+   * Perform one unit of prototype-generation work for a detail level:
+   * either create the shared base geometry (first call) or build one
+   * prototype and its stable axis.
+   *
+   * @returns true once the level's library is complete
+   */
+  private buildStep(detail: number): boolean {
+    if (this.prototypesByDetail.has(detail)) {
+      return true;
     }
 
-    const elapsed = performance.now() - startTime;
-    console.log(`Rock prototype libraries generated in ${elapsed.toFixed(1)}ms`);
+    let partial = this.partialByDetail.get(detail);
+    if (!partial) {
+      // Creating the base geometry (icosphere + vertex merge) is this unit's
+      // work - prototypes follow on subsequent calls
+      partial = {
+        builder: RockBuilder.createLibraryBuilder(this.librarySize, { detail }),
+        prototypes: [],
+        stableAxes: [],
+      };
+      this.partialByDetail.set(detail, partial);
+      return this.librarySize <= 0 ? this.finishLevel(detail, partial) : false;
+    }
+
+    const geometry = partial.builder.buildNext();
+    if (geometry) {
+      partial.prototypes.push(geometry);
+      partial.stableAxes.push(RockBuilder.calculateStableAxis(geometry));
+    }
+
+    if (!geometry || partial.prototypes.length >= this.librarySize) {
+      return this.finishLevel(detail, partial);
+    }
+    return false;
+  }
+
+  /** Promote a completed partial library into the by-detail maps. */
+  private finishLevel(detail: number, partial: PartialLibrary): boolean {
+    partial.builder.dispose();
+    this.prototypesByDetail.set(detail, partial.prototypes);
+    this.stableAxesByDetail.set(detail, partial.stableAxes);
+    this.partialByDetail.delete(detail);
+    return true;
+  }
+
+  /**
+   * Ensure the prototype library for a detail level exists, finishing any
+   * remaining generation work synchronously. Called from the accessors so a
+   * level that is needed before its idle warmup completed is built on first
+   * use (at most one detail level's worth of work, not all of them).
+   *
+   * Unknown detail levels (anything outside DETAIL_LEVELS) are not generated.
+   */
+  private ensureDetailLevel(detail: number): BufferGeometry[] | undefined {
+    if (this.disposed || !RockManager.DETAIL_LEVELS.includes(detail)) {
+      return this.prototypesByDetail.get(detail);
+    }
+    while (!this.buildStep(detail)) {
+      // Finish the remaining units for this level synchronously
+    }
+    return this.prototypesByDetail.get(detail);
+  }
+
+  /**
+   * Schedule the next background warmup slice via requestIdleCallback,
+   * falling back to setTimeout where unavailable (e.g. Safari, node tests).
+   */
+  private scheduleWarmup(): void {
+    if (this.disposed || this.warmupHandle !== null || !this.hasPendingWarmupWork()) {
+      return;
+    }
+    if (typeof requestIdleCallback === 'function') {
+      this.warmupUsesIdleCallback = true;
+      this.warmupHandle = requestIdleCallback((deadline) => {
+        this.warmupHandle = null;
+        this.runWarmupSlice(deadline);
+      });
+    } else {
+      this.warmupUsesIdleCallback = false;
+      this.warmupHandle = setTimeout(() => {
+        this.warmupHandle = null;
+        this.runWarmupSlice();
+      }, 0);
+    }
+  }
+
+  private hasPendingWarmupWork(): boolean {
+    return RockManager.DETAIL_LEVELS.some((detail) => !this.prototypesByDetail.has(detail));
+  }
+
+  /**
+   * Run prototype-generation work units until the idle deadline (or fallback
+   * time budget) is exhausted, then reschedule if anything remains. Finest
+   * detail level first: it is the one the closest chunks need.
+   */
+  private runWarmupSlice(deadline?: IdleDeadline): void {
+    if (this.disposed) {
+      return;
+    }
+    const sliceEnd = performance.now() + WARMUP_BUDGET_MS;
+    const outOfTime = (): boolean =>
+      deadline ? deadline.timeRemaining() <= IDLE_TIME_FLOOR_MS : performance.now() >= sliceEnd;
+
+    for (const detail of RockManager.DETAIL_LEVELS) {
+      while (!this.buildStep(detail)) {
+        if (outOfTime()) {
+          this.scheduleWarmup();
+          return;
+        }
+      }
+    }
+  }
+
+  /** Cancel any scheduled background warmup slice. */
+  private cancelWarmup(): void {
+    if (this.warmupHandle === null) {
+      return;
+    }
+    if (this.warmupUsesIdleCallback) {
+      cancelIdleCallback(this.warmupHandle as number);
+    } else {
+      clearTimeout(this.warmupHandle as ReturnType<typeof setTimeout>);
+    }
+    this.warmupHandle = null;
   }
 
   /**
    * Get stable axes (principal axes) for prototypes at a given detail level.
-   * 
+   * Builds the level's library on first use if it is not ready yet.
+   *
    * @param detailLevel - Detail level (7, 10, or 15)
    * @returns Array of Vector3 representing stable axes, one per prototype
    */
   getStableAxesForDetail(detailLevel: number): Vector3[] | undefined {
+    this.ensureDetailLevel(detailLevel);
     return this.stableAxesByDetail.get(detailLevel);
   }
 
@@ -185,9 +323,9 @@ export class RockManager {
   createRockMeshes(placements: RockPlacement[], lodLevel: number): InstancedMesh[] {
     const meshes: InstancedMesh[] = [];
 
-    // Map LOD level to detail level
+    // Map LOD level to detail level (building the library on first use)
     const detail = RockManager.getDetailForLod(lodLevel, this.chunkWidth, this.chunkDepth, this.lodLevels);
-    const prototypes = this.prototypesByDetail.get(detail) ?? this.prototypesByDetail.get(7);
+    const prototypes = this.ensureDetailLevel(detail) ?? this.ensureDetailLevel(7);
     if (!prototypes || prototypes.length === 0) {
       console.warn(`No prototypes available for detail ${detail} (LOD ${lodLevel})`);
       return meshes;
@@ -372,25 +510,29 @@ export class RockManager {
    */
   getPrototype(index: number, lodLevel: number = 0): BufferGeometry | undefined {
     const detail = RockManager.getDetailForLod(lodLevel, this.chunkWidth, this.chunkDepth, this.lodLevels);
-    const prototypes = this.prototypesByDetail.get(detail) ?? this.prototypesByDetail.get(7);
-    if (!prototypes) return undefined;
+    const prototypes = this.ensureDetailLevel(detail) ?? this.ensureDetailLevel(7);
+    if (!prototypes || prototypes.length === 0) return undefined;
     return prototypes[index % prototypes.length];
   }
 
   /**
    * Get all prototype geometries for a given detail level.
    * Used by GlobalRockBatcher for instanced rendering.
-   * 
+   * Builds the level's library on first use if it is not ready yet.
+   *
    * @param detailLevel - Detail level (7, 10, or 15)
    */
   getPrototypesForDetail(detailLevel: number): BufferGeometry[] | undefined {
-    return this.prototypesByDetail.get(detailLevel);
+    return this.ensureDetailLevel(detailLevel);
   }
 
   /**
    * Clean up resources.
    */
   dispose(): void {
+    this.disposed = true;
+    this.cancelWarmup();
+
     // Dispose all prototype geometries across all detail levels.
     // RockManager owns the shared prototypes - chunks must never dispose them.
     for (const prototypes of this.prototypesByDetail.values()) {
@@ -400,6 +542,15 @@ export class RockManager {
     }
     this.prototypesByDetail.clear();
     this.stableAxesByDetail.clear();
+
+    // Dispose any half-built libraries from an interrupted warmup
+    for (const partial of this.partialByDetail.values()) {
+      partial.builder.dispose();
+      for (const geometry of partial.prototypes) {
+        geometry.dispose();
+      }
+    }
+    this.partialByDetail.clear();
     this.trackedMeshes.clear();
 
     // Dispose material

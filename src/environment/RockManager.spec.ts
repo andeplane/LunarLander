@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { Matrix4, Vector3 } from 'three';
 import { RockManager } from './RockManager';
+import { RockBuilder } from './RockBuilder';
 import type { RockPlacement } from '../terrain/ChunkWorker';
 
 function identityPlacement(prototypeId = 0): RockPlacement {
@@ -18,6 +19,99 @@ describe(RockManager.name, () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     // librarySize 1 keeps prototype generation fast
     manager = new RockManager(1, 400, 400, [1024, 512, 256, 128, 64, 32, 16, 8, 4], 10, 5000);
+  });
+
+  describe('lazy prototype generation', () => {
+    function freshManager(librarySize = 1): RockManager {
+      return new RockManager(librarySize, 400, 400, [1024, 512, 256, 128, 64, 32, 16, 8, 4], 10, 5000);
+    }
+
+    it('does not build any prototype library in the constructor', () => {
+      const fresh = freshManager();
+      try {
+        expect(fresh.isDetailLevelReady(15)).toBe(false);
+        expect(fresh.isDetailLevelReady(10)).toBe(false);
+        expect(fresh.isDetailLevelReady(7)).toBe(false);
+      } finally {
+        fresh.dispose();
+      }
+    });
+
+    it('builds only the requested detail level synchronously on first use', () => {
+      const fresh = freshManager(2);
+      try {
+        const axes = fresh.getStableAxesForDetail(15);
+        expect(axes).toHaveLength(2);
+        expect(fresh.isDetailLevelReady(15)).toBe(true);
+        // Other levels stay lazy until they are needed (or warmed up)
+        expect(fresh.isDetailLevelReady(10)).toBe(false);
+        expect(fresh.isDetailLevelReady(7)).toBe(false);
+
+        const prototypes = fresh.getPrototypesForDetail(15);
+        expect(prototypes).toHaveLength(2);
+      } finally {
+        fresh.dispose();
+      }
+    });
+
+    it('does not generate libraries for unknown detail levels', () => {
+      const fresh = freshManager();
+      try {
+        expect(fresh.getPrototypesForDetail(3)).toBeUndefined();
+        expect(fresh.getStableAxesForDetail(3)).toBeUndefined();
+      } finally {
+        fresh.dispose();
+      }
+    });
+
+    it('produces the same prototypes and stable axes as direct bulk generation', () => {
+      const fresh = freshManager(2);
+      try {
+        const expected = RockBuilder.generateLibrary(2, { detail: 10 });
+        const actual = fresh.getPrototypesForDetail(10);
+        expect(actual).toHaveLength(2);
+
+        for (let i = 0; i < expected.length; i++) {
+          const expectedPositions = expected[i].getAttribute('position').array;
+          const actualPositions = actual?.[i].getAttribute('position').array;
+          expect(actualPositions).toEqual(expectedPositions);
+
+          const expectedAxis = RockBuilder.calculateStableAxis(expected[i]);
+          const actualAxis = fresh.getStableAxesForDetail(10)?.[i];
+          expect(actualAxis?.equals(expectedAxis)).toBe(true);
+        }
+      } finally {
+        fresh.dispose();
+      }
+    });
+
+    it('finishes all detail levels in the background without being asked', async () => {
+      const fresh = freshManager();
+      try {
+        await vi.waitFor(
+          () => {
+            expect(fresh.isDetailLevelReady(15)).toBe(true);
+            expect(fresh.isDetailLevelReady(10)).toBe(true);
+            expect(fresh.isDetailLevelReady(7)).toBe(true);
+          },
+          { timeout: 5000 }
+        );
+      } finally {
+        fresh.dispose();
+      }
+    });
+
+    it('stops background generation after dispose', async () => {
+      const fresh = freshManager();
+      fresh.dispose();
+
+      // Give any (cancelled) warmup timer a chance to fire
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(fresh.isDetailLevelReady(15)).toBe(false);
+      expect(fresh.isDetailLevelReady(10)).toBe(false);
+      expect(fresh.isDetailLevelReady(7)).toBe(false);
+      expect(fresh.getPrototypesForDetail(15)).toBeUndefined();
+    });
   });
 
   describe('createRockMeshes culling bounds', () => {

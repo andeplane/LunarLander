@@ -4,6 +4,44 @@ import { createNoise3D, type NoiseFunction3D } from 'simplex-noise';
 import alea from 'alea';
 
 /**
+ * Options controlling procedural rock generation.
+ * Shared by generateLibrary() and createLibraryBuilder().
+ */
+export interface RockLibraryOptions {
+  detail?: number;
+  scrapeCount?: number;
+  scrapeMinDist?: number;
+  scrapeStrength?: number;
+  scrapeRadius?: number;
+  noiseScale?: number;
+  noiseStrength?: number;
+  scale?: [number, number, number];
+}
+
+/**
+ * Incremental rock-library builder returned by RockBuilder.createLibraryBuilder().
+ * Builds one prototype per buildNext() call so the work can be spread across
+ * idle time instead of blocking the main thread in one long synchronous burst.
+ *
+ * Prototype i is identical to generateLibrary(count, options)[i] — the same
+ * seeded PRNG per index is used — so incremental and bulk generation are
+ * deterministic and interchangeable.
+ */
+export interface RockLibraryBuilder {
+  /** Number of prototypes built so far. */
+  readonly builtCount: number;
+  /** Total number of prototypes this builder will produce. */
+  readonly total: number;
+  /**
+   * Build the next prototype in sequence.
+   * Returns null once the library is complete (or the builder was disposed).
+   */
+  buildNext(): BufferGeometry | null;
+  /** Release the internal base geometry without finishing the library. */
+  dispose(): void;
+}
+
+/**
  * RockBuilder generates procedural rock geometries using the scraping algorithm.
  * 
  * Algorithm (based on gl-rock):
@@ -485,29 +523,62 @@ export class RockBuilder {
    * @param options - Rock generation options (optional)
    * @returns Array of BufferGeometry
    */
-  static generateLibrary(
-    count: number,
-    options?: {
-      detail?: number;
-      scrapeCount?: number;
-      scrapeMinDist?: number;
-      scrapeStrength?: number;
-      scrapeRadius?: number;
-      noiseScale?: number;
-      noiseStrength?: number;
-      scale?: [number, number, number];
+  static generateLibrary(count: number, options?: RockLibraryOptions): BufferGeometry[] {
+    const builder = RockBuilder.createLibraryBuilder(count, options);
+    const library: BufferGeometry[] = [];
+    let geometry = builder.buildNext();
+    while (geometry) {
+      library.push(geometry);
+      geometry = builder.buildNext();
     }
-  ): BufferGeometry[] {
+    return library;
+  }
+
+  /**
+   * Create an incremental library builder that produces the exact same
+   * prototypes as generateLibrary(count, options), one buildNext() call at a
+   * time. The (expensive) base geometry is built once up front and shared;
+   * each buildNext() clones it and applies seeded scraping/noise, so callers
+   * can spread the per-prototype work across idle callbacks or frames.
+   *
+   * @param count - Number of prototypes the builder will produce
+   * @param options - Rock generation options (optional)
+   */
+  static createLibraryBuilder(count: number, options?: RockLibraryOptions): RockLibraryBuilder {
     const { detail = 3 } = options || {};
 
     // Build base geometry once (expensive operation)
     const baseGeometry = RockBuilder.createBaseGeometry(detail);
 
-    // Clone and scrape each rock (cheap operations)
-    return Array.from({ length: count }, (_, i) => {
-      const geometry = baseGeometry.clone();
-      RockBuilder.applyScrapingAndNoise(geometry, i, options);
-      return geometry;
-    });
+    let next = 0;
+    let released = false;
+    const release = (): void => {
+      if (!released) {
+        released = true;
+        baseGeometry.dispose();
+      }
+    };
+
+    return {
+      total: count,
+      get builtCount(): number {
+        return next;
+      },
+      buildNext(): BufferGeometry | null {
+        if (released || next >= count) {
+          return null;
+        }
+        // Clone and scrape (cheap relative to base geometry construction).
+        // Seeding by index keeps results identical to generateLibrary().
+        const geometry = baseGeometry.clone();
+        RockBuilder.applyScrapingAndNoise(geometry, next, options);
+        next++;
+        if (next >= count) {
+          release();
+        }
+        return geometry;
+      },
+      dispose: release,
+    };
   }
 }
