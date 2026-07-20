@@ -10,6 +10,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { TerrainColliderManager } from './TerrainColliderManager';
 import type { BallManager } from './BallManager';
+import { FixedTimestep } from './FixedTimestep';
 
 /**
  * Lunar gravity: -1.62 m/s² (Moon's surface gravity)
@@ -20,6 +21,8 @@ export class PhysicsWorld {
   private world: RAPIER.World | null = null;
   private isInitialized: boolean = false;
   private ballManager: BallManager | null = null;
+  private timestep = new FixedTimestep();
+  private objectsMoving: boolean = false;
 
   /**
    * Initialize Rapier WASM and create physics world.
@@ -82,21 +85,25 @@ export class PhysicsWorld {
    * 
    * @returns true if any physics objects are moving (need rendering), false otherwise
    */
-  step(_deltaTime: number): boolean {
+  step(deltaTime: number): boolean {
     if (!this.world || !this.isInitialized) {
       return false;
     }
 
-    // Step physics simulation
-    this.world.step();
-
-    // Update ball meshes to match physics positions
-    // Returns true if any balls are moving
-    if (this.ballManager) {
-      return this.ballManager.update();
+    // Advance the fixed-timestep accumulator and run the resulting number
+    // of physics steps, so simulation speed is independent of frame rate
+    const steps = this.timestep.advance(deltaTime);
+    for (let i = 0; i < steps; i++) {
+      this.world.step();
     }
-    
-    return false;
+
+    if (steps > 0) {
+      // Update ball meshes to match physics positions
+      // Returns true if any balls are moving
+      this.objectsMoving = this.ballManager ? this.ballManager.update() : false;
+    }
+
+    return this.objectsMoving;
   }
 
   /**
@@ -104,10 +111,13 @@ export class PhysicsWorld {
    */
   dispose(): void {
     if (this.world) {
-      // Rapier doesn't have explicit dispose, but we can clear references
+      // Free the WASM-side memory before clearing the reference
+      this.world.free();
       this.world = null;
     }
     this.isInitialized = false;
     this.ballManager = null;
+    this.timestep.reset();
+    this.objectsMoving = false;
   }
 }
