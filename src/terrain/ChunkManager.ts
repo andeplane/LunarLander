@@ -100,7 +100,7 @@ export class ChunkManager {
       // Noise parameters for lunar terrain
       seed: 0,
       gain: 0.5,
-      lacunarity: 5,
+      lacunarity: 2,               // Octave wavelengths span ~67m down to ~8m, keeping the surface smooth (craters/rocks add fine detail)
       frequency: 0.015,            // Low frequency for broad lunar features
       amplitude: 1.0,              // Gentle height variation
       altitude: 0.1,
