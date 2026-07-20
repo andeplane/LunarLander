@@ -1,33 +1,26 @@
-import { FbmNoiseBuilder, normalizeFbmRange } from "./noise";
+import { FbmNoiseBuilder } from "./noise";
 import { displaceY } from "./displacements";
-import { closeTo, mapRangeSmooth, smoothAbs, smoothPingpong } from "./math-operators";
-import { MathUtils, PlaneGeometry } from "three";
-import { mapLinear } from "three/src/math/MathUtils.js";
+import { PlaneGeometry } from "three";
 
 export type TerrainArgs = {
+  // Noise parameters
   seed: number;
   gain: number;
   lacunarity: number;
   frequency: number;
   amplitude: number;
   altitude: number;
-  falloff: number;
-  erosion: number;
-  erosionSoftness: number;
-  rivers: number;
-  riversFrequency: number;
-  riverWidth: number;
-  lakes: number;
-  lakesFalloff: number;
-  riverFalloff: number;
-  smoothLowerPlanes: number;
   octaves: number;
+  smoothLowerPlanes: number;       // Height multiplier (0 = full strength)
+  
+  // Chunk dimensions
   width: number;
   depth: number;
   resolution: number;
   posX: number;
   posZ: number;
   renderDistance: number;
+  
   // Crater generation parameters
   craterSeed: number;
   craterDensity: number;           // Craters per km² at reference size
@@ -48,105 +41,37 @@ export type TerrainArgs = {
  * @returns Function that takes (x, z) in local chunk space and returns {y: height, biome: [biome, water, 0]}
  */
 export function createTerrainEvaluator(args: TerrainArgs): (x: number, z: number) => {y: number; biome: number[]} {
+  // Primary terrain noise - gentle undulating lunar surface
   const fbm = new FbmNoiseBuilder()
     .octaves(args.octaves)
     .lacunarity(args.lacunarity)
     .gain(args.gain)
     .seed(args.seed)
-    .offset(0.25)
+    .offset(0)
     .amplitude(args.amplitude)
     .frequency(args.frequency)
     .build();
 
-  const fbmValiation = new FbmNoiseBuilder()
-    .octaves(1)
-    .seed(args.seed + 4)
-    .frequency(0.012)
-    .build();
-
-  const fbmBiomes = new FbmNoiseBuilder()
+  // Large-scale altitude variation (like lunar maria vs highlands)
+  const fbmAltitude = new FbmNoiseBuilder()
     .octaves(2)
     .seed(args.seed + 4)
-    .frequency(0.004)
+    .frequency(0.003)
+    .amplitude(0.5)
     .build();
-
-  const fbmErosion = new FbmNoiseBuilder()
-    .octaves(3)
-    .lacunarity(1.8)
-    .seed(args.seed + 1)
-    .offset(0.3)
-    .amplitude(0.2)
-    .frequency(args.frequency)
-    .build();
-
-  const fbmCanyons = new FbmNoiseBuilder()
-    .octaves(args.octaves)
-    .lacunarity(args.lacunarity)
-    .gain(args.gain)
-    .seed(args.seed)
-    .offset(0.25)
-    .amplitude(args.amplitude * 1.5)
-    .frequency(args.frequency * 0.3)
-    .build();
-
-  const defaultTerrain = (x: number, z: number) => {
-    let terrainNoise = fbm(x + args.posX * 25, z + args.posZ * 25);
-
-    const erosionNoise =
-      fbmValiation(x + 500 + args.posX * 25, z + 500 + args.posZ * 25) * 0.6 - 0.1;
-    const erosionSoftness = erosionNoise + args.erosionSoftness;
-    let erosion = fbmErosion(x + args.posX * 25, z + args.posZ * 25);
-
-    erosion = MathUtils.smoothstep(erosion, 0, 1);
-    erosion = erosion ** (1 + erosionSoftness);
-    erosion = MathUtils.clamp(smoothPingpong(erosion * 2, 1) - 0.3, 0, 100);
-
-    terrainNoise *= MathUtils.lerp(1, erosion, args.erosion);
-
-    const altitudeNoise =
-    fbmValiation(x + args.posX * 25, z + args.posZ * 25) * 1.4 - 0.75;
-    const altitude = args.altitude + altitudeNoise;
-    terrainNoise = terrainNoise + altitude;
-    
-    const rivers = mapRangeSmooth(terrainNoise, -(1-args.lakes), -(1-args.lakes) + args.lakesFalloff, 3, 0) * .2;
-
-    terrainNoise = MathUtils.lerp(
-      terrainNoise * terrainNoise,
-      terrainNoise * terrainNoise * terrainNoise,
-      args.smoothLowerPlanes
-    );
-
-    return {y: MathUtils.lerp(terrainNoise, -3, MathUtils.clamp(rivers * args.rivers * 3, 0, 1)), water: rivers};
-  };
-
-  const desertTerrain = (x: number, z: number) => {
-    const terrainNoise = normalizeFbmRange(smoothAbs(fbmCanyons(x + args.posX * 25, z + args.posZ * 25) - 0.25, 0.01));
-    const riverWidthVariation = normalizeFbmRange(fbmValiation(x + 1000 + args.posX * 25, z + 1000 + args.posZ * 25));
-    const riversEdge1 = mapLinear(args.riverWidth, 0, 1, .2, .45) * mapLinear(riverWidthVariation, 0, 1, 0.75, 1.15);
-    const riversEdge2 = mapLinear(args.riverWidth, 0, 1, .3, .55) * mapLinear(riverWidthVariation, 0, 1, 0.75, 1.15);
-    const rivers = mapRangeSmooth(terrainNoise, riversEdge1, riversEdge2, 1, 0) * .2;
-    const cliffs = mapRangeSmooth(terrainNoise, 0.5, .8, 0, 1);
-    return {y: cliffs - rivers, water: rivers * 5};
-  };
 
   return (x: number, z: number) => {
-    let biome = normalizeFbmRange(fbmBiomes(x + 500 + args.posX * 25, z + 500 + args.posZ * 25));
-    biome = mapRangeSmooth(biome, 0.65, 0.8, 0, 1)
-    if (closeTo(biome, 0, 0.004)) {
-      const t = desertTerrain(x, z);
-      return {y: t.y, biome: [biome, t.water, 0]};
-    } 
-    if (closeTo(biome, 1, 0.004)) {
-      const t = defaultTerrain(x, z);
-      return {y: t.y, biome: [biome, t.water, 0]};
-    } 
-     else {
-      const tDesert = desertTerrain(x, z);
-      const tDefault = defaultTerrain(x, z)
-      const y = MathUtils.lerp(tDesert.y, tDefault.y, biome);
-      const water = MathUtils.lerp(tDesert.water, tDefault.water, biome);
-      return {y, biome: [biome, water, 0]}
-    }
+    // Sample base terrain noise
+    const terrainNoise = fbm(x + args.posX * 25, z + args.posZ * 25);
+    
+    // Add large-scale altitude variation
+    const altitudeVariation = fbmAltitude(x + args.posX * 25, z + args.posZ * 25) * 0.5;
+    
+    // Combine: base terrain + altitude + variation
+    const height = terrainNoise + args.altitude + altitudeVariation;
+    
+    // Return height with neutral biome (no water, no special biomes)
+    return { y: height, biome: [0.5, 0, 0] };
   };
 }
 

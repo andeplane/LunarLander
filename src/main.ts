@@ -12,6 +12,8 @@ import type { MoonMaterialParams } from './shaders/MoonMaterial';
 import { LodDetailLevel } from './terrain/LodUtils';
 import { ShaderUIController } from './ui/ShaderUIController';
 import { LoadingManager } from './ui/LoadingManager';
+import { TouchControls } from './ui/TouchControls';
+import { isTouchDevice } from './utils/mobile';
 import type { CameraConfig, RockGenerationConfig, CraterGenerationConfig } from './types';
 import { TextureLoader, MirroredRepeatWrapping, SRGBColorSpace, type Texture, LinearMipmapLinearFilter, LinearFilter } from 'three';
 import { DEFAULT_PLANET_RADIUS } from './core/EngineSettings';
@@ -189,10 +191,19 @@ engine.getCamera().rotation.z -= 0.06;
 // Force initial render after camera position is set
 engine.requestRender();
 
-// Set up click to enable pointer lock
-canvas.addEventListener('click', () => {
-  inputManager.requestPointerLock();
-});
+// Set up click to enable pointer lock (desktop only)
+if (!isTouchDevice()) {
+  canvas.addEventListener('click', () => {
+    inputManager.requestPointerLock();
+  });
+}
+
+// Initialize touch controls (mobile only)
+let touchControls: TouchControls | null = null;
+if (isTouchDevice()) {
+  touchControls = new TouchControls(inputManager);
+  touchControls.setFlightController(flightController);
+}
 
 // FPS mode hint overlay — shown for 2.5s when pointer lock is acquired
 const pointerLockHint = document.createElement('div');
@@ -378,21 +389,34 @@ console.log('Debug: window.debug.setDebugMode(1-6) to visualize shader values');
 // Handle cleanup on page unload
 window.addEventListener('beforeunload', () => {
   shaderUI.dispose();
+  if (touchControls) {
+    touchControls.dispose();
+  }
   engine.dispose();
 });
 
 // Log instructions to console
-console.log('Lunar Explorer - Controls:');
-console.log('  Click to enable mouse look');
-console.log('  W/S - Forward/Backward');
-console.log('  A/D - Strafe Left/Right');
-console.log('  Q - Down | E - Up');
-console.log('  Shift - Hold for speed boost (3x faster)');
-console.log('  Mouse - Look around');
-console.log('  Scroll - Adjust speed');
-console.log('  Escape - Release mouse');
-console.log('  O - Toggle debug wireframe (shows LOD chunks)');
-console.log('  Space - Shoot ball');
+if (isTouchDevice()) {
+  console.log('Lunar Explorer - Mobile Controls:');
+  console.log('  Left joystick - Move forward/backward/strafe');
+  console.log('  Right side drag - Look around');
+  console.log('  Up/Down buttons - Move up/down');
+  console.log('  Speed button (top right) - Tap to cycle speed');
+  console.log('  O - Toggle debug wireframe (shows LOD chunks)');
+  console.log('  Space - Shoot ball');
+} else {
+  console.log('Lunar Explorer - Desktop Controls:');
+  console.log('  Click to enable mouse look');
+  console.log('  W/S - Forward/Backward');
+  console.log('  A/D - Strafe Left/Right');
+  console.log('  Q - Down | E - Up');
+  console.log('  Shift - Hold for speed boost (3x faster)');
+  console.log('  Mouse - Look around');
+  console.log('  Scroll - Adjust speed');
+  console.log('  Escape - Release mouse');
+  console.log('  O - Toggle debug wireframe (shows LOD chunks)');
+  console.log('  Space - Shoot ball');
+}
 
 // Expose setCameraPosition to window for debugging
 (window as unknown as { setCameraPosition: (x: number, y: number, z: number) => void }).setCameraPosition = (x: number, y: number, z: number) => {
