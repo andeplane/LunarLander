@@ -1,3 +1,5 @@
+import { hasCoarsePrimaryPointer, isTouchDevice } from '../utils/mobile';
+
 /**
  * Input manager responsible for:
  * - Keyboard input handling
@@ -21,7 +23,7 @@ export class InputManager {
   private isTouchDevice: boolean = false;
 
   constructor() {
-    this.isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    this.isTouchDevice = isTouchDevice();
     this.setupEventListeners();
   }
 
@@ -148,10 +150,13 @@ export class InputManager {
   }
 
   /**
-   * Request pointer lock (only on non-touch devices)
+   * Request pointer lock.
+   * Skipped only when the primary pointer is coarse (phones/tablets) —
+   * touch capability alone must not disable mouse look, so hybrid devices
+   * (touchscreen laptops) still get pointer lock.
    */
   requestPointerLock(): void {
-    if (!this.isTouchDevice) {
+    if (!hasCoarsePrimaryPointer()) {
       document.body.requestPointerLock();
     }
   }

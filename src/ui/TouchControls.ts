@@ -15,7 +15,7 @@ export class TouchControls {
   private joystickManager: nipplejs.JoystickManager | null = null;
   private inputManager: InputManager;
   private flightController: FlightController | null = null;
-  private touchLookActive: boolean = false;
+  private lookTouchId: number | null = null;
   private lastTouchX: number = 0;
   private lastTouchY: number = 0;
   private speedPresets: number[] = [1.0, 2.0, 5.0, 10.0];
@@ -77,9 +77,11 @@ export class TouchControls {
     this.container.appendChild(touchLookZone);
 
     touchLookZone.addEventListener('touchstart', (e) => {
-      if (e.touches.length === 1) {
-        this.touchLookActive = true;
-        const touch = e.touches[0];
+      // Track a single look touch by its identifier so other simultaneous
+      // touches (joystick, buttons) don't disturb look tracking
+      if (this.lookTouchId === null && e.changedTouches.length > 0) {
+        const touch = e.changedTouches[0];
+        this.lookTouchId = touch.identifier;
         this.lastTouchX = touch.clientX;
         this.lastTouchY = touch.clientY;
         e.preventDefault();
@@ -87,15 +89,15 @@ export class TouchControls {
     });
 
     touchLookZone.addEventListener('touchmove', (e) => {
-      if (this.touchLookActive && e.touches.length === 1) {
-        const touch = e.touches[0];
+      const touch = this.findLookTouch(e.changedTouches);
+      if (touch) {
         const deltaX = touch.clientX - this.lastTouchX;
         const deltaY = touch.clientY - this.lastTouchY;
-        
-        // Apply sensitivity (similar to mouse sensitivity)
-        const sensitivity = 0.002;
-        this.inputManager.addTouchLookDelta(deltaX * sensitivity, deltaY * sensitivity);
-        
+
+        // Pass raw pixel deltas — look sensitivity is applied once,
+        // in FlightController (same path as mouse look)
+        this.inputManager.addTouchLookDelta(deltaX, deltaY);
+
         this.lastTouchX = touch.clientX;
         this.lastTouchY = touch.clientY;
         e.preventDefault();
@@ -103,12 +105,16 @@ export class TouchControls {
     });
 
     touchLookZone.addEventListener('touchend', (e) => {
-      this.touchLookActive = false;
+      if (this.findLookTouch(e.changedTouches)) {
+        this.lookTouchId = null;
+      }
       e.preventDefault();
     });
 
-    touchLookZone.addEventListener('touchcancel', () => {
-      this.touchLookActive = false;
+    touchLookZone.addEventListener('touchcancel', (e) => {
+      if (this.findLookTouch(e.changedTouches)) {
+        this.lookTouchId = null;
+      }
     });
   }
 
@@ -192,10 +198,27 @@ export class TouchControls {
   }
 
   /**
+   * Find the tracked look touch in a touch list, if present
+   */
+  private findLookTouch(touches: TouchList): Touch | null {
+    if (this.lookTouchId === null) {
+      return null;
+    }
+    for (let i = 0; i < touches.length; i++) {
+      if (touches[i].identifier === this.lookTouchId) {
+        return touches[i];
+      }
+    }
+    return null;
+  }
+
+  /**
    * Set flight controller reference (for speed control)
+   * Applies the currently selected speed preset so controller and UI stay in sync
    */
   setFlightController(flightController: FlightController): void {
     this.flightController = flightController;
+    flightController.setSpeedMultiplier(this.speedPresets[this.currentSpeedPresetIndex]);
   }
 
   /**
