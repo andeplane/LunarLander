@@ -8,6 +8,15 @@
 export type CardinalDirection = 'north' | 'south' | 'east' | 'west';
 
 /**
+ * Default LOD resolution table used by the app (highest to lowest detail).
+ * Index into this array is the LOD level (0 = highest detail).
+ *
+ * Shared between the game (src/main.ts) and the benchmark harness so that
+ * benchmarked "LOD n" always maps to the resolution the app actually builds.
+ */
+export const DEFAULT_LOD_LEVELS: readonly number[] = [1024, 512, 256, 128, 64, 32, 16, 8, 4];
+
+/**
  * Neighbor LOD levels for edge stitching
  */
 export interface NeighborLods {

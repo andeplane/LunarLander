@@ -9,7 +9,7 @@ import { TerrainGenerator } from './terrain/TerrainGenerator';
 import { RockManager } from './environment/RockManager';
 import type { MoonMaterial } from './shaders/MoonMaterial';
 import type { MoonMaterialParams } from './shaders/MoonMaterial';
-import { LodDetailLevel } from './terrain/LodUtils';
+import { DEFAULT_LOD_LEVELS, LodDetailLevel } from './terrain/LodUtils';
 import { ShaderUIController } from './ui/ShaderUIController';
 import { LoadingManager } from './ui/LoadingManager';
 import { TouchControls } from './ui/TouchControls';
@@ -65,7 +65,7 @@ const chunkConfig: ChunkConfig = {
   renderDistance: 10,    // Chunks to load in each direction
   chunkWidth: 400,       // World units per chunk
   chunkDepth: 400,       // World units per chunk
-  lodLevels: [1024, 512, 256, 128, 64, 32, 16, 8, 4], // Resolution levels (highest to lowest)
+  lodLevels: [...DEFAULT_LOD_LEVELS], // Resolution levels (highest to lowest)
   lodDetailLevel: LodDetailLevel.Balanced,   // Target screen-space triangle size
   workerCount: undefined, // Auto-detect from CPU cores (default: hardwareConcurrency - 1, capped at 8)
 };
