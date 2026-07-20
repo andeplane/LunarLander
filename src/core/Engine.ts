@@ -13,6 +13,12 @@ import type { BallManager } from '../physics/BallManager';
 import { DEFAULT_PLANET_RADIUS } from './EngineSettings';
 
 /**
+ * Maximum frame delta in seconds. Clamps large deltas (e.g. after
+ * tab-backgrounding) so controllers and physics never see huge time jumps.
+ */
+const MAX_DELTA_TIME = 0.1;
+
+/**
  * Main engine class responsible for:
  * - Renderer setup and initialization
  * - Main render loop with deltaTime tracking
@@ -326,9 +332,9 @@ export class Engine {
     const animate = () => {
       this.animationId = requestAnimationFrame(animate);
       
-      // Calculate delta time
+      // Calculate delta time, clamped to avoid huge jumps after tab-backgrounding
       const currentTime = this.clock.getElapsedTime();
-      const deltaTime = currentTime - this.lastTime;
+      const deltaTime = Math.min(currentTime - this.lastTime, MAX_DELTA_TIME);
       this.lastTime = currentTime;
       
       this.update(deltaTime);
