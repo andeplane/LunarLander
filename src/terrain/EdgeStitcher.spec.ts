@@ -375,6 +375,225 @@ describe(computeStitchedIndices.name, () => {
   });
 });
 
+describe('corner correctness where two stitched edges meet', () => {
+  beforeEach(() => {
+    clearStitchCache();
+  });
+
+  interface Point {
+    x: number;
+    z: number;
+  }
+
+  function toCoord(index: number, resolution: number): Point {
+    const vertsPerRow = resolution + 1;
+    return { x: index % vertsPerRow, z: Math.floor(index / vertsPerRow) };
+  }
+
+  function extractTriangles(indices: Uint32Array): [number, number, number][] {
+    const triangles: [number, number, number][] = [];
+    for (let i = 0; i < indices.length; i += 3) {
+      triangles.push([indices[i], indices[i + 1], indices[i + 2]]);
+    }
+    return triangles;
+  }
+
+  /** Twice the signed area of triangle (p, q, r) in grid coordinates */
+  function signedDoubleArea(p: Point, q: Point, r: Point): number {
+    return (q.x - p.x) * (r.z - p.z) - (q.z - p.z) * (r.x - p.x);
+  }
+
+  /** Strict point-in-triangle test (points are chosen off all mesh edges) */
+  function triangleContains(p0: Point, p1: Point, p2: Point, pt: Point): boolean {
+    const d0 = signedDoubleArea(p0, p1, pt);
+    const d1 = signedDoubleArea(p1, p2, pt);
+    const d2 = signedDoubleArea(p2, p0, pt);
+    return (d0 < 0 && d1 < 0 && d2 < 0) || (d0 > 0 && d1 > 0 && d2 > 0);
+  }
+
+  interface StitchSteps {
+    north: number;
+    south: number;
+    east: number;
+    west: number;
+  }
+
+  /**
+   * Full structural validation of a stitched index buffer:
+   * - no degenerate or duplicated triangles, consistent winding
+   * - triangle areas sum to the full grid area
+   * - a dense grid of interior sample points is each covered by exactly one
+   *   triangle (no overlapping triangles, no holes - watertight)
+   * - vertices used on a stitched border lie on snapped (coarse) positions,
+   *   so the coarse neighbor sees no T-junctions
+   * - no used vertex lies strictly inside another triangle's edge
+   *   (no internal T-junctions)
+   */
+  function assertStitchedMeshIsSound(
+    indices: Uint32Array,
+    resolution: number,
+    steps: StitchSteps
+  ): void {
+    const triangles = extractTriangles(indices);
+    expect(triangles.length).toBeGreaterThan(0);
+
+    // No degenerate triangles, consistent winding
+    const seen = new Set<string>();
+    let totalDoubleArea = 0;
+    for (const tri of triangles) {
+      expect(new Set(tri).size).toBe(3);
+      const [a, b, c] = tri.map((v) => toCoord(v, resolution));
+      const doubleArea = signedDoubleArea(a, b, c);
+      expect(doubleArea).toBeLessThan(0); // same orientation as the base grid
+      totalDoubleArea += -doubleArea;
+
+      // Canonical form for duplicate detection (any vertex order)
+      const key = [...tri].sort((x, y) => x - y).join(',');
+      expect(seen.has(key)).toBe(false);
+      seen.add(key);
+    }
+
+    // Areas must sum exactly to the full grid area (all areas are multiples
+    // of 0.5, so this is exact in floating point)
+    expect(totalDoubleArea).toBe(2 * resolution * resolution);
+
+    // Every interior sample point must be covered by exactly one triangle.
+    // Offsets are chosen so no sample lies on any mesh edge (edges only run
+    // between integer lattice points with small direction components).
+    const offsets: Point[] = [
+      { x: 0.37, z: 0.11 },
+      { x: 0.11, z: 0.37 },
+      { x: 0.68, z: 0.29 },
+      { x: 0.29, z: 0.68 },
+    ];
+    const coords = triangles.map(
+      (tri) => tri.map((v) => toCoord(v, resolution)) as [Point, Point, Point]
+    );
+    for (let cellZ = 0; cellZ < resolution; cellZ++) {
+      for (let cellX = 0; cellX < resolution; cellX++) {
+        for (const offset of offsets) {
+          const pt = { x: cellX + offset.x, z: cellZ + offset.z };
+          let cover = 0;
+          for (const [p0, p1, p2] of coords) {
+            if (triangleContains(p0, p1, p2, pt)) cover++;
+          }
+          expect(
+            cover,
+            `point (${pt.x},${pt.z}) covered ${cover} times`
+          ).toBe(1);
+        }
+      }
+    }
+
+    // Vertices used on a stitched border must be snapped to the coarse
+    // neighbor's grid - otherwise the neighbor sees a T-junction
+    const usedVertices = new Set<number>(indices);
+    for (const v of usedVertices) {
+      const { x, z } = toCoord(v, resolution);
+      if (steps.north > 1 && z === 0) {
+        expect(x % steps.north, `north border vertex (${x},${z}) not snapped`).toBe(0);
+      }
+      if (steps.south > 1 && z === resolution) {
+        expect(x % steps.south, `south border vertex (${x},${z}) not snapped`).toBe(0);
+      }
+      if (steps.west > 1 && x === 0) {
+        expect(z % steps.west, `west border vertex (${x},${z}) not snapped`).toBe(0);
+      }
+      if (steps.east > 1 && x === resolution) {
+        expect(z % steps.east, `east border vertex (${x},${z}) not snapped`).toBe(0);
+      }
+    }
+
+    // No used vertex may lie strictly inside another triangle's edge
+    // (internal T-junction: cracks under displacement)
+    const usedCoords = [...usedVertices].map((v) => ({ v, p: toCoord(v, resolution) }));
+    for (const [t0, t1, t2] of triangles) {
+      const edges: [number, number][] = [
+        [t0, t1],
+        [t1, t2],
+        [t2, t0],
+      ];
+      for (const [e0, e1] of edges) {
+        const p = toCoord(e0, resolution);
+        const q = toCoord(e1, resolution);
+        for (const { v, p: r } of usedCoords) {
+          if (v === e0 || v === e1) continue;
+          // Collinear (exact integer arithmetic) and strictly between p and q?
+          if (signedDoubleArea(p, q, r) !== 0) continue;
+          const dot = (r.x - p.x) * (q.x - p.x) + (r.z - p.z) * (q.z - p.z);
+          const lenSq = (q.x - p.x) ** 2 + (q.z - p.z) ** 2;
+          const strictlyInside = dot > 0 && dot < lenSq;
+          expect(
+            strictlyInside,
+            `vertex (${r.x},${r.z}) lies inside edge (${p.x},${p.z})-(${q.x},${q.z})`
+          ).toBe(false);
+        }
+      }
+    }
+  }
+
+  function stepsFor(
+    resolution: number,
+    neighborLods: NeighborLods,
+    lodLevels: readonly number[]
+  ): StitchSteps {
+    return {
+      north: calculateStepRatio(resolution, getResolutionForLevel(neighborLods.north, lodLevels)),
+      south: calculateStepRatio(resolution, getResolutionForLevel(neighborLods.south, lodLevels)),
+      east: calculateStepRatio(resolution, getResolutionForLevel(neighborLods.east, lodLevels)),
+      west: calculateStepRatio(resolution, getResolutionForLevel(neighborLods.west, lodLevels)),
+    };
+  }
+
+  const lodLevels4 = [4, 2, 1] as const;
+  const lodLevels8 = [8, 4, 2, 1] as const;
+
+  it.each([
+    { name: 'north+west coarser (step 2)', res: 4, lods: lodLevels4, n: { north: 1, south: 0, east: 0, west: 1 } },
+    { name: 'north+east coarser (step 2)', res: 4, lods: lodLevels4, n: { north: 1, south: 0, east: 1, west: 0 } },
+    { name: 'south+west coarser (step 2)', res: 4, lods: lodLevels4, n: { north: 0, south: 1, east: 0, west: 1 } },
+    { name: 'south+east coarser (step 2)', res: 4, lods: lodLevels4, n: { north: 0, south: 1, east: 1, west: 0 } },
+    { name: 'all neighbors coarser (step 2)', res: 4, lods: lodLevels4, n: { north: 1, south: 1, east: 1, west: 1 } },
+    { name: 'north+west coarser (step 4)', res: 8, lods: lodLevels8, n: { north: 2, south: 0, east: 0, west: 2 } },
+    { name: 'mixed levels: north step 4, west step 2', res: 8, lods: lodLevels8, n: { north: 2, south: 0, east: 0, west: 1 } },
+    { name: 'mixed levels: north step 2, east step 4', res: 8, lods: lodLevels8, n: { north: 1, south: 0, east: 2, west: 0 } },
+    { name: 'all coarser, mixed steps', res: 8, lods: lodLevels8, n: { north: 1, south: 2, east: 1, west: 2 } },
+    { name: 'three coarser: north, east, west', res: 8, lods: lodLevels8, n: { north: 1, south: 0, east: 1, west: 1 } },
+  ])('produces a watertight, non-overlapping mesh for $name', ({ res, lods, n }) => {
+    const indices = computeStitchedIndices(res, n, 0, lods);
+    assertStitchedMeshIsSound(indices, res, stepsFor(res, n, lods));
+  });
+
+  it('emits the corner cell exactly once when north and west are both coarser', () => {
+    // Hand-traced regression for the issue: with step 2 on both edges, the
+    // corner cell used to be double-covered and the north fan pinned the
+    // unsnapped west-border vertex (0,1).
+    const neighborLods: NeighborLods = { north: 1, south: 0, east: 0, west: 1 };
+    const indices = computeStitchedIndices(4, neighborLods, 0, lodLevels4);
+    const usedVertices = new Set<number>(indices);
+
+    // (0,1) is on the west border but not on the coarse west grid; (1,0) is
+    // on the north border but not on the coarse north grid. Neither may be
+    // referenced.
+    expect(usedVertices.has(getVertexIndex(0, 1, 4))).toBe(false);
+    expect(usedVertices.has(getVertexIndex(1, 0, 4))).toBe(false);
+  });
+
+  it('remains sound when only one edge is stitched (corners untouched)', () => {
+    const singleEdgeConfigs: NeighborLods[] = [
+      { north: 1, south: 0, east: 0, west: 0 },
+      { north: 0, south: 1, east: 0, west: 0 },
+      { north: 0, south: 0, east: 1, west: 0 },
+      { north: 0, south: 0, east: 0, west: 1 },
+    ];
+    for (const neighborLods of singleEdgeConfigs) {
+      clearStitchCache();
+      const indices = computeStitchedIndices(4, neighborLods, 0, lodLevels4);
+      assertStitchedMeshIsSound(indices, 4, stepsFor(4, neighborLods, lodLevels4));
+    }
+  });
+});
+
 describe('clearStitchCache', () => {
   it('clears all cached entries', () => {
     const neighborLods: NeighborLods = { north: 1, south: 0, east: 0, west: 0 };

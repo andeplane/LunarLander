@@ -195,8 +195,9 @@ function buildStitchedIndices(
 ): Uint32Array {
   // Fill a Uint32Array directly instead of growing a number[] (which is
   // multi-MB at high resolutions). Upper bound: full interior grid plus up to
-  // 2 triangles per segment on each of the 4 stitched edges.
-  const maxTriangles = resolution * resolution * 2 + resolution * 2 * 4;
+  // 2 triangles per segment on each of the 4 stitched edges, plus up to
+  // 2 corner-gap triangles per stitched edge (one at each end).
+  const maxTriangles = resolution * resolution * 2 + (resolution * 2 + 2) * 4;
   const indices = new Uint32Array(maxTriangles * 3);
   let cursor = 0;
 
@@ -228,18 +229,38 @@ function buildStitchedIndices(
     }
   }
 
-  // Generate stitched edge triangles
-  if (stepRatios.north > 1) {
-    cursor = generateStitchedEdge(indices, cursor, resolution, 'north', stepRatios.north);
+  // Generate stitched edge triangles. Where two stitched edges meet at a
+  // corner, each fan excludes its corner segment (see CornerExclusions) so the
+  // corner cell is covered exactly once and no unsnapped vertex on the
+  // perpendicular boundary is referenced.
+  const stitchNorth = stepRatios.north > 1;
+  const stitchSouth = stepRatios.south > 1;
+  const stitchWest = stepRatios.west > 1;
+  const stitchEast = stepRatios.east > 1;
+
+  if (stitchNorth) {
+    cursor = generateStitchedEdge(indices, cursor, resolution, 'north', stepRatios.north, {
+      excludeStart: stitchWest,
+      excludeEnd: stitchEast,
+    });
   }
-  if (stepRatios.south > 1) {
-    cursor = generateStitchedEdge(indices, cursor, resolution, 'south', stepRatios.south);
+  if (stitchSouth) {
+    cursor = generateStitchedEdge(indices, cursor, resolution, 'south', stepRatios.south, {
+      excludeStart: stitchWest,
+      excludeEnd: stitchEast,
+    });
   }
-  if (stepRatios.west > 1) {
-    cursor = generateStitchedEdge(indices, cursor, resolution, 'west', stepRatios.west);
+  if (stitchWest) {
+    cursor = generateStitchedEdge(indices, cursor, resolution, 'west', stepRatios.west, {
+      excludeStart: stitchNorth,
+      excludeEnd: stitchSouth,
+    });
   }
-  if (stepRatios.east > 1) {
-    cursor = generateStitchedEdge(indices, cursor, resolution, 'east', stepRatios.east);
+  if (stitchEast) {
+    cursor = generateStitchedEdge(indices, cursor, resolution, 'east', stepRatios.east, {
+      excludeStart: stitchNorth,
+      excludeEnd: stitchSouth,
+    });
   }
 
   return indices.slice(0, cursor);
@@ -258,6 +279,27 @@ function getNearestSnappedPosition(pos: number, stepRatio: number): number {
 }
 
 /**
+ * Corner-ownership exclusions for an edge fan.
+ *
+ * When the perpendicular edge at an end of this edge is also stitched, the
+ * corner cell must not be triangulated by both fans (that would double-cover
+ * it with non-coplanar triangles and pin unsnapped vertices on the
+ * perpendicular boundary, creating T-junctions). Instead each fan stops at the
+ * corner cell's diagonal (e.g. (0,0)-(1,1) at the north-west corner): it skips
+ * its corner segment and, where nearest-neighbor snapping does not already
+ * anchor the fan at the corner boundary vertex, emits a dedicated corner
+ * triangle using only snapped boundary vertices plus the shared interior
+ * corner vertex. The two fans meeting at a corner then tile exactly their
+ * halves of the corner cell, sharing the diagonal edge.
+ */
+interface CornerExclusions {
+  /** Perpendicular edge at the fan's start (x=0 or z=0 end) is also stitched */
+  excludeStart: boolean;
+  /** Perpendicular edge at the fan's end (x=resolution or z=resolution end) is also stitched */
+  excludeEnd: boolean;
+}
+
+/**
  * Generate stitched triangles for one edge.
  * Creates triangles connecting interior row to nearest snapped edge vertices.
  * Writes into `indices` starting at `cursor` and returns the new cursor.
@@ -267,17 +309,18 @@ function generateStitchedEdge(
   cursor: number,
   resolution: number,
   edge: CardinalDirection,
-  stepRatio: number
+  stepRatio: number,
+  corners: CornerExclusions
 ): number {
   switch (edge) {
     case 'north':
-      return generateNorthEdgeNearestNeighbor(indices, cursor, resolution, stepRatio);
+      return generateNorthEdgeNearestNeighbor(indices, cursor, resolution, stepRatio, corners);
     case 'south':
-      return generateSouthEdgeNearestNeighbor(indices, cursor, resolution, stepRatio);
+      return generateSouthEdgeNearestNeighbor(indices, cursor, resolution, stepRatio, corners);
     case 'west':
-      return generateWestEdgeNearestNeighbor(indices, cursor, resolution, stepRatio);
+      return generateWestEdgeNearestNeighbor(indices, cursor, resolution, stepRatio, corners);
     case 'east':
-      return generateEastEdgeNearestNeighbor(indices, cursor, resolution, stepRatio);
+      return generateEastEdgeNearestNeighbor(indices, cursor, resolution, stepRatio, corners);
   }
 }
 
@@ -289,11 +332,36 @@ function generateNorthEdgeNearestNeighbor(
   indices: Uint32Array,
   startCursor: number,
   resolution: number,
-  stepRatio: number
+  stepRatio: number,
+  corners: CornerExclusions
 ): number {
   let cursor = startCursor;
+
+  if (corners.excludeStart) {
+    // North-west corner: cover the gap between the corner cell diagonal
+    // (0,0)-(1,1) and the fan's first snapped anchor, if any (stepRatio 2).
+    const snap = getNearestSnappedPosition(1, stepRatio);
+    if (snap !== 0) {
+      indices[cursor++] = getVertexIndex(0, 0, resolution);
+      indices[cursor++] = getVertexIndex(1, 1, resolution);
+      indices[cursor++] = getVertexIndex(snap, 0, resolution);
+    }
+  }
+  if (corners.excludeEnd) {
+    // North-east corner: cover the gap between the fan's last snapped anchor
+    // and the corner cell diagonal (resolution-1,1)-(resolution,0), if any.
+    const snap = getNearestSnappedPosition(resolution - 1, stepRatio);
+    if (snap !== resolution) {
+      indices[cursor++] = getVertexIndex(snap, 0, resolution);
+      indices[cursor++] = getVertexIndex(resolution - 1, 1, resolution);
+      indices[cursor++] = getVertexIndex(resolution, 0, resolution);
+    }
+  }
+
+  const startX = corners.excludeStart ? 1 : 0;
+  const endX = corners.excludeEnd ? resolution - 1 : resolution;
   // Process each interior edge segment (x, x+1)
-  for (let x = 0; x < resolution; x++) {
+  for (let x = startX; x < endX; x++) {
     const interiorLeft = getVertexIndex(x, 1, resolution);
     const interiorRight = getVertexIndex(x + 1, 1, resolution);
 
@@ -333,11 +401,36 @@ function generateSouthEdgeNearestNeighbor(
   indices: Uint32Array,
   startCursor: number,
   resolution: number,
-  stepRatio: number
+  stepRatio: number,
+  corners: CornerExclusions
 ): number {
   let cursor = startCursor;
+
+  if (corners.excludeStart) {
+    // South-west corner: cover the gap between the corner cell diagonal
+    // (0,resolution)-(1,resolution-1) and the fan's first snapped anchor.
+    const snap = getNearestSnappedPosition(1, stepRatio);
+    if (snap !== 0) {
+      indices[cursor++] = getVertexIndex(1, resolution - 1, resolution);
+      indices[cursor++] = getVertexIndex(0, resolution, resolution);
+      indices[cursor++] = getVertexIndex(snap, resolution, resolution);
+    }
+  }
+  if (corners.excludeEnd) {
+    // South-east corner: cover the gap between the fan's last snapped anchor
+    // and the corner cell diagonal (resolution-1,resolution-1)-(resolution,resolution).
+    const snap = getNearestSnappedPosition(resolution - 1, stepRatio);
+    if (snap !== resolution) {
+      indices[cursor++] = getVertexIndex(resolution - 1, resolution - 1, resolution);
+      indices[cursor++] = getVertexIndex(snap, resolution, resolution);
+      indices[cursor++] = getVertexIndex(resolution, resolution, resolution);
+    }
+  }
+
+  const startX = corners.excludeStart ? 1 : 0;
+  const endX = corners.excludeEnd ? resolution - 1 : resolution;
   // Process each interior edge segment (x, x+1)
-  for (let x = 0; x < resolution; x++) {
+  for (let x = startX; x < endX; x++) {
     const interiorLeft = getVertexIndex(x, resolution - 1, resolution);
     const interiorRight = getVertexIndex(x + 1, resolution - 1, resolution);
 
@@ -376,11 +469,36 @@ function generateWestEdgeNearestNeighbor(
   indices: Uint32Array,
   startCursor: number,
   resolution: number,
-  stepRatio: number
+  stepRatio: number,
+  corners: CornerExclusions
 ): number {
   let cursor = startCursor;
+
+  if (corners.excludeStart) {
+    // North-west corner: cover the gap between the corner cell diagonal
+    // (0,0)-(1,1) and the fan's first snapped anchor, if any (stepRatio 2).
+    const snap = getNearestSnappedPosition(1, stepRatio);
+    if (snap !== 0) {
+      indices[cursor++] = getVertexIndex(0, 0, resolution);
+      indices[cursor++] = getVertexIndex(0, snap, resolution);
+      indices[cursor++] = getVertexIndex(1, 1, resolution);
+    }
+  }
+  if (corners.excludeEnd) {
+    // South-west corner: cover the gap between the fan's last snapped anchor
+    // and the corner cell diagonal (1,resolution-1)-(0,resolution), if any.
+    const snap = getNearestSnappedPosition(resolution - 1, stepRatio);
+    if (snap !== resolution) {
+      indices[cursor++] = getVertexIndex(0, snap, resolution);
+      indices[cursor++] = getVertexIndex(0, resolution, resolution);
+      indices[cursor++] = getVertexIndex(1, resolution - 1, resolution);
+    }
+  }
+
+  const startZ = corners.excludeStart ? 1 : 0;
+  const endZ = corners.excludeEnd ? resolution - 1 : resolution;
   // Process each interior edge segment (z, z+1)
-  for (let z = 0; z < resolution; z++) {
+  for (let z = startZ; z < endZ; z++) {
     const interiorTop = getVertexIndex(1, z, resolution);
     const interiorBottom = getVertexIndex(1, z + 1, resolution);
 
@@ -419,11 +537,36 @@ function generateEastEdgeNearestNeighbor(
   indices: Uint32Array,
   startCursor: number,
   resolution: number,
-  stepRatio: number
+  stepRatio: number,
+  corners: CornerExclusions
 ): number {
   let cursor = startCursor;
+
+  if (corners.excludeStart) {
+    // North-east corner: cover the gap between the corner cell diagonal
+    // (resolution,0)-(resolution-1,1) and the fan's first snapped anchor.
+    const snap = getNearestSnappedPosition(1, stepRatio);
+    if (snap !== 0) {
+      indices[cursor++] = getVertexIndex(resolution, 0, resolution);
+      indices[cursor++] = getVertexIndex(resolution - 1, 1, resolution);
+      indices[cursor++] = getVertexIndex(resolution, snap, resolution);
+    }
+  }
+  if (corners.excludeEnd) {
+    // South-east corner: cover the gap between the fan's last snapped anchor
+    // and the corner cell diagonal (resolution-1,resolution-1)-(resolution,resolution).
+    const snap = getNearestSnappedPosition(resolution - 1, stepRatio);
+    if (snap !== resolution) {
+      indices[cursor++] = getVertexIndex(resolution, snap, resolution);
+      indices[cursor++] = getVertexIndex(resolution - 1, resolution - 1, resolution);
+      indices[cursor++] = getVertexIndex(resolution, resolution, resolution);
+    }
+  }
+
+  const startZ = corners.excludeStart ? 1 : 0;
+  const endZ = corners.excludeEnd ? resolution - 1 : resolution;
   // Process each interior edge segment (z, z+1)
-  for (let z = 0; z < resolution; z++) {
+  for (let z = startZ; z < endZ; z++) {
     const interiorTop = getVertexIndex(resolution - 1, z, resolution);
     const interiorBottom = getVertexIndex(resolution - 1, z + 1, resolution);
 
