@@ -412,7 +412,7 @@ export function applyCratersToHeightBuffer(
 
   // For each vertex, accumulate crater influence.
   // Note: vertex positions must be in the same space as the crater centers
-  // (applyCratersToChunk converts craters to local chunk space beforehand).
+  // (callers convert craters to local chunk space beforehand).
   // Depression takes priority over rim (newer craters destroy older rims);
   // that accumulation logic lives in getCraterHeightModAt so the per-vertex
   // path and the procedural point-query path stay in sync.
@@ -422,46 +422,4 @@ export function applyCratersToHeightBuffer(
       positions[i * 3 + 1] += heightMod;
     }
   }
-}
-
-/**
- * Main entry point for crater application in the worker.
- * 
- * Generates craters for the region and applies them to the height buffer.
- * Vertex positions are in local chunk space but crater world positions
- * need to be converted to match.
- * 
- * @param positions - Float32Array of vertex positions
- * @param gridKey - Chunk grid key "x,z"
- * @param chunkWidth - Chunk width in meters
- * @param chunkDepth - Chunk depth in meters
- * @param params - Crater generation parameters
- */
-export function applyCratersToChunk(
-  positions: Float32Array,
-  gridKey: string,
-  chunkWidth: number,
-  chunkDepth: number,
-  params: CraterParams
-): number {
-  // Generate craters for this region (including neighbors)
-  const craters = generateCratersForRegion(gridKey, chunkWidth, chunkDepth, params);
-  
-  if (craters.length === 0) return 0;
-  
-  // Convert crater positions from world space to local chunk space
-  const [gridX, gridZ] = parseGridKey(gridKey);
-  const chunkWorldX = gridX * chunkWidth;
-  const chunkWorldZ = gridZ * chunkDepth;
-  
-  const localCraters: Crater[] = craters.map(crater => ({
-    ...crater,
-    centerX: crater.centerX - chunkWorldX,
-    centerZ: crater.centerZ - chunkWorldZ,
-  }));
-  
-  // Apply craters to height buffer
-  applyCratersToHeightBuffer(positions, chunkWidth, chunkDepth, localCraters);
-  
-  return craters.length;
 }
