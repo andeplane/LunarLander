@@ -252,23 +252,27 @@ export class MoonMaterial extends MeshStandardMaterial {
       );
 
       // Apply planetary curvature (with instancing support)
+      // NOTE: the local is named curvedWorldPosition (not worldPosition) because
+      // Three.js's <worldpos_vertex> chunk declares its own `vec4 worldPosition`
+      // when USE_ENVMAP/DISTANCE/USE_SHADOWMAP/USE_TRANSMISSION/spot coords are
+      // enabled, and a redeclaration would break shader compilation.
       shader.vertexShader = shader.vertexShader.replace(
         '#include <project_vertex>',
         `
         #ifdef USE_INSTANCING
-          vec4 worldPosition = modelMatrix * instanceMatrix * vec4( transformed, 1.0 );
+          vec4 curvedWorldPosition = modelMatrix * instanceMatrix * vec4( transformed, 1.0 );
         #else
-          vec4 worldPosition = modelMatrix * vec4( transformed, 1.0 );
+          vec4 curvedWorldPosition = modelMatrix * vec4( transformed, 1.0 );
         #endif
-        
+
         if (uEnableCurvature > 0.5) {
-          vec2 deltaXZ = worldPosition.xz - cameraPosition.xz;
+          vec2 deltaXZ = curvedWorldPosition.xz - cameraPosition.xz;
           float distSq = dot(deltaXZ, deltaXZ);
           float curvatureDrop = distSq / (2.0 * uPlanetRadius);
-          worldPosition.y -= curvatureDrop;
+          curvedWorldPosition.y -= curvatureDrop;
         }
-        
-        vec4 mvPosition = viewMatrix * worldPosition;
+
+        vec4 mvPosition = viewMatrix * curvedWorldPosition;
         gl_Position = projectionMatrix * mvPosition;
         `
       );

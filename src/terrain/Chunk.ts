@@ -1,4 +1,4 @@
-import { LOD, type Mesh, type InstancedMesh, type Scene, type Material, MeshBasicMaterial } from 'three';
+import { LOD, MeshBasicMaterial, type Material, type Mesh, type InstancedMesh, type Scene } from 'three';
 
 /**
  * Dispose per-chunk debug materials (wireframe MeshBasicMaterial).
@@ -63,6 +63,20 @@ export class Chunk {
   }
 
   /**
+   * Remove a mesh from the LOD object, including its LOD.levels entry.
+   * LOD.remove() alone leaves the levels array entry behind, which would
+   * keep a reference to the disposed mesh alive.
+   */
+  private removeLodEntry(mesh: Mesh): void {
+    const levels = this.lod.levels;
+    const index = levels.findIndex((level) => level.object === mesh);
+    if (index !== -1) {
+      levels.splice(index, 1);
+    }
+    this.lod.remove(mesh);
+  }
+
+  /**
    * Add a terrain mesh at the specified LOD level
    */
   addTerrainMesh(mesh: Mesh, lodLevel: number, distance: number): void {
@@ -71,13 +85,7 @@ export class Chunk {
     if (oldMesh) {
       oldMesh.geometry.dispose();
       disposeDebugMaterial(oldMesh.material);
-      // lod.remove() does not remove the addLevel() entry - without this the
-      // levels array grows forever, retaining disposed meshes
-      const levelIndex = this.lod.levels.findIndex((level) => level.object === oldMesh);
-      if (levelIndex !== -1) {
-        this.lod.levels.splice(levelIndex, 1);
-      }
-      this.lod.remove(oldMesh);
+      this.removeLodEntry(oldMesh);
     }
 
     this.terrainMeshes[lodLevel] = mesh;
@@ -127,6 +135,28 @@ export class Chunk {
       mesh.dispose();
     }
     this.rockMeshes[lodLevel] = [];
+  }
+
+  /**
+   * Evict a built LOD level, freeing its GPU resources.
+   * Disposes the terrain geometry and rock instance buffers for the level.
+   * Shared materials (MoonMaterial, rock material) are never disposed here;
+   * only per-chunk debug materials (MeshBasicMaterial) are.
+   */
+  removeLodLevel(lodLevel: number): void {
+    const mesh = this.terrainMeshes[lodLevel];
+    if (mesh) {
+      this.removeLodEntry(mesh);
+      mesh.geometry.dispose();
+
+      // Debug wireframe materials are created per mesh; shared materials are not
+      disposeDebugMaterial(mesh.material);
+
+      this.terrainMeshes[lodLevel] = null;
+    }
+
+    this.clearRockMeshes(lodLevel);
+    this.builtLevels.delete(lodLevel);
   }
 
   /**

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { ShaderChunk } from 'three';
 import { MoonMaterial } from './MoonMaterial';
 
 interface FakeShader {
@@ -102,6 +103,24 @@ describe('MoonMaterial param handling', () => {
       enableSpecular: material.getParam('enableSpecular'),
     });
     expect(shader.uniforms.uSpecularPower.value).toBe(-1);
+  });
+
+  it('does not redeclare worldPosition when worldpos_vertex expands (shadows/envmap)', () => {
+    const material = new MoonMaterial();
+    const shader = compile(material);
+
+    // The <worldpos_vertex> include must survive so Three.js can expand it
+    expect(shader.vertexShader).toContain('#include <worldpos_vertex>');
+
+    // Simulate Three.js expanding the chunk. With USE_SHADOWMAP/USE_ENVMAP/etc.
+    // enabled, worldpos_vertex declares its own `vec4 worldPosition`; our
+    // injected code must not declare a second one (GLSL redeclaration error).
+    const expanded = shader.vertexShader.replace(
+      '#include <worldpos_vertex>',
+      ShaderChunk.worldpos_vertex
+    );
+    const declarations = expanded.match(/vec4\s+worldPosition\b/g) ?? [];
+    expect(declarations).toHaveLength(1);
   });
 
   it('does not create the removed texture-LOD uniforms', () => {

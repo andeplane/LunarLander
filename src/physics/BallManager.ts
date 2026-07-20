@@ -11,11 +11,42 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { CurvedStandardMaterial } from '../shaders/CurvedStandardMaterial';
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
-import { clampSpawnY, isBallMoving, shouldDespawnBall } from './BallUtils';
+import {
+  clampSpawnY,
+  interpolateTransform,
+  isBallMoving,
+  shouldDespawnBall,
+  type TransformSnapshot,
+} from './BallUtils';
 
 interface Ball {
   rigidBody: RAPIER.RigidBody;
   mesh: THREE.Mesh;
+  /** Physics transform before the most recent fixed step (interpolation start). */
+  prevTransform: TransformSnapshot;
+  /** Physics transform after the most recent fixed step (interpolation end). */
+  currTransform: TransformSnapshot;
+}
+
+/** Create a transform snapshot at a position with identity rotation. */
+function createSnapshot(x: number, y: number, z: number): TransformSnapshot {
+  return {
+    position: { x, y, z },
+    rotation: { x: 0, y: 0, z: 0, w: 1 },
+  };
+}
+
+/** Copy a rigid body's current physics transform into a snapshot (no allocation). */
+function copyBodyTransform(body: RAPIER.RigidBody, out: TransformSnapshot): void {
+  const pos = body.translation();
+  out.position.x = pos.x;
+  out.position.y = pos.y;
+  out.position.z = pos.z;
+  const rot = body.rotation();
+  out.rotation.x = rot.x;
+  out.rotation.y = rot.y;
+  out.rotation.z = rot.z;
+  out.rotation.w = rot.w;
 }
 
 /**
@@ -125,8 +156,14 @@ export class BallManager {
     mesh.position.copy(spawnPos);
     this.scene.add(mesh);
 
-    // Track the ball
-    this.balls.push({ rigidBody, mesh });
+    // Track the ball; both snapshots start at the spawn transform so the
+    // first interpolated frame renders the ball exactly where it spawned
+    this.balls.push({
+      rigidBody,
+      mesh,
+      prevTransform: createSnapshot(spawnPos.x, spawnPos.y, spawnPos.z),
+      currTransform: createSnapshot(spawnPos.x, spawnPos.y, spawnPos.z),
+    });
 
     // Remove oldest ball if we're over the limit
     if (this.balls.length > this.config.maxBalls) {
@@ -157,8 +194,13 @@ export class BallManager {
     mesh.position.set(x, y, z);
     this.scene.add(mesh);
 
-    // Track the ball
-    this.balls.push({ rigidBody, mesh });
+    // Track the ball; both snapshots start at the drop transform
+    this.balls.push({
+      rigidBody,
+      mesh,
+      prevTransform: createSnapshot(x, y, z),
+      currTransform: createSnapshot(x, y, z),
+    });
 
     // Remove oldest ball if over limit
     if (this.balls.length > this.config.maxBalls) {
@@ -167,21 +209,39 @@ export class BallManager {
   }
 
   /**
-   * Update all ball meshes to match their physics body positions.
-   * Should be called after physics step.
-   * 
+   * Capture each ball's physics transform as the interpolation start point.
+   * Must be called immediately before every fixed physics step, so that
+   * prevTransform holds the state before the step and the physics body
+   * itself holds the state after it.
+   */
+  beforePhysicsStep(): void {
+    for (const ball of this.balls) {
+      copyBodyTransform(ball.rigidBody, ball.prevTransform);
+    }
+  }
+
+  /**
+   * Update all ball meshes from their physics bodies, interpolating between
+   * the pre-step and post-step transforms by alpha (the fixed-timestep
+   * accumulator's leftover fraction in [0, 1)). This keeps ball motion
+   * smooth on displays refreshing faster than the physics step rate.
+   *
    * Note: Physics positions are in flat world space, but meshes use
    * CurvedStandardMaterial which applies curvature in the vertex shader,
    * so balls will visually match the curved terrain.
-   * 
+   *
    * Balls that fall below the kill altitude (e.g. after leaving the
    * terrain-collider window around the camera) are despawned so they cannot
    * keep the simulation "moving" forever and defeat render-on-demand.
+   * Despawning is decided on the true physics position, never the
+   * interpolated one.
    *
+   * @param alpha Interpolation fraction between the previous and current
+   *              physics transforms (defaults to 1 = current transform)
    * @returns true if any balls are moving (or were just despawned and need
    *          one more render to disappear), false otherwise
    */
-  update(): boolean {
+  update(alpha: number = 1): boolean {
     if (this.balls.length === 0) return false;
 
     let hasMovingBalls = false;
@@ -202,11 +262,12 @@ export class BallManager {
         continue;
       }
 
-      ball.mesh.position.set(pos.x, pos.y, pos.z);
-
-      // Get rotation from physics body
-      const rot = ball.rigidBody.rotation();
-      ball.mesh.quaternion.set(rot.x, rot.y, rot.z, rot.w);
+      // Refresh the interpolation end point from the physics body, then
+      // place the mesh between the pre- and post-step transforms
+      copyBodyTransform(ball.rigidBody, ball.currTransform);
+      const t = interpolateTransform(ball.prevTransform, ball.currTransform, alpha);
+      ball.mesh.position.set(t.position.x, t.position.y, t.position.z);
+      ball.mesh.quaternion.set(t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w);
 
       // Check if ball is moving (linear or angular velocity above threshold)
       if (isBallMoving(ball.rigidBody.linvel(), ball.rigidBody.angvel())) {

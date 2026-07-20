@@ -316,6 +316,128 @@ describe(ChunkManager.name, () => {
     });
   });
 
+  describe('LOD eviction', () => {
+    it('evicts fine LOD levels outside the retained set when the camera recedes', () => {
+      // lodLevels [64, 32, 16, 8]: collision LOD = 1 (closest to 32), coarsest = 3
+      const manager = createManager({ lodLevels: [64, 32, 16, 8] });
+
+      // Near camera: desired LOD is 0
+      manager.update(new Vector3(0, 50, 0));
+
+      handleWorkerResult(manager, makeResult('0,0', 0, 64));
+      handleWorkerResult(manager, makeResult('0,0', 1, 32));
+      handleWorkerResult(manager, makeResult('0,0', 2, 16));
+      handleWorkerResult(manager, makeResult('0,0', 3, 8));
+
+      const chunk = manager.getChunk('0,0');
+      expect(chunk).toBeDefined();
+      if (!chunk) return;
+
+      const fineMesh = chunk.getTerrainMesh(0);
+      expect(fineMesh).not.toBeNull();
+      if (!fineMesh) return;
+      const disposeSpy = vi.spyOn(fineMesh.geometry, 'dispose');
+
+      // Far camera (high above): desired LOD becomes coarsest (3).
+      // Retained set = {desired-1=2, desired=3, current=3, collision=1, coarsest=3}
+      // so level 0 must be evicted.
+      manager.update(new Vector3(0, 100000, 0));
+
+      expect(chunk.hasLodLevel(0)).toBe(false);
+      expect(chunk.getTerrainMesh(0)).toBeNull();
+      expect(disposeSpy).toHaveBeenCalled();
+      expect(chunk.lod.children).not.toContain(fineMesh);
+      expect(chunk.lod.levels.some((level) => level.object === fineMesh)).toBe(false);
+
+      // Per-level stitching data for the evicted level is dropped
+      expect(terrainGenerator.clearStitchingData).toHaveBeenCalledWith('0,0', 0);
+
+      // Retained levels survive: collision (1), desired-1 (2), coarsest/current (3)
+      expect(chunk.hasLodLevel(1)).toBe(true);
+      expect(chunk.hasLodLevel(2)).toBe(true);
+      expect(chunk.hasLodLevel(3)).toBe(true);
+    });
+
+    it('disposes rock instance meshes of evicted LOD levels', () => {
+      const manager = createManager({ lodLevels: [64, 32, 16, 8] });
+      manager.update(new Vector3(0, 50, 0));
+
+      const placements: RockPlacement[] = [
+        { prototypeId: 0, matrices: new Float32Array(16) },
+      ];
+      handleWorkerResult(manager, makeResult('0,0', 0, 64, placements));
+      handleWorkerResult(manager, makeResult('0,0', 3, 8));
+
+      const chunk = manager.getChunk('0,0');
+      expect(chunk).toBeDefined();
+      if (!chunk) return;
+
+      const rockMesh = chunk.getRockMeshes(0)[0];
+      expect(rockMesh).toBeDefined();
+      const rockDisposeSpy = vi.spyOn(rockMesh, 'dispose');
+
+      manager.update(new Vector3(0, 100000, 0));
+
+      expect(chunk.getRockMeshes(0).length).toBe(0);
+      expect(rockDisposeSpy).toHaveBeenCalled();
+      expect(chunk.lod.children).not.toContain(rockMesh);
+    });
+
+    it('never evicts the currently displayed LOD level', () => {
+      const manager = createManager({ lodLevels: [64, 32, 16, 8] });
+      manager.update(new Vector3(0, 50, 0));
+
+      // Only the finest level is built; it stays the best available (and thus
+      // displayed) mesh even when the desired LOD becomes the coarsest.
+      handleWorkerResult(manager, makeResult('0,0', 0, 64));
+
+      manager.update(new Vector3(0, 100000, 0));
+
+      const chunk = manager.getChunk('0,0');
+      expect(chunk).toBeDefined();
+      if (!chunk) return;
+
+      expect(chunk.hasLodLevel(0)).toBe(true);
+      expect(chunk.getTerrainMesh(0)?.visible).toBe(true);
+    });
+
+    it('keeps collision LOD available for getHeightAt after eviction', () => {
+      const manager = createManager({ lodLevels: [64, 32, 16, 8] });
+      manager.update(new Vector3(0, 50, 0));
+
+      handleWorkerResult(manager, makeResult('0,0', 0, 64));
+      handleWorkerResult(manager, makeResult('0,0', 1, 32));
+      handleWorkerResult(manager, makeResult('0,0', 3, 8));
+
+      manager.update(new Vector3(0, 100000, 0));
+
+      const height = manager.getHeightAt(0, 0);
+      expect(height).toBe(42);
+      expect(raycastHeight).toHaveBeenCalledWith(0, 0, terrainMeshesByKey.get('0,0:1'));
+    });
+
+    it('re-requests an evicted level when the camera comes back', () => {
+      const manager = createManager({ lodLevels: [64, 32, 16, 8] });
+      manager.update(new Vector3(0, 50, 0));
+
+      handleWorkerResult(manager, makeResult('0,0', 0, 64));
+      handleWorkerResult(manager, makeResult('0,0', 1, 32));
+      handleWorkerResult(manager, makeResult('0,0', 2, 16));
+      handleWorkerResult(manager, makeResult('0,0', 3, 8));
+
+      // Recede: level 0 evicted
+      manager.update(new Vector3(0, 100000, 0));
+      const chunk = manager.getChunk('0,0');
+      expect(chunk?.hasLodLevel(0)).toBe(false);
+
+      // Return: level 0 is desired again and must be re-requested
+      manager.update(new Vector3(0, 50, 0));
+      drainWorkers();
+
+      expect(chunk?.hasLodLevel(0)).toBe(true);
+    });
+  });
+
   describe('getHeightAt', () => {
     it('falls back to the finest available LOD mesh when collision LOD is missing', () => {
       // lodLevels [64, 32, 16]: collision LOD is index 1 (closest to 32)

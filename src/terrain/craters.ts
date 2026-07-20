@@ -257,63 +257,68 @@ function getNoiseForSeed(seed: number): NoiseFunction2D {
 }
 
 /**
- * Calculate wobbled radius at a given angle using simplex noise
+ * Calculate the radial wobble factor at a given angle using simplex noise.
+ *
+ * The factor depends only on the angle and the crater's wobble parameters,
+ * so it can be computed once and applied to any base radius (crater radius,
+ * rim outer radius, ...) by simple multiplication.
  */
-function getWobblyRadius(baseRadius: number, angle: number, crater: Crater): number {
+function getWobbleFactor(angle: number, crater: Crater): number {
   const { wobbleAmplitude, wobbleSeed } = crater;
-  
+
+  // No wobble configured: skip the noise evaluations entirely
+  if (wobbleAmplitude === 0) return 1;
+
   // Sample noise on a circle - this gives smooth, organic variation around the rim
   // Use multiple octaves at different frequencies for more natural irregularity
   const noise = getNoiseForSeed(wobbleSeed);
-  
+
   // Sample points on a unit circle, scaled for different frequencies
   const x1 = Math.cos(angle);
   const y1 = Math.sin(angle);
-  
+
   // Low frequency (large features) + high frequency (small bumps)
   const freq1 = 2.0;  // ~2 major bumps
-  const freq2 = 5.0;  // ~5 medium bumps  
+  const freq2 = 5.0;  // ~5 medium bumps
   const freq3 = 11.0; // ~11 small bumps
-  
+
   const wobble1 = noise(x1 * freq1, y1 * freq1) * 0.6;
   const wobble2 = noise(x1 * freq2, y1 * freq2) * 0.3;
   const wobble3 = noise(x1 * freq3, y1 * freq3) * 0.1;
-  
+
   const totalWobble = wobble1 + wobble2 + wobble3;
-  
-  return baseRadius * (1 + totalWobble * wobbleAmplitude);
+
+  return 1 + totalWobble * wobbleAmplitude;
 }
 
 export function craterHeightProfile(distance: number, angle: number, crater: Crater): number {
   const { radius, depth, rimHeight, rimOuterRadius, floorFlatness } = crater;
-  
-  // Apply wobble to radius and rim outer radius
-  const wobbledRadius = getWobblyRadius(radius, angle, crater);
-  const wobbledRimOuter = getWobblyRadius(rimOuterRadius, angle, crater);
-  
+
+  // Apply wobble to radius and rim outer radius.
+  // The wobble factor depends only on angle + seed, so compute it once and
+  // scale both radii with it (avoids a redundant set of noise evaluations).
+  const wobbleFactor = getWobbleFactor(angle, crater);
+  const wobbledRadius = radius * wobbleFactor;
+  const wobbledRimOuter = rimOuterRadius * wobbleFactor;
+
   if (distance >= wobbledRimOuter) {
     // Outside crater influence
     return 0;
   }
-  
+
   if (distance <= wobbledRadius) {
     // Inside crater bowl
     const normalizedDist = distance / wobbledRadius;
-    
-    // Parabolic profile: depth * (1 - (r/R)²)
-    // With floor flatness: interpolate between parabolic and flat
-    const parabolicDepth = depth * (1 - normalizedDist * normalizedDist);
-    
-    if (floorFlatness > 0 && normalizedDist < 0.5) {
-      // Flat floor in center, blend to parabolic at edges
-      const flatDepth = depth;
-      const blendFactor = normalizedDist / 0.5; // 0 at center, 1 at half-radius
-      const blendedDepth = flatDepth * (1 - blendFactor * floorFlatness) + 
-                          parabolicDepth * blendFactor * floorFlatness;
-      return -blendedDepth;
-    }
-    
-    return -parabolicDepth;
+
+    // Bowl profile with optional flat floor:
+    // the innermost `0.5 * floorFlatness` fraction of the radius stays at full
+    // depth, and the remaining annulus rises parabolically to 0 at the rim.
+    // This is continuous (and smooth at the flat/parabolic boundary, where the
+    // parabola's slope is zero) for every floorFlatness value, and reduces
+    // exactly to the plain parabola depth * (1 - (r/R)²) when floorFlatness = 0.
+    const flatFraction = 0.5 * Math.min(Math.max(floorFlatness, 0), 1);
+    const t = Math.max(0, (normalizedDist - flatFraction) / (1 - flatFraction));
+    return -depth * (1 - t * t);
   }
   
   // Rim zone (wobbledRadius < distance < wobbledRimOuter)
@@ -351,15 +356,19 @@ export function getCraterHeightModAt(
   for (const crater of craters) {
     const dx = worldX - crater.centerX;
     const dz = worldZ - crater.centerZ;
-    const distance = Math.sqrt(dx * dx + dz * dz);
-    
-    // Skip if clearly outside crater influence (with wobble margin)
-    if (distance >= crater.rimOuterRadius * 1.3) continue;
-    
+    const distanceSq = dx * dx + dz * dz;
+
+    // Skip if clearly outside crater influence (1.3x margin covers wobble);
+    // compare squared distances to avoid the sqrt for out-of-range craters
+    const maxInfluence = crater.rimOuterRadius * 1.3;
+    if (distanceSq >= maxInfluence * maxInfluence) continue;
+
+    const distance = Math.sqrt(distanceSq);
+
     // Calculate angle for wobbly radius
     const angle = Math.atan2(dz, dx);
     const heightMod = craterHeightProfile(distance, angle, crater);
-    
+
     if (heightMod < 0) {
       // Depression: use deepest (most negative)
       totalHeightMod = Math.min(totalHeightMod, heightMod);
@@ -398,54 +407,19 @@ export function applyCratersToHeightBuffer(
   craters: Crater[]
 ): void {
   if (craters.length === 0) return;
-  
+
   const vertexCount = positions.length / 3;
-  let _modifiedCount = 0;
-  
-  // For each vertex, compute crater influence
+
+  // For each vertex, accumulate crater influence.
+  // Note: vertex positions must be in the same space as the crater centers
+  // (applyCratersToChunk converts craters to local chunk space beforehand).
+  // Depression takes priority over rim (newer craters destroy older rims);
+  // that accumulation logic lives in getCraterHeightModAt so the per-vertex
+  // path and the procedural point-query path stay in sync.
   for (let i = 0; i < vertexCount; i++) {
-    const x = positions[i * 3];
-    const y = positions[i * 3 + 1];
-    const z = positions[i * 3 + 2];
-    
-    // Track the deepest depression and highest rim at this point
-    let totalHeightMod = 0;
-    let hasRim = false;
-    let maxRim = 0;
-    
-    for (const crater of craters) {
-      // Calculate distance from vertex to crater center
-      // Note: vertex positions are in local chunk space (centered at origin)
-      // Crater centers are in world space, so we need to account for this
-      const dx = x - crater.centerX;
-      const dz = z - crater.centerZ;
-      const distance = Math.sqrt(dx * dx + dz * dz);
-      
-      // Skip if clearly outside crater influence (use base radius * 1.5 for wobble margin)
-      if (distance >= crater.rimOuterRadius * 1.3) continue;
-      
-      // Calculate angle for wobbly radius
-      const angle = Math.atan2(dz, dx);
-      const heightMod = craterHeightProfile(distance, angle, crater);
-      
-      if (heightMod < 0) {
-        // Depression: use deepest (most negative)
-        totalHeightMod = Math.min(totalHeightMod, heightMod);
-      } else if (heightMod > 0) {
-        // Rim: track separately, only apply if no depression
-        hasRim = true;
-        maxRim = Math.max(maxRim, heightMod);
-      }
-    }
-    
-    // Apply height modification
-    // Depression takes priority over rim (newer craters destroy older rims)
-    if (totalHeightMod < 0) {
-      positions[i * 3 + 1] = y + totalHeightMod;
-      _modifiedCount++;
-    } else if (hasRim) {
-      positions[i * 3 + 1] = y + maxRim;
-      _modifiedCount++;
+    const heightMod = getCraterHeightModAt(positions[i * 3], positions[i * 3 + 2], craters);
+    if (heightMod !== 0) {
+      positions[i * 3 + 1] += heightMod;
     }
   }
 }

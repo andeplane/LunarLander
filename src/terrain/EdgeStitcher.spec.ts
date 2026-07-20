@@ -244,11 +244,41 @@ describe(computeStitchedIndices.name, () => {
     it('creates separate cache entries for different configurations', () => {
       const neighborLods1: NeighborLods = { north: 1, south: 0, east: 0, west: 0 };
       const neighborLods2: NeighborLods = { north: 0, south: 1, east: 0, west: 0 };
-      
+
       computeStitchedIndices(4, neighborLods1, 0, [4, 2, 1]);
       computeStitchedIndices(4, neighborLods2, 0, [4, 2, 1]);
-      
+
       expect(getStitchCacheSize()).toBe(2);
+    });
+
+    it('evicts least-recently-used entries, not least-recently-inserted', () => {
+      const maxCacheSize = 256;
+      const lodLevels = [8, 4, 2, 1];
+
+      // Fill the cache to capacity with distinct configurations
+      const configs: NeighborLods[] = [];
+      for (let n = 0; n < 4 && configs.length < maxCacheSize; n++) {
+        for (let s = 0; s < 4 && configs.length < maxCacheSize; s++) {
+          for (let e = 0; e < 4 && configs.length < maxCacheSize; e++) {
+            for (let w = 0; w < 4 && configs.length < maxCacheSize; w++) {
+              configs.push({ north: n, south: s, east: e, west: w });
+            }
+          }
+        }
+      }
+      const results = configs.map((c) => computeStitchedIndices(8, c, 0, lodLevels));
+      expect(getStitchCacheSize()).toBe(maxCacheSize);
+
+      // Touch the oldest entry to refresh its recency
+      expect(computeStitchedIndices(8, configs[0], 0, lodLevels)).toBe(results[0]);
+
+      // Inserting a new configuration evicts the second-oldest entry,
+      // not the recently-touched oldest one
+      computeStitchedIndices(4, { north: 1, south: 0, east: 0, west: 0 }, 0, [4, 2, 1]);
+      expect(getStitchCacheSize()).toBe(maxCacheSize);
+
+      expect(computeStitchedIndices(8, configs[0], 0, lodLevels)).toBe(results[0]);
+      expect(computeStitchedIndices(8, configs[1], 0, lodLevels)).not.toBe(results[1]);
     });
   });
 

@@ -573,6 +573,8 @@ export class ChunkManager {
     this.updateRockVisibility(cameraPosition, fovRadians, screenHeight);
     this.updateEdgeStitching(chunkLodLevels);
 
+    this.evictStaleLodLevels(cameraPosition, fovRadians, screenHeight);
+
     // Update rock material uniforms (curvature)
     this.updateRockMaterialUniforms(cameraPosition);
 
@@ -704,6 +706,54 @@ export class ChunkManager {
           neighborLods,
           this.config.lodLevels
         );
+      }
+    }
+  }
+
+  /**
+   * Evict built LOD levels that are no longer needed, freeing GPU memory.
+   *
+   * For each chunk, a retained set of levels is kept and everything else is
+   * disposed:
+   * - desired level and desired±1 (matches what update() prefetches)
+   * - the currently displayed level (never evict a visible mesh)
+   * - the collision LOD level (getHeightAt relies on it)
+   * - the coarsest level (cheap, always-available fallback)
+   *
+   * Evicted levels are rebuilt on demand if the camera comes back.
+   */
+  private evictStaleLodLevels(
+    cameraPosition: Vector3,
+    fovRadians: number,
+    screenHeight: number
+  ): void {
+    const coarsestLod = this.config.lodLevels.length - 1;
+
+    for (const [gridKey, chunk] of this.chunks.entries()) {
+      const desiredLod = this.getLodLevelForChunkOptimized(
+        gridKey,
+        cameraPosition,
+        fovRadians,
+        screenHeight
+      );
+
+      const retained = new Set<number>([
+        desiredLod,
+        desiredLod - 1,
+        desiredLod + 1,
+        chunk.currentLodLevel,
+        this.collisionLodLevel,
+        coarsestLod,
+      ]);
+
+      // Copy: removeLodLevel mutates builtLevels while we iterate
+      for (const lodLevel of [...chunk.builtLevels]) {
+        if (retained.has(lodLevel)) {
+          continue;
+        }
+
+        chunk.removeLodLevel(lodLevel);
+        this.terrainGenerator.clearStitchingData(gridKey, lodLevel);
       }
     }
   }
