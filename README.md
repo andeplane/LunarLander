@@ -30,7 +30,7 @@ npm run build
 npm run preview
 ```
 
-The development server will start at `http://localhost:5173` (or the next available port).
+The development server will start at `http://localhost:3000` (or the next available port).
 
 ## Features
 

@@ -197,15 +197,17 @@ export class FlightController {
       if (terrainHeight !== null) {
         const altitudeAGL = this.camera.position.y - terrainHeight;
         
-        // Custom smooth slowdown curve:
+        // Custom smooth slowdown curve (breakpoints intentionally hardcoded;
+        // the floor is the configured minimum altitude, minAltitudeAGL):
         // 50m -> 5m: 100% -> 50%
         // 5m -> 1m: 50% -> 25%
-        // 1m -> 0.5m: 25% -> 0%
-        if (altitudeAGL <= 0.5) {
+        // 1m -> minAltitudeAGL: 25% -> 0%
+        const minAltitude = this.config.minAltitudeAGL;
+        if (altitudeAGL <= minAltitude) {
           ySpeedFactor = 0.0;
         } else if (altitudeAGL <= 1.0) {
-          // 1.0m to 0.5m: maps 25% to 0%
-          const t = (altitudeAGL - 0.5) / (1.0 - 0.5);
+          // 1.0m to minAltitudeAGL: maps 25% to 0%
+          const t = (altitudeAGL - minAltitude) / (1.0 - minAltitude);
           ySpeedFactor = THREE.MathUtils.lerp(0.0, 0.25, t);
         } else if (altitudeAGL <= 5.0) {
           // 5.0m to 1.0m: maps 50% to 25%
