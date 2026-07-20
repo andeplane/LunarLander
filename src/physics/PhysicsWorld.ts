@@ -94,13 +94,27 @@ export class PhysicsWorld {
     // of physics steps, so simulation speed is independent of frame rate
     const steps = this.timestep.advance(deltaTime);
     for (let i = 0; i < steps; i++) {
+      // Capture pre-step transforms so meshes can interpolate between the
+      // previous and current physics states on frames between fixed steps
+      this.ballManager?.beforePhysicsStep();
       this.world.step();
     }
 
+    // Leftover fraction of a step: how far render time has progressed
+    // past the last simulated physics step
+    const alpha = this.timestep.getAlpha();
+
     if (steps > 0) {
-      // Update ball meshes to match physics positions
+      // Update ball meshes to interpolated physics positions
       // Returns true if any balls are moving
-      this.objectsMoving = this.ballManager ? this.ballManager.update() : false;
+      this.objectsMoving = this.ballManager ? this.ballManager.update(alpha) : false;
+    } else if (this.objectsMoving && this.ballManager) {
+      // No fixed step landed on this frame (display faster than the physics
+      // rate), but balls are mid-flight: re-interpolate the meshes with the
+      // grown alpha so motion stays smooth instead of stuttering at 60 Hz.
+      // The cached objectsMoving flag is kept — movement/despawn state can
+      // only change when a physics step actually runs.
+      this.ballManager.update(alpha);
     }
 
     return this.objectsMoving;

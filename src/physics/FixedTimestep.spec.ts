@@ -72,4 +72,48 @@ describe('FixedTimestep', () => {
     expect(() => new FixedTimestep(-1 / 60)).toThrow();
     expect(() => new FixedTimestep(1 / 60, 0)).toThrow();
   });
+
+  describe('getAlpha', () => {
+    it('is 0 before any time has been accumulated', () => {
+      expect(new FixedTimestep().getAlpha()).toBe(0);
+    });
+
+    it('returns the leftover fraction of a step after advance()', () => {
+      const timestep = new FixedTimestep(1 / 60);
+      timestep.advance(0.25 / 60);
+      expect(timestep.getAlpha()).toBeCloseTo(0.25, 10);
+      // Another quarter step: alpha grows, still no step produced
+      timestep.advance(0.25 / 60);
+      expect(timestep.getAlpha()).toBeCloseTo(0.5, 10);
+    });
+
+    it('reflects only the residual after whole steps are consumed', () => {
+      const timestep = new FixedTimestep(1 / 60);
+      expect(timestep.advance(1.75 / 60)).toBe(1);
+      expect(timestep.getAlpha()).toBeCloseTo(0.75, 10);
+    });
+
+    it('stays in [0, 1) at 120fps (alternating half-step residuals)', () => {
+      const timestep = new FixedTimestep(1 / 60);
+      for (let i = 0; i < 240; i++) {
+        timestep.advance(1 / 120);
+        const alpha = timestep.getAlpha();
+        expect(alpha).toBeGreaterThanOrEqual(0);
+        expect(alpha).toBeLessThan(1);
+      }
+    });
+
+    it('is 0 after the cap discards excess accumulated time', () => {
+      const timestep = new FixedTimestep(1 / 60, 5);
+      timestep.advance(10);
+      expect(timestep.getAlpha()).toBe(0);
+    });
+
+    it('is 0 after reset()', () => {
+      const timestep = new FixedTimestep();
+      timestep.advance(0.9 / 60);
+      timestep.reset();
+      expect(timestep.getAlpha()).toBe(0);
+    });
+  });
 });
