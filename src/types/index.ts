@@ -12,10 +12,6 @@ export interface CameraConfig {
   mouseSensitivity: number;
   /** Minimum altitude above ground level (meters) */
   minAltitudeAGL: number;
-  /** Altitude below which speed starts reducing (meters) */
-  slowdownAltitude: number;
-  /** Speed multiplier at minimum altitude (0.0 to 1.0) */
-  slowdownFactor: number;
 }
 
 /**
