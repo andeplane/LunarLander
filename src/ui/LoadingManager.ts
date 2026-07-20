@@ -1,22 +1,54 @@
 /**
  * LoadingManager tracks texture loading progress and chunk readiness,
  * displaying a loading overlay with progress bar until everything is ready.
+ *
+ * Resilient to failures: texture load errors still advance the counter
+ * (degraded completion), and a watchdog timer force-completes loading if
+ * it stalls for too long, so the overlay can never freeze forever.
  */
 export class LoadingManager {
   private texturesLoaded: number = 0;
-  private totalTextures: number = 6; // surface + skybox + 4 earth textures
+  private totalTextures: number = 0;
   private chunkReady: boolean = false;
   private overlayElement: HTMLElement | null = null;
   private progressBarElement: HTMLElement | null = null;
+  private textElement: HTMLElement | null = null;
   private isComplete: boolean = false;
+  private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor() {
-    this.overlayElement = document.getElementById('loading-overlay');
-    this.progressBarElement = document.getElementById('loading-bar');
-    
-    if (!this.overlayElement || !this.progressBarElement) {
-      console.warn('Loading overlay elements not found in DOM');
+  /**
+   * @param watchdogMs Milliseconds before loading is force-completed if
+   *                   still incomplete. Pass 0 to disable the watchdog.
+   */
+  constructor(watchdogMs: number = 20000) {
+    if (typeof document !== 'undefined') {
+      this.overlayElement = document.getElementById('loading-overlay');
+      this.progressBarElement = document.getElementById('loading-bar');
+      this.textElement = document.querySelector('.loading-text');
+
+      if (!this.overlayElement || !this.progressBarElement) {
+        console.warn('Loading overlay elements not found in DOM');
+      }
     }
+
+    if (watchdogMs > 0) {
+      this.watchdogTimer = setTimeout(() => {
+        if (this.isComplete) return;
+        console.warn(
+          `Loading stalled (${this.texturesLoaded}/${this.totalTextures} textures, chunk ready: ${this.chunkReady}) — force-completing`
+        );
+        this.setText('Loading took too long — continuing anyway');
+        this.complete();
+      }, watchdogMs);
+    }
+  }
+
+  /**
+   * Register the number of textures that will be tracked.
+   * Can be called multiple times; counts accumulate.
+   */
+  registerTextures(count: number): void {
+    this.totalTextures += count;
   }
 
   /**
@@ -24,7 +56,21 @@ export class LoadingManager {
    */
   onTextureLoaded(): void {
     if (this.isComplete) return;
-    
+
+    this.texturesLoaded++;
+    this.updateProgress();
+  }
+
+  /**
+   * Report that a texture failed to load.
+   * Still advances the counter so loading can complete in a degraded state.
+   */
+  onTextureError(description?: string): void {
+    if (this.isComplete) return;
+
+    console.warn(`Failed to load texture${description ? `: ${description}` : ''}`);
+    this.setText('Some textures failed to load');
+
     this.texturesLoaded++;
     this.updateProgress();
   }
@@ -34,18 +80,9 @@ export class LoadingManager {
    */
   onChunkReady(): void {
     if (this.isComplete) return;
-    
+
     this.chunkReady = true;
     this.updateProgress();
-  }
-
-  /**
-   * Check if chunk is ready by querying height at camera position
-   * Returns true if chunk has terrain available
-   */
-  checkChunkReady(getHeightAt: (x: number, z: number) => number | null, cameraX: number, cameraZ: number): boolean {
-    const height = getHeightAt(cameraX, cameraZ);
-    return height !== null;
   }
 
   /**
@@ -55,7 +92,8 @@ export class LoadingManager {
     if (this.isComplete) return;
 
     // Textures account for 80% of progress, chunk readiness for 20%
-    const textureProgress = (this.texturesLoaded / this.totalTextures) * 0.8;
+    const textureProgress =
+      this.totalTextures > 0 ? (this.texturesLoaded / this.totalTextures) * 0.8 : 0.8;
     const chunkProgress = this.chunkReady ? 0.2 : 0;
     const totalProgress = textureProgress + chunkProgress;
 
@@ -70,13 +108,27 @@ export class LoadingManager {
   }
 
   /**
+   * Update the loading overlay text
+   */
+  private setText(text: string): void {
+    if (this.textElement) {
+      this.textElement.textContent = text;
+    }
+  }
+
+  /**
    * Hide the loading overlay with fade-out animation
    */
   private complete(): void {
     if (this.isComplete) return;
-    
+
     this.isComplete = true;
-    
+
+    if (this.watchdogTimer !== null) {
+      clearTimeout(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
+
     // Ensure progress bar is at 100%
     if (this.progressBarElement) {
       this.progressBarElement.style.width = '100%';
@@ -86,7 +138,7 @@ export class LoadingManager {
     setTimeout(() => {
       if (this.overlayElement) {
         this.overlayElement.classList.add('hidden');
-        
+
         // Remove from DOM after animation completes
         setTimeout(() => {
           if (this.overlayElement) {
@@ -95,15 +147,6 @@ export class LoadingManager {
         }, 500);
       }
     }, 300);
-  }
-
-  /**
-   * Get current progress (0-1)
-   */
-  getProgress(): number {
-    const textureProgress = (this.texturesLoaded / this.totalTextures) * 0.8;
-    const chunkProgress = this.chunkReady ? 0.2 : 0;
-    return textureProgress + chunkProgress;
   }
 
   /**

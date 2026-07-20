@@ -36,6 +36,8 @@ app.appendChild(canvas);
 
 // Initialize loading manager early
 const loadingManager = new LoadingManager();
+// Track: surface-high-detail + skybox + 4 Earth textures
+loadingManager.registerTextures(6);
 
 // Initialize engine
 const engine = new Engine(canvas);
@@ -258,9 +260,12 @@ const celestialSystem = new CelestialSystem(
     earthAzimuth: Math.PI * 1.15,
     earthElevation: Math.PI * 0.25,
     
-    // Loading callback for Earth textures (4 textures)
+    // Loading callbacks for Earth textures (4 textures)
     onEarthTextureLoad: () => {
       loadingManager.onTextureLoaded();
+    },
+    onEarthTextureError: (path) => {
+      loadingManager.onTextureError(path);
     },
   }
 );
@@ -273,6 +278,9 @@ celestialSystem.loadSkyboxTexture(
   `${import.meta.env.BASE_URL}textures/8k_stars_milky_way.jpg`,
   () => {
     loadingManager.onTextureLoaded();
+  },
+  () => {
+    loadingManager.onTextureError('skybox');
   }
 );
 
@@ -312,6 +320,10 @@ textureLoader.load(
     
     // Report texture loaded
     loadingManager.onTextureLoaded();
+  },
+  undefined,
+  () => {
+    loadingManager.onTextureError('surface-high-detail');
   }
 );
 
