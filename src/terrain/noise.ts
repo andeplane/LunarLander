@@ -8,7 +8,11 @@ export type FbmArgs = {
   frequency: number,
   amplitude: number,
   gain: number,
-  smoothLowerPlanes: number,
+  /**
+   * Constant added to the summed noise value (shifts the whole field up/down).
+   * Unrelated to TerrainArgs.smoothLowerPlanes, which is a strength multiplier.
+   */
+  offset: number,
   seed: number,
 }
 
@@ -20,7 +24,7 @@ export class FbmNoiseBuilder {
     frequency: 0.1,
     amplitude: 0.8,
     lacunarity: 1.7,
-    smoothLowerPlanes: 0.75,
+    offset: 0,
   }
 
   octaves(value: number) {
@@ -54,18 +58,22 @@ export class FbmNoiseBuilder {
   }
 
   offset(value: number) {
-    this.args.smoothLowerPlanes = value;
+    this.args.offset = value;
     return this;
   }
 
   build() {
-    return createFbmNoise(this.args);
+    // Copy args so the built noise function is immune to later builder mutation
+    return createFbmNoise({ ...this.args });
   }
 }
 
 export function createFbmNoise(args: FbmArgs) {
   const noises: NoiseFunction2D[] = [];
   for (let i = 0; i < args.octaves; i++) {
+    // NOTE: `i + seed` means octave i of seed s reuses octave i-1 of seed s+1
+    // (adjacent seeds share octave noise). Kept as-is deliberately: changing
+    // the seeding scheme would alter every generated terrain.
     const prng = alea(i + args.seed);
     noises.push(createNoise2D(prng))
   }
@@ -82,7 +90,7 @@ export function createFbmNoise(args: FbmArgs) {
       yCoord *= args.lacunarity;
       amp *= args.gain;
     }
-    return value + args.smoothLowerPlanes;
+    return value + args.offset;
   }
 
 }

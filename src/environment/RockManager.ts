@@ -1,27 +1,49 @@
-import { type BufferGeometry, InstancedMesh, Matrix4, type Vector3 } from 'three';
+import { type BufferGeometry, InstancedMesh, Matrix4, Vector3 } from 'three';
 import { RockBuilder } from './RockBuilder';
 import { MoonMaterial } from '../shaders/MoonMaterial';
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 import type { RockPlacement } from '../terrain/ChunkWorker';
+import {
+  applyCurvatureDropToSphere,
+  curvatureDrop,
+  curvatureDropRange,
+  maxLoadedChunkDistance,
+} from '../terrain/curvatureBounds';
+
+/**
+ * Base (un-inflated) bounding sphere of a tracked rock mesh, in mesh-local
+ * space, used to recompute curvature-aware culling bounds each frame.
+ */
+interface TrackedBounds {
+  center: Vector3;
+  radius: number;
+}
+
+// Scratch vector to avoid per-frame allocations in updateCullingBounds
+const _worldCenter = new Vector3();
 
 /**
  * RockManager pre-generates LOD-based libraries of rock prototype geometries
  * and creates InstancedMesh from worker-computed placement data.
- * 
+ *
  * Rock detail is mapped directly to chunk LOD level:
- * - LOD 0-1: detail 5 (20480 triangles) for closest chunks
- * - LOD 2-3: detail 4 (5120 triangles) for medium chunks
- * - LOD 4+: detail 3 (1280 triangles) for distant chunks
- * 
+ * - LOD 0-1: detail 15 (~5120 triangles) for closest chunks
+ * - LOD 2-3: detail 10 (~2420 triangles) for medium chunks
+ * - LOD 4+: detail 7 (~1280 triangles) for distant chunks
+ *
  * No heavy computation on main thread - just assembles meshes from pre-computed data.
  */
 export class RockManager {
-  // Store prototypes by detail level (3, 4, 5) instead of LOD level
+  // Store prototypes by detail level (7, 10, 15) instead of LOD level
   // This avoids generating duplicate libraries for LODs that share the same detail level
   private prototypesByDetail: Map<number, BufferGeometry[]> = new Map();
   // Store stable axes (principal axes) for each prototype by detail level
   // Each entry is an array of Vector3, one per prototype
   private stableAxesByDetail: Map<number, Vector3[]> = new Map();
+  // Live rock meshes and their base bounding spheres, so per-frame culling
+  // bounds can be tightened from the actual camera distance. Entries remove
+  // themselves when a mesh is disposed (Chunk.clearRockMeshes / dispose).
+  private trackedMeshes: Map<InstancedMesh, TrackedBounds> = new Map();
   private material: MoonMaterial;
   private librarySize: number;
   private chunkWidth: number;
@@ -205,25 +227,29 @@ export class RockManager {
       // Compute bounding sphere for frustum culling
       mesh.computeBoundingSphere();
 
-      // Expand bounding sphere to account for vertex shader curvature transformation
-      if (this.material.getParam('enableCurvature') && mesh.boundingSphere) {
-        // Calculate maximum possible distance from camera to any vertex
-        // Worst case: camera at one corner of its chunk, vertex at opposite corner of furthest chunk
-        // Chunks are centered at integer multiples, so furthest chunk center is at renderDistance chunks away
-        // Camera can be at (-chunkWidth/2, -chunkDepth/2), vertex at (renderDistance*chunkWidth + chunkWidth/2, renderDistance*chunkDepth + chunkDepth/2)
-        // Distance = (renderDistance + 1) * chunkWidth in each dimension
-        const maxChunkDistance = Math.sqrt(
-          ((this.renderDistance + 1) * this.chunkWidth) ** 2 +
-          ((this.renderDistance + 1) * this.chunkDepth) ** 2
-        );
-        
-        // Maximum curvature drop based on maximum possible camera distance
-        // Formula: drop = distance² / (2 * planetRadius)
-        const maxCurvatureDrop = (maxChunkDistance * maxChunkDistance) / (2 * this.planetRadius);
+      if (mesh.boundingSphere) {
+        // Remember the base (un-inflated) sphere so updateCullingBounds() can
+        // recompute a tight curvature-aware sphere from the actual camera
+        // distance each frame
+        const base: TrackedBounds = {
+          center: mesh.boundingSphere.center.clone(),
+          radius: mesh.boundingSphere.radius,
+        };
+        this.trackMesh(mesh, base);
 
-        // Expand bounding sphere to encompass transformed geometry
-        mesh.boundingSphere.center.y -= maxCurvatureDrop / 2;
-        mesh.boundingSphere.radius += maxCurvatureDrop / 2;
+        // Until the first updateCullingBounds() call, expand conservatively for
+        // the vertex shader curvature drop using this chunk's own lifetime
+        // distance bound (the chunk is pruned once it leaves render distance),
+        // not the old global grid-diagonal worst case that disabled culling
+        if (this.material.getParam('enableCurvature')) {
+          const maxDistance =
+            maxLoadedChunkDistance(this.renderDistance, this.chunkWidth, this.chunkDepth) +
+            base.radius;
+          applyCurvatureDropToSphere(mesh.boundingSphere, base.center, base.radius, {
+            dropMin: 0,
+            dropMax: curvatureDrop(maxDistance, this.planetRadius),
+          });
+        }
       }
 
       // Enable frustum culling per instance
@@ -233,6 +259,74 @@ export class RockManager {
     }
 
     return meshes;
+  }
+
+  /**
+   * Track a mesh for per-frame culling bound updates. The entry is removed
+   * automatically when the mesh is disposed (InstancedMesh.dispose dispatches
+   * a 'dispose' event), so chunk unloads need no extra bookkeeping here.
+   */
+  private trackMesh(mesh: InstancedMesh, base: TrackedBounds): void {
+    this.trackedMeshes.set(mesh, base);
+    const onDispose = (): void => {
+      mesh.removeEventListener('dispose', onDispose);
+      this.trackedMeshes.delete(mesh);
+    };
+    mesh.addEventListener('dispose', onDispose);
+  }
+
+  /**
+   * Get the number of rock meshes currently tracked for culling updates.
+   * Exposed for tests/diagnostics.
+   */
+  getTrackedMeshCount(): number {
+    return this.trackedMeshes.size;
+  }
+
+  /**
+   * Recompute each live rock mesh's bounding sphere from the current camera
+   * position so frustum culling stays effective under the curvature shader.
+   *
+   * The vertex shader drops geometry by distance-from-camera squared, so the
+   * required sphere inflation depends on where the camera is right now. Using
+   * the actual per-mesh camera distance keeps nearby chunks' spheres tight
+   * (they get almost no drop) instead of inflating every sphere by the global
+   * worst case, which effectively disabled rock culling.
+   *
+   * Call once per frame (ChunkManager.update) after curvature params are synced.
+   */
+  updateCullingBounds(cameraPosition: Vector3): void {
+    if (this.trackedMeshes.size === 0) {
+      return;
+    }
+
+    const enableCurvature = this.material.getParam('enableCurvature');
+    const planetRadius = this.material.getParam('planetRadius') || this.planetRadius;
+
+    for (const [mesh, base] of this.trackedMeshes) {
+      if (!mesh.boundingSphere) {
+        continue;
+      }
+
+      if (!enableCurvature) {
+        // No curvature: restore the exact base sphere
+        mesh.boundingSphere.center.copy(base.center);
+        mesh.boundingSphere.radius = base.radius;
+        continue;
+      }
+
+      // World-space sphere center (meshes only ever carry translations from
+      // their parent chunk LOD object)
+      mesh.updateWorldMatrix(true, false);
+      _worldCenter.copy(base.center).applyMatrix4(mesh.matrixWorld);
+
+      const dx = cameraPosition.x - _worldCenter.x;
+      const dz = cameraPosition.z - _worldCenter.z;
+      const horizontalDistance = Math.sqrt(dx * dx + dz * dz);
+
+      const range = curvatureDropRange(horizontalDistance, base.radius, planetRadius);
+      applyCurvatureDropToSphere(mesh.boundingSphere, base.center, base.radius, range);
+    }
   }
 
   /**
@@ -297,13 +391,16 @@ export class RockManager {
    * Clean up resources.
    */
   dispose(): void {
-    // Dispose all prototype geometries across all detail levels
+    // Dispose all prototype geometries across all detail levels.
+    // RockManager owns the shared prototypes - chunks must never dispose them.
     for (const prototypes of this.prototypesByDetail.values()) {
       for (const geometry of prototypes) {
         geometry.dispose();
       }
     }
     this.prototypesByDetail.clear();
+    this.stableAxesByDetail.clear();
+    this.trackedMeshes.clear();
 
     // Dispose material
     this.material.dispose();

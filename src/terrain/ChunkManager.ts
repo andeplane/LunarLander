@@ -370,8 +370,8 @@ export class ChunkManager {
     const args: TerrainArgs = {
       ...this.baseTerrainArgs,
       resolution,
-      posX: gridX * this.config.chunkWidth / 25,
-      posZ: gridZ * this.config.chunkDepth / 25,
+      posX: gridX * this.config.chunkWidth,
+      posZ: gridZ * this.config.chunkDepth,
     };
 
     this.requestQueue.add({ gridKey, lodLevel, terrainArgs: args });
@@ -597,9 +597,9 @@ export class ChunkManager {
    * Syncs enableCurvature and planetRadius from terrain material.
    * Note: cameraPosition is automatically provided by Three.js.
    */
-  private updateRockMaterialUniforms(_cameraPosition: Vector3): void {
+  private updateRockMaterialUniforms(cameraPosition: Vector3): void {
     const rockMaterial = this.rockManager.getMaterial();
-    
+
     // Sync curvature settings from terrain material
     const terrainMaterial = this.terrainGenerator.getMaterial();
     const enableCurvature = terrainMaterial.getParam('enableCurvature');
@@ -607,6 +607,10 @@ export class ChunkManager {
 
     rockMaterial.setParam('enableCurvature', enableCurvature);
     rockMaterial.setParam('planetRadius', planetRadius);
+
+    // Tighten per-mesh rock culling bounds from the actual camera distance
+    // (the curvature drop the shader applies depends on it)
+    this.rockManager.updateCullingBounds(cameraPosition);
   }
 
   /**

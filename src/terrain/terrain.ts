@@ -11,13 +11,15 @@ export type TerrainArgs = {
   amplitude: number;
   altitude: number;
   octaves: number;
-  smoothLowerPlanes: number;       // Height multiplier (0 = full strength)
+  smoothLowerPlanes: number;       // Displacement strength control (0 = full strength; see terrainDisplacementStrength)
   
   // Chunk dimensions
   width: number;
   depth: number;
   resolution: number;
+  /** World-space X offset of the chunk origin (gridX * chunkWidth) */
   posX: number;
+  /** World-space Z offset of the chunk origin (gridZ * chunkDepth) */
   posZ: number;
   renderDistance: number;
   
@@ -32,6 +34,17 @@ export type TerrainArgs = {
   craterRimWidth: number;          // Rim extends beyond radius by this fraction
   craterFloorFlatness: number;     // 0 = parabolic bowl, 1 = flat floor
 };
+
+/**
+ * Vertical displacement strength applied to the terrain evaluator output.
+ *
+ * Single source of truth: rock placement in ChunkWorker samples heights with
+ * this exact multiplier — if the formula drifts, rocks silently float or sink
+ * relative to the terrain mesh.
+ */
+export function terrainDisplacementStrength(smoothLowerPlanes: number): number {
+  return 2.8 * (1 - smoothLowerPlanes * 0.5);
+}
 
 /**
  * Creates a terrain height evaluation function that can be used for both
@@ -52,20 +65,23 @@ export function createTerrainEvaluator(args: TerrainArgs): (x: number, z: number
     .frequency(args.frequency)
     .build();
 
-  // Large-scale altitude variation (like lunar maria vs highlands)
+  // Large-scale altitude variation (like lunar maria vs highlands).
+  // The 0.75 offset raises the whole field (was previously an implicit
+  // builder default); kept explicit to preserve the existing terrain.
   const fbmAltitude = new FbmNoiseBuilder()
     .octaves(2)
     .seed(args.seed + 4)
     .frequency(0.003)
     .amplitude(0.5)
+    .offset(0.75)
     .build();
 
   return (x: number, z: number) => {
-    // Sample base terrain noise
-    const terrainNoise = fbm(x + args.posX * 25, z + args.posZ * 25);
-    
+    // Sample base terrain noise (posX/posZ are world-space chunk offsets)
+    const terrainNoise = fbm(x + args.posX, z + args.posZ);
+
     // Add large-scale altitude variation
-    const altitudeVariation = fbmAltitude(x + args.posX * 25, z + args.posZ * 25) * 0.5;
+    const altitudeVariation = fbmAltitude(x + args.posX, z + args.posZ) * 0.5;
     
     // Combine: base terrain + altitude + variation
     return terrainNoise + args.altitude + altitudeVariation;
@@ -91,7 +107,7 @@ export function generateTerrain(args: TerrainArgs, computeNormals: boolean = tru
 
   const evaluateTerrain = createTerrainEvaluator(args);
 
-  displaceY(geometry, evaluateTerrain, 2.8 * (1 - args.smoothLowerPlanes * 0.5), computeNormals);
+  displaceY(geometry, evaluateTerrain, terrainDisplacementStrength(args.smoothLowerPlanes), computeNormals);
 
   return geometry;
 }

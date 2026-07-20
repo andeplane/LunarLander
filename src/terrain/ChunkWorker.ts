@@ -1,4 +1,4 @@
-import { generateTerrain, createTerrainEvaluator, type TerrainArgs } from './terrain';
+import { generateTerrain, createTerrainEvaluator, terrainDisplacementStrength, type TerrainArgs } from './terrain';
 import { 
   generateCratersForRegion, 
   getCraterHeightModAt, 
@@ -244,7 +244,7 @@ function sampleHeightFromVertices(
 
   // Apply the same strength multiplier as displaceY() in terrain.ts
   // This ensures rock height matches actual terrain mesh height
-  const strength = 2.8 * (1 - smoothLowerPlanes * 0.5);
+  const strength = terrainDisplacementStrength(smoothLowerPlanes);
   const baseHeight = height * strength;
   
   // Apply crater modifications (convert local to world coordinates)

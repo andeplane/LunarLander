@@ -3,6 +3,7 @@ import { MoonMaterial } from '../shaders/MoonMaterial';
 import type { ChunkWorkerResult } from './ChunkWorker';
 import { computeStitchedIndices } from './EdgeStitcher';
 import type { NeighborLods } from './LodUtils';
+import { applyCurvatureDropToSphere, curvatureDrop, maxLoadedChunkDistance } from './curvatureBounds';
 
 /**
  * Configuration for terrain generation
@@ -54,28 +55,27 @@ export class TerrainGenerator {
     geometry.computeBoundingSphere();
 
     // Expand bounding sphere to account for vertex shader curvature transformation
-    if (!debugMode && this.material.getParam('enableCurvature')) {
+    if (!debugMode && this.material.getParam('enableCurvature') && geometry.boundingSphere) {
       const planetRadius = this.config.planetRadius;
 
-      // Calculate maximum possible distance from camera to any vertex
-      // Worst case: camera at one corner of its chunk, vertex at opposite corner of furthest chunk
-      // Chunks are centered at integer multiples, so furthest chunk center is at renderDistance chunks away
-      // Camera can be at (-chunkWidth/2, -chunkDepth/2), vertex at (renderDistance*chunkWidth + chunkWidth/2, renderDistance*chunkDepth + chunkDepth/2)
-      // Distance = (renderDistance + 1) * chunkWidth in each dimension
-      const maxChunkDistance = Math.sqrt(
-        ((this.config.renderDistance + 1) * this.config.chunkWidth) ** 2 +
-        ((this.config.renderDistance + 1) * this.config.chunkDepth) ** 2
-      );
-      
-      // Maximum curvature drop based on maximum possible camera distance
-      // Formula: drop = distance² / (2 * planetRadius)
-      const maxCurvatureDrop = (maxChunkDistance * maxChunkDistance) / (2 * planetRadius);
+      // Maximum horizontal distance from the camera to any vertex of THIS
+      // chunk while it is still loaded (chunks are pruned beyond render
+      // distance). This per-chunk-lifetime bound replaces the old global
+      // grid-diagonal worst case, which inflated every sphere so much that
+      // frustum culling never rejected anything.
+      const maxChunkDistance =
+        maxLoadedChunkDistance(
+          this.config.renderDistance,
+          this.config.chunkWidth,
+          this.config.chunkDepth
+        ) + geometry.boundingSphere.radius;
 
-      // Expand bounding sphere to encompass transformed geometry
-      if (geometry.boundingSphere) {
-        geometry.boundingSphere.center.y -= maxCurvatureDrop / 2;
-        geometry.boundingSphere.radius += maxCurvatureDrop / 2;
-      }
+      // Maximum curvature drop: distance² / (2 * planetRadius)
+      const sphere = geometry.boundingSphere;
+      applyCurvatureDropToSphere(sphere, sphere.center.clone(), sphere.radius, {
+        dropMin: 0,
+        dropMax: curvatureDrop(maxChunkDistance, planetRadius),
+      });
     }
 
     // Create mesh with appropriate material
