@@ -92,6 +92,22 @@ export class Chunk {
   }
 
   /**
+   * Remove and dispose all rock meshes at the specified LOD level.
+   * Only instance buffers are disposed - prototype geometries are shared
+   * and owned by RockManager.
+   */
+  clearRockMeshes(lodLevel: number): void {
+    const meshes = this.rockMeshes[lodLevel];
+    if (!meshes) return;
+
+    for (const mesh of meshes) {
+      this.lod.remove(mesh);
+      mesh.dispose();
+    }
+    this.rockMeshes[lodLevel] = [];
+  }
+
+  /**
    * Set the active LOD level and update mesh visibility
    * Note: Rock visibility is controlled separately based on bounding sphere screen space size.
    */
