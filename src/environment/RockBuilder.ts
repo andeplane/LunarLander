@@ -46,12 +46,11 @@ export interface RockLibraryBuilder {
  * 
  * Algorithm (based on gl-rock):
  * 1. Start with IcosahedronGeometry for uniform triangulation (no UV seams)
- * 2. Merge vertices to weld duplicates (ensures flood-fill works correctly)
- * 3. Build vertex adjacency from faces
- * 4. Randomly select scrape points with varied parameters
- * 5. Project nearby vertices onto planes (creates flat facets)
- * 6. Apply fBm noise for final variation
- * 7. Recompute smooth vertex normals
+ * 2. Merge vertices to weld duplicates
+ * 3. Randomly select scrape points with varied parameters
+ * 4. Project nearby vertices onto planes (creates flat facets)
+ * 5. Apply fBm noise for final variation
+ * 6. Recompute smooth vertex normals
  * 
  * This creates realistic angular rocks with flat faces and rounded areas.
  */
@@ -136,8 +135,7 @@ export class RockBuilder {
     const r0z = cz - nz * strength;
     
     const radiusSq = radius * radius;
-    let _verticesAffected = 0;
-    
+
     for (let i = 0; i < vertexCount; i++) {
       // Get ORIGINAL vertex position
       const origPx = originalPositions[i * 3];
@@ -170,8 +168,6 @@ export class RockBuilder {
         displacements[i * 3 + 1] += dispY * weight;
         displacements[i * 3 + 2] += dispZ * weight;
         weights[i] += weight;
-        
-        _verticesAffected++;
       }
     }
   }
@@ -211,7 +207,7 @@ export class RockBuilder {
    */
   private static createBaseGeometry(detail: number = 3): BufferGeometry {
     const baseGeometry = new IcosahedronGeometry(1, detail);
-    // Merge vertices to weld any duplicates (critical for flood-fill)
+    // Merge vertices to weld any duplicates
     // mergeVertices returns BufferGeometry (loses specific geometry type)
     const merged = mergeVertices(baseGeometry, 1e-6);
     return merged;
@@ -536,7 +532,7 @@ export class RockBuilder {
 
   /**
    * Generate a library of rock prototype geometries.
-   * Optimized: reuses base geometry topology and adjacency for performance.
+   * Optimized: reuses base geometry topology for performance.
    * 
    * @param count - Number of prototypes to generate
    * @param options - Rock generation options (optional)

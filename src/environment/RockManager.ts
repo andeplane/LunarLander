@@ -517,7 +517,6 @@ export class RockManager {
 
   /**
    * Get all prototype geometries for a given detail level.
-   * Used by GlobalRockBatcher for instanced rendering.
    * Builds the level's library on first use if it is not ready yet.
    *
    * @param detailLevel - Detail level (7, 10, or 15)

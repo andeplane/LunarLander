@@ -108,45 +108,6 @@ export const glslCommon = `
   }
 
   // ==========================================
-  // CELLULAR/VORONOI NOISE (for craters)
-  // ==========================================
-  
-  float cellular(vec3 P) {
-    vec3 Pi = floor(P);
-    vec3 Pf = P - Pi;
-    
-    float d = 1e30;
-    
-    // Search 3x3x3 neighborhood
-    for (int i = -1; i <= 1; i++) {
-      for (int j = -1; j <= 1; j++) {
-        for (int k = -1; k <= 1; k++) {
-          vec3 offset = vec3(float(i), float(j), float(k));
-          vec3 cellPos = Pi + offset;
-          
-          // Hash to get random point position within cell
-          vec3 p = permute(permute(permute(
-                    mod289(vec3(cellPos.x))) + 
-                    mod289(vec3(cellPos.y))) + 
-                    mod289(vec3(cellPos.z)));
-          
-          // Random offset within cell (0-1 range)
-          vec3 randomOffset = fract(p * vec3(0.1031, 0.1030, 0.0973));
-          
-          // Point position
-          vec3 pointPos = offset + randomOffset - Pf;
-          
-          // Distance to point (squared for efficiency, but we need actual distance for crater shape)
-          float dist = length(pointPos);
-          d = min(d, dist);
-        }
-      }
-    }
-    
-    return d;
-  }
-
-  // ==========================================
   // DERIVATIVE-BASED NOISE (Elevated-inspired)
   // Returns vec3(noise, dNoise/dx, dNoise/dy)
   // https://iquilezles.org/articles/morenoise
@@ -254,52 +215,6 @@ export const glslCommon = `
   }
 
   // ==========================================
-  // FBM (Fractal Brownian Motion)
-  // ==========================================
-  
-  float fbm(in vec2 st, int OCTAVES) {
-    int maxOctaves = 16;
-    OCTAVES = clamp(OCTAVES, 1, maxOctaves);
-    float value = 0.0;
-    float amplitude = 0.5;
-    
-    for (int i = 0; i < OCTAVES; i++) {
-      value += amplitude * (simplexNoise(st) * 0.5 + 0.5);
-      st *= 2.0;
-      amplitude *= 0.5;
-    }
-    return value;
-  }
-  
-  float fbm3D(in vec3 st, int OCTAVES) {
-    int maxOctaves = 16;
-    OCTAVES = clamp(OCTAVES, 1, maxOctaves);
-    float value = 0.0;
-    float amplitude = 0.5;
-    
-    for (int i = 0; i < OCTAVES; i++) {
-      value += amplitude * (snoise3D(st) * 0.5 + 0.5);
-      st *= 2.0;
-      amplitude *= 0.5;
-    }
-    return value;
-  }
-
-  // ==========================================
-  // UTILITY FUNCTIONS
-  // ==========================================
-  
-  vec2 distortCoords(in vec2 st, in float strength, in float mapVal) {
-    mapVal -= 0.5;
-    vec2 ou = st + mapVal * strength;
-    return ou;
-  }
-  
-  float remap(float value, float min1, float max1, float min2, float max2) {
-    return min2 + (value - min1) * (max2 - min2) / (max1 - min1);
-  }
-
-  // ==========================================
   // HEX TILING (adapted from Fabrice Neyret's Shadertoy)
   // https://www.shadertoy.com/view/MdyfDV
   // ==========================================
@@ -307,15 +222,6 @@ export const glslCommon = `
   // Hash function for randomization
   vec2 hexHash(vec2 p) {
     return fract(sin(p * mat2(127.1, 311.7, 269.5, 183.3)) * 43758.5453);
-  }
-  
-  // sRGB <-> linear conversions for contrast-corrected blending
-  vec3 srgb2linear(vec3 c) {
-    return pow(max(c, vec3(0.0)), vec3(2.2));
-  }
-  
-  vec3 linear2srgb(vec3 c) {
-    return pow(max(c, vec3(0.0)), vec3(1.0 / 2.2));
   }
   
   // Hex tiling texture sampler - preserves original UV scale
