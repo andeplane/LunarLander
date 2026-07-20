@@ -135,7 +135,12 @@ export class TerrainGenerator {
   }
 
   /**
-   * Apply edge stitching to a terrain mesh based on neighbor LOD levels
+   * Apply edge stitching to a terrain mesh based on neighbor LOD levels.
+   *
+   * This runs for every chunk every frame, so it must be a no-op unless the
+   * neighbor-LOD configuration actually changed. The last-applied stitch
+   * signature is tracked on `mesh.userData.stitchKey`; the index buffer is
+   * only rebuilt/re-uploaded on transitions.
    */
   applyEdgeStitching(
     gridKey: string,
@@ -147,34 +152,54 @@ export class TerrainGenerator {
     const resolution = lodLevels[lodLevel];
     if (!resolution) return;
 
-    // Check if stitching is needed (any neighbor has lower resolution = higher LOD index)
-    const needsStitching =
-      neighborLods.north > lodLevel ||
-      neighborLods.south > lodLevel ||
-      neighborLods.east > lodLevel ||
-      neighborLods.west > lodLevel;
+    // Neighbors at the same or finer LOD (lower index) need no stitching on
+    // that edge, so clamp them to this chunk's LOD. This normalizes the
+    // signature so equivalent configurations don't trigger spurious rebuilds.
+    const effectiveLods: NeighborLods = {
+      north: Math.max(neighborLods.north, lodLevel),
+      south: Math.max(neighborLods.south, lodLevel),
+      east: Math.max(neighborLods.east, lodLevel),
+      west: Math.max(neighborLods.west, lodLevel),
+    };
 
-    const key = `${gridKey}:${lodLevel}`;
-
-    if (!needsStitching) {
-      // Restore original indices if we have them
-      const original = this.originalIndices.get(key);
-      if (original && mesh.geometry.index) {
-        mesh.geometry.setIndex(new BufferAttribute(original.slice(), 1));
-      }
+    const stitchKey = `${lodLevel}:${effectiveLods.north}:${effectiveLods.south}:${effectiveLods.east}:${effectiveLods.west}`;
+    if (mesh.userData.stitchKey === stitchKey) {
+      // Signature unchanged - mesh already has the right indices
       return;
     }
 
-    // Compute stitched indices
+    // Check if stitching is needed (any neighbor has lower resolution = higher LOD index)
+    const needsStitching =
+      effectiveLods.north > lodLevel ||
+      effectiveLods.south > lodLevel ||
+      effectiveLods.east > lodLevel ||
+      effectiveLods.west > lodLevel;
+
+    if (!needsStitching) {
+      // Only restore original indices if the mesh was previously stitched.
+      // A freshly created mesh (no stitchKey yet) already has its original
+      // indices from createTerrainMesh, so no upload is needed.
+      if (mesh.userData.stitchKey !== undefined) {
+        const original = this.originalIndices.get(`${gridKey}:${lodLevel}`);
+        if (original && mesh.geometry.index) {
+          mesh.geometry.setIndex(new BufferAttribute(original, 1));
+        }
+      }
+      mesh.userData.stitchKey = stitchKey;
+      return;
+    }
+
+    // Compute stitched indices (cached in EdgeStitcher by configuration)
     const stitchedIndices = computeStitchedIndices(
       resolution,
-      neighborLods,
+      effectiveLods,
       lodLevel,
       lodLevels
     );
 
-    // Apply to geometry
+    // Apply to geometry - only happens on signature transitions
     mesh.geometry.setIndex(new BufferAttribute(stitchedIndices, 1));
+    mesh.userData.stitchKey = stitchKey;
   }
 
   /**

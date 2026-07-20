@@ -149,6 +149,9 @@ export function computeStitchedIndices(
   const cacheKey = getCacheKey(resolution, neighborLods, myLodLevel);
   const cached = stitchCache.get(cacheKey);
   if (cached) {
+    // Refresh recency so the cache behaves as LRU rather than FIFO
+    stitchCache.delete(cacheKey);
+    stitchCache.set(cacheKey, cached);
     return cached;
   }
 
@@ -190,7 +193,12 @@ function buildStitchedIndices(
   resolution: number,
   stepRatios: Record<CardinalDirection, number>
 ): Uint32Array {
-  const indices: number[] = [];
+  // Fill a Uint32Array directly instead of growing a number[] (which is
+  // multi-MB at high resolutions). Upper bound: full interior grid plus up to
+  // 2 triangles per segment on each of the 4 stitched edges.
+  const maxTriangles = resolution * resolution * 2 + resolution * 2 * 4;
+  const indices = new Uint32Array(maxTriangles * 3);
+  let cursor = 0;
 
   // Generate interior quads (not touching any edge that needs stitching)
   for (let z = 0; z < resolution; z++) {
@@ -211,26 +219,30 @@ function buildStitchedIndices(
       const c = getVertexIndex(x, z + 1, resolution);
       const d = getVertexIndex(x + 1, z + 1, resolution);
 
-      indices.push(a, c, b);
-      indices.push(b, c, d);
+      indices[cursor++] = a;
+      indices[cursor++] = c;
+      indices[cursor++] = b;
+      indices[cursor++] = b;
+      indices[cursor++] = c;
+      indices[cursor++] = d;
     }
   }
 
   // Generate stitched edge triangles
   if (stepRatios.north > 1) {
-    generateStitchedEdge(indices, resolution, 'north', stepRatios.north, stepRatios);
+    cursor = generateStitchedEdge(indices, cursor, resolution, 'north', stepRatios.north);
   }
   if (stepRatios.south > 1) {
-    generateStitchedEdge(indices, resolution, 'south', stepRatios.south, stepRatios);
+    cursor = generateStitchedEdge(indices, cursor, resolution, 'south', stepRatios.south);
   }
   if (stepRatios.west > 1) {
-    generateStitchedEdge(indices, resolution, 'west', stepRatios.west, stepRatios);
+    cursor = generateStitchedEdge(indices, cursor, resolution, 'west', stepRatios.west);
   }
   if (stepRatios.east > 1) {
-    generateStitchedEdge(indices, resolution, 'east', stepRatios.east, stepRatios);
+    cursor = generateStitchedEdge(indices, cursor, resolution, 'east', stepRatios.east);
   }
 
-  return new Uint32Array(indices);
+  return indices.slice(0, cursor);
 }
 
 /**
@@ -248,27 +260,24 @@ function getNearestSnappedPosition(pos: number, stepRatio: number): number {
 /**
  * Generate stitched triangles for one edge.
  * Creates triangles connecting interior row to nearest snapped edge vertices.
+ * Writes into `indices` starting at `cursor` and returns the new cursor.
  */
 function generateStitchedEdge(
-  indices: number[],
+  indices: Uint32Array,
+  cursor: number,
   resolution: number,
   edge: CardinalDirection,
-  stepRatio: number,
-  allStepRatios: Record<CardinalDirection, number>
-): void {
+  stepRatio: number
+): number {
   switch (edge) {
     case 'north':
-      generateNorthEdgeNearestNeighbor(indices, resolution, stepRatio, allStepRatios);
-      break;
+      return generateNorthEdgeNearestNeighbor(indices, cursor, resolution, stepRatio);
     case 'south':
-      generateSouthEdgeNearestNeighbor(indices, resolution, stepRatio, allStepRatios);
-      break;
+      return generateSouthEdgeNearestNeighbor(indices, cursor, resolution, stepRatio);
     case 'west':
-      generateWestEdgeNearestNeighbor(indices, resolution, stepRatio, allStepRatios);
-      break;
+      return generateWestEdgeNearestNeighbor(indices, cursor, resolution, stepRatio);
     case 'east':
-      generateEastEdgeNearestNeighbor(indices, resolution, stepRatio, allStepRatios);
-      break;
+      return generateEastEdgeNearestNeighbor(indices, cursor, resolution, stepRatio);
   }
 }
 
@@ -277,34 +286,42 @@ function generateStitchedEdge(
  * Each interior vertex connects to the nearest snapped edge vertex.
  */
 function generateNorthEdgeNearestNeighbor(
-  indices: number[],
+  indices: Uint32Array,
+  startCursor: number,
   resolution: number,
-  stepRatio: number,
-  _allStepRatios: Record<CardinalDirection, number>
-): void {
+  stepRatio: number
+): number {
+  let cursor = startCursor;
   // Process each interior edge segment (x, x+1)
   for (let x = 0; x < resolution; x++) {
     const interiorLeft = getVertexIndex(x, 1, resolution);
     const interiorRight = getVertexIndex(x + 1, 1, resolution);
-    
+
     // Find nearest snapped edge vertices
     const snapLeft = getNearestSnappedPosition(x, stepRatio);
     const snapRight = getNearestSnappedPosition(x + 1, stepRatio);
-    
+
     const edgeLeft = getVertexIndex(snapLeft, 0, resolution);
     const edgeRight = getVertexIndex(snapRight, 0, resolution);
-    
+
     if (snapLeft === snapRight) {
       // Both interior vertices snap to the same edge vertex - one triangle
-      indices.push(edgeLeft, interiorLeft, interiorRight);
+      indices[cursor++] = edgeLeft;
+      indices[cursor++] = interiorLeft;
+      indices[cursor++] = interiorRight;
     } else {
       // Transition point - two triangles
       // Triangle 1: edgeLeft to interiorLeft to interiorRight (CCW)
-      indices.push(edgeLeft, interiorLeft, interiorRight);
+      indices[cursor++] = edgeLeft;
+      indices[cursor++] = interiorLeft;
+      indices[cursor++] = interiorRight;
       // Triangle 2: edgeLeft to interiorRight to edgeRight (CCW)
-      indices.push(edgeLeft, interiorRight, edgeRight);
+      indices[cursor++] = edgeLeft;
+      indices[cursor++] = interiorRight;
+      indices[cursor++] = edgeRight;
     }
   }
+  return cursor;
 }
 
 /**
@@ -313,34 +330,42 @@ function generateNorthEdgeNearestNeighbor(
  * South edge needs reversed winding for CCW (interior is above edge).
  */
 function generateSouthEdgeNearestNeighbor(
-  indices: number[],
+  indices: Uint32Array,
+  startCursor: number,
   resolution: number,
-  stepRatio: number,
-  _allStepRatios: Record<CardinalDirection, number>
-): void {
+  stepRatio: number
+): number {
+  let cursor = startCursor;
   // Process each interior edge segment (x, x+1)
   for (let x = 0; x < resolution; x++) {
     const interiorLeft = getVertexIndex(x, resolution - 1, resolution);
     const interiorRight = getVertexIndex(x + 1, resolution - 1, resolution);
-    
+
     // Find nearest snapped edge vertices
     const snapLeft = getNearestSnappedPosition(x, stepRatio);
     const snapRight = getNearestSnappedPosition(x + 1, stepRatio);
-    
+
     const edgeLeft = getVertexIndex(snapLeft, resolution, resolution);
     const edgeRight = getVertexIndex(snapRight, resolution, resolution);
-    
+
     if (snapLeft === snapRight) {
       // Both interior vertices snap to the same edge vertex - one triangle (CCW winding)
-      indices.push(interiorLeft, edgeLeft, interiorRight);
+      indices[cursor++] = interiorLeft;
+      indices[cursor++] = edgeLeft;
+      indices[cursor++] = interiorRight;
     } else {
       // Transition point - two triangles (CCW winding)
       // Triangle 1: interiorLeft to edgeLeft to interiorRight
-      indices.push(interiorLeft, edgeLeft, interiorRight);
+      indices[cursor++] = interiorLeft;
+      indices[cursor++] = edgeLeft;
+      indices[cursor++] = interiorRight;
       // Triangle 2: interiorRight to edgeLeft to edgeRight
-      indices.push(interiorRight, edgeLeft, edgeRight);
+      indices[cursor++] = interiorRight;
+      indices[cursor++] = edgeLeft;
+      indices[cursor++] = edgeRight;
     }
   }
+  return cursor;
 }
 
 /**
@@ -348,34 +373,42 @@ function generateSouthEdgeNearestNeighbor(
  * Each interior vertex connects to the nearest snapped edge vertex.
  */
 function generateWestEdgeNearestNeighbor(
-  indices: number[],
+  indices: Uint32Array,
+  startCursor: number,
   resolution: number,
-  stepRatio: number,
-  _allStepRatios: Record<CardinalDirection, number>
-): void {
+  stepRatio: number
+): number {
+  let cursor = startCursor;
   // Process each interior edge segment (z, z+1)
   for (let z = 0; z < resolution; z++) {
     const interiorTop = getVertexIndex(1, z, resolution);
     const interiorBottom = getVertexIndex(1, z + 1, resolution);
-    
+
     // Find nearest snapped edge vertices
     const snapTop = getNearestSnappedPosition(z, stepRatio);
     const snapBottom = getNearestSnappedPosition(z + 1, stepRatio);
-    
+
     const edgeTop = getVertexIndex(0, snapTop, resolution);
     const edgeBottom = getVertexIndex(0, snapBottom, resolution);
-    
+
     if (snapTop === snapBottom) {
       // Both interior vertices snap to the same edge vertex - one triangle (CCW winding)
-      indices.push(edgeTop, interiorBottom, interiorTop);
+      indices[cursor++] = edgeTop;
+      indices[cursor++] = interiorBottom;
+      indices[cursor++] = interiorTop;
     } else {
       // Transition point - two triangles (CCW winding)
       // Triangle 1: edgeTop to interiorBottom to interiorTop
-      indices.push(edgeTop, interiorBottom, interiorTop);
+      indices[cursor++] = edgeTop;
+      indices[cursor++] = interiorBottom;
+      indices[cursor++] = interiorTop;
       // Triangle 2: edgeTop to edgeBottom to interiorBottom
-      indices.push(edgeTop, edgeBottom, interiorBottom);
+      indices[cursor++] = edgeTop;
+      indices[cursor++] = edgeBottom;
+      indices[cursor++] = interiorBottom;
     }
   }
+  return cursor;
 }
 
 /**
@@ -383,34 +416,42 @@ function generateWestEdgeNearestNeighbor(
  * Each interior vertex connects to the nearest snapped edge vertex.
  */
 function generateEastEdgeNearestNeighbor(
-  indices: number[],
+  indices: Uint32Array,
+  startCursor: number,
   resolution: number,
-  stepRatio: number,
-  _allStepRatios: Record<CardinalDirection, number>
-): void {
+  stepRatio: number
+): number {
+  let cursor = startCursor;
   // Process each interior edge segment (z, z+1)
   for (let z = 0; z < resolution; z++) {
     const interiorTop = getVertexIndex(resolution - 1, z, resolution);
     const interiorBottom = getVertexIndex(resolution - 1, z + 1, resolution);
-    
+
     // Find nearest snapped edge vertices
     const snapTop = getNearestSnappedPosition(z, stepRatio);
     const snapBottom = getNearestSnappedPosition(z + 1, stepRatio);
-    
+
     const edgeTop = getVertexIndex(resolution, snapTop, resolution);
     const edgeBottom = getVertexIndex(resolution, snapBottom, resolution);
-    
+
     if (snapTop === snapBottom) {
       // Both interior vertices snap to the same edge vertex - one triangle (CCW winding)
-      indices.push(edgeTop, interiorTop, interiorBottom);
+      indices[cursor++] = edgeTop;
+      indices[cursor++] = interiorTop;
+      indices[cursor++] = interiorBottom;
     } else {
       // Transition point - two triangles (CCW winding)
       // Triangle 1: edgeTop to interiorTop to interiorBottom
-      indices.push(edgeTop, interiorTop, interiorBottom);
+      indices[cursor++] = edgeTop;
+      indices[cursor++] = interiorTop;
+      indices[cursor++] = interiorBottom;
       // Triangle 2: edgeTop to interiorBottom to edgeBottom
-      indices.push(edgeTop, interiorBottom, edgeBottom);
+      indices[cursor++] = edgeTop;
+      indices[cursor++] = interiorBottom;
+      indices[cursor++] = edgeBottom;
     }
   }
+  return cursor;
 }
 
 /**
