@@ -1,4 +1,18 @@
-import { LOD, MeshBasicMaterial, type Mesh, type InstancedMesh, type Scene } from 'three';
+import { LOD, MeshBasicMaterial, type Material, type Mesh, type InstancedMesh, type Scene } from 'three';
+
+/**
+ * Dispose per-chunk debug materials (wireframe MeshBasicMaterial).
+ * Shared materials (MoonMaterial, owned by TerrainGenerator/RockManager)
+ * must never be disposed here.
+ */
+function disposeDebugMaterial(material: Material | Material[]): void {
+  const materials = Array.isArray(material) ? material : [material];
+  for (const mat of materials) {
+    if (mat instanceof MeshBasicMaterial) {
+      mat.dispose();
+    }
+  }
+}
 
 /**
  * Clean high-level container for a terrain chunk.
@@ -70,6 +84,7 @@ export class Chunk {
     const oldMesh = this.terrainMeshes[lodLevel];
     if (oldMesh) {
       oldMesh.geometry.dispose();
+      disposeDebugMaterial(oldMesh.material);
       this.removeLodEntry(oldMesh);
     }
 
@@ -107,8 +122,8 @@ export class Chunk {
 
   /**
    * Remove and dispose all rock meshes at the specified LOD level.
-   * Only instance buffers are disposed - prototype geometries are shared
-   * and owned by RockManager.
+   * Only instance buffers (and per-chunk debug materials) are disposed -
+   * prototype geometries and the shared rock material are owned by RockManager.
    */
   clearRockMeshes(lodLevel: number): void {
     const meshes = this.rockMeshes[lodLevel];
@@ -116,6 +131,7 @@ export class Chunk {
 
     for (const mesh of meshes) {
       this.lod.remove(mesh);
+      disposeDebugMaterial(mesh.material);
       mesh.dispose();
     }
     this.rockMeshes[lodLevel] = [];
@@ -134,9 +150,7 @@ export class Chunk {
       mesh.geometry.dispose();
 
       // Debug wireframe materials are created per mesh; shared materials are not
-      if (mesh.material instanceof MeshBasicMaterial) {
-        mesh.material.dispose();
-      }
+      disposeDebugMaterial(mesh.material);
 
       this.terrainMeshes[lodLevel] = null;
     }
@@ -215,18 +229,20 @@ export class Chunk {
    * Clean up all resources
    */
   dispose(): void {
-    // Dispose terrain meshes
+    // Dispose terrain meshes (per-chunk geometry and debug materials;
+    // the shared MoonMaterial is owned by TerrainGenerator)
     for (const mesh of this.terrainMeshes) {
       if (mesh) {
         mesh.geometry.dispose();
+        disposeDebugMaterial(mesh.material);
       }
     }
+    this.lod.levels.length = 0;
 
-    // Dispose rock meshes (multiple per LOD level)
-    for (const rockMeshesAtLod of this.rockMeshes) {
-      for (const mesh of rockMeshesAtLod) {
-        mesh.geometry.dispose();
-      }
+    // Dispose rock meshes (instance buffers and debug materials only -
+    // prototype geometries are shared and owned by RockManager)
+    for (let lodLevel = 0; lodLevel < this.rockMeshes.length; lodLevel++) {
+      this.clearRockMeshes(lodLevel);
     }
 
     // Clear arrays

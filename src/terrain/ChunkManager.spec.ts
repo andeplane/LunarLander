@@ -132,6 +132,7 @@ describe(ChunkManager.name, () => {
       getMaterial: vi.fn(() => fakeMaterial),
       setSunDirection: vi.fn(),
       setSunHorizonFade: vi.fn(),
+      updateCullingBounds: vi.fn(),
       dispose: vi.fn(),
     } as unknown as RockManager;
   });
@@ -285,6 +286,33 @@ describe(ChunkManager.name, () => {
       const rockChildren = chunk?.lod.children.filter((c) => c instanceof InstancedMesh) ?? [];
       expect(rockChildren.length).toBe(1);
       expect(rockChildren[0]).toBe(rockMeshes[0]);
+    });
+
+    it('disposes rock instance buffers but never the shared prototype geometry when a chunk is pruned', () => {
+      const manager = createManager();
+      manager.update(new Vector3(0, 50, 0));
+
+      const placements: RockPlacement[] = [
+        { prototypeId: 0, matrices: new Float32Array(16) },
+      ];
+      handleWorkerResult(manager, makeResult('0,0', 1, 32, placements));
+
+      const chunk = manager.getChunk('0,0');
+      const rockMesh = chunk?.getRockMeshes(1)[0];
+      expect(rockMesh).toBeDefined();
+      if (!rockMesh) return;
+
+      const meshDispose = vi.spyOn(rockMesh, 'dispose');
+      const geometryDispose = vi.spyOn(sharedRockGeometry, 'dispose');
+
+      // Move far away so the chunk is pruned and disposed
+      manager.update(new Vector3(10000, 50, 0));
+      expect(manager.getChunk('0,0')).toBeUndefined();
+
+      expect(meshDispose).toHaveBeenCalledTimes(1);
+      expect(geometryDispose).not.toHaveBeenCalled();
+
+      geometryDispose.mockRestore();
     });
   });
 

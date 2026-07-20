@@ -11,6 +11,7 @@ import type { PhysicsWorld } from '../physics/PhysicsWorld';
 import type { TerrainColliderManager } from '../physics/TerrainColliderManager';
 import type { BallManager } from '../physics/BallManager';
 import { DEFAULT_PLANET_RADIUS } from './EngineSettings';
+import type { CameraConfig } from '../types';
 
 /**
  * Maximum frame delta in seconds. Clamps large deltas (e.g. after
@@ -68,7 +69,7 @@ export class Engine {
   // Reusable vector for camera direction calculation
   private cameraForward: THREE.Vector3 = new THREE.Vector3();
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, cameraOptions?: Pick<CameraConfig, 'fov' | 'near' | 'far'>) {
     // Initialize renderer
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -80,12 +81,12 @@ export class Engine {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x000000);
 
-    // Initialize camera
+    // Initialize camera (frustum values come from CameraConfig in main.ts)
     this.camera = new THREE.PerspectiveCamera(
-      70,
+      cameraOptions?.fov ?? 70,
       window.innerWidth / window.innerHeight,
-      0.1,
-      100000
+      cameraOptions?.near ?? 0.1,
+      cameraOptions?.far ?? 100000
     );
     this.camera.position.set(0, 100, 200);
 

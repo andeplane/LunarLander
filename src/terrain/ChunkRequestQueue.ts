@@ -42,7 +42,7 @@ export interface ChunkRequestQueueDependencies {
  * @param cameraPos - Camera world position
  * @param cameraForward - Camera forward direction (normalized)
  * @param chunkConfig - Chunk dimensions
- * @param nearestChunkKeys - Set of nearest 10 chunk keys (by distance)
+ * @param nearestChunkKeys - Set of nearest chunk keys by distance (size set by NEAREST_CHUNKS_HIGH_PRIORITY in ChunkManager)
  * @returns Priority value (lower = higher priority)
  */
 export function defaultPriorityCalculator(
@@ -213,7 +213,7 @@ export class ChunkRequestQueue {
    *
    * @param cameraPos - Camera world position
    * @param cameraForward - Camera forward direction (normalized)
-   * @param nearestChunkKeys - Set of nearest chunk keys (by distance)
+   * @param nearestChunkKeys - Set of nearest chunk keys by distance (size set by NEAREST_CHUNKS_HIGH_PRIORITY in ChunkManager)
    */
   sort(
     cameraPos: Vector3,

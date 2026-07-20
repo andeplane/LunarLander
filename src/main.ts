@@ -39,12 +39,6 @@ const loadingManager = new LoadingManager();
 // Track: surface-high-detail + skybox + 4 Earth textures
 loadingManager.registerTextures(6);
 
-// Initialize engine
-const engine = new Engine(canvas);
-
-// Initialize input manager
-const inputManager = new InputManager();
-
 // Camera configuration (from PRD section 9.2)
 const cameraConfig: CameraConfig = {
   fov: 70,
@@ -56,9 +50,13 @@ const cameraConfig: CameraConfig = {
   acceleration: 5.0,    // Smoothing factor
   mouseSensitivity: 0.002,
   minAltitudeAGL: 0.5,    // Minimum altitude above ground (meters)
-  slowdownAltitude: 50, // Start slowing at this AGL (meters)
-  slowdownFactor: 0.0, // Speed multiplier at minimum altitude
 };
+
+// Initialize engine (camera frustum comes from cameraConfig)
+const engine = new Engine(canvas, cameraConfig);
+
+// Initialize input manager
+const inputManager = new InputManager();
 
 // Chunk configuration
 const chunkConfig: ChunkConfig = {
