@@ -178,9 +178,15 @@ export class TerrainGenerator {
   }
 
   /**
-   * Clear stitching data for a chunk (called when chunk is disposed)
+   * Clear stitching data for a chunk (called when chunk is disposed),
+   * or for a single LOD level (called when that level is evicted).
    */
-  clearStitchingData(gridKey: string): void {
+  clearStitchingData(gridKey: string, lodLevel?: number): void {
+    if (lodLevel !== undefined) {
+      this.originalIndices.delete(`${gridKey}:${lodLevel}`);
+      return;
+    }
+
     // Remove all LOD level entries for this chunk
     for (const key of this.originalIndices.keys()) {
       if (key.startsWith(`${gridKey}:`)) {
