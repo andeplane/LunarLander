@@ -50,6 +50,18 @@ export class FixedTimestep {
   }
 
   /**
+   * Fraction of a fixed step left in the accumulator, in [0, 1).
+   *
+   * After advance(), this is how far the render time has progressed past
+   * the last simulated physics step. Renderers should interpolate between
+   * the previous and current physics transforms by this amount so motion
+   * stays smooth on displays faster than the physics rate.
+   */
+  getAlpha(): number {
+    return this.accumulator / this.stepSize;
+  }
+
+  /**
    * Reset the accumulator (e.g. after pausing or disposing).
    */
   reset(): void {
