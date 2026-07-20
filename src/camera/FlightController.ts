@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { CameraConfig } from '../types';
 import type { InputManager } from '../core/InputManager';
 import type { ChunkManager } from '../terrain/ChunkManager';
+import { movementAmount } from '../utils/input';
 
 /**
  * Flight controller responsible for:
@@ -72,22 +73,22 @@ export class FlightController {
     // Handle pointer lock (desktop)
     if (this.inputManager.isPointerLockActive()) {
       const mouseDelta = this.inputManager.getMouseDelta();
-      
+
       // Apply mouse sensitivity
       this.yaw -= mouseDelta.x * this.config.mouseSensitivity;
       this.pitch -= mouseDelta.y * this.config.mouseSensitivity;
-    } else if (this.inputManager.getIsTouchDevice()) {
-      // Handle touch look (mobile)
-      const touchDelta = this.inputManager.getTouchLookDelta();
-      
-      if (touchDelta.x !== 0 || touchDelta.y !== 0) {
-        // Apply touch sensitivity (same as mouse)
-        this.yaw -= touchDelta.x * this.config.mouseSensitivity;
-        this.pitch -= touchDelta.y * this.config.mouseSensitivity;
-      }
     } else {
-      // No input active
-      return;
+      // Handle touch look — deltas are raw pixels (zero when no touch input),
+      // so sensitivity is applied exactly once, here
+      const touchDelta = this.inputManager.getTouchLookDelta();
+
+      if (touchDelta.x === 0 && touchDelta.y === 0) {
+        // No input active
+        return;
+      }
+      // Apply touch sensitivity (same as mouse)
+      this.yaw -= touchDelta.x * this.config.mouseSensitivity;
+      this.pitch -= touchDelta.y * this.config.mouseSensitivity;
     }
     
     // Clamp pitch to prevent flipping (slightly less than 90 degrees)
@@ -124,7 +125,7 @@ export class FlightController {
   }
 
   /**
-   * Handle keyboard movement input
+   * Handle movement input (keyboard and/or touch)
    */
   private handleMovement(deltaTime: number): void {
     // Calculate forward and right vectors from yaw only (ignore pitch for movement)
@@ -143,42 +144,40 @@ export class FlightController {
     // Build movement direction from input
     this.moveDirection.set(0, 0, 0);
 
-    // Check if touch device and get touch movement
-    const isTouchDevice = this.inputManager.getIsTouchDevice();
-    let touchMove = { x: 0, y: 0 };
-    if (isTouchDevice) {
-      touchMove = this.inputManager.getMoveDirection();
-    }
+    // Combine keyboard and touch input per direction. Touch inputs are zero
+    // when inactive, so keyboard keeps working on touch-capable devices
+    // (e.g. touchscreen laptops) and vice versa.
+    const touchMove = this.inputManager.getMoveDirection();
+    const verticalInput = this.inputManager.getVerticalInput();
 
     // Forward/backward (W/S or touch joystick Y)
-    if (this.inputManager.isKeyPressed('w') || touchMove.y > 0) {
-      const amount = isTouchDevice ? Math.abs(touchMove.y) : 1.0;
-      this.moveDirection.addScaledVector(this.forward, amount);
+    const forwardAmount = movementAmount(this.inputManager.isKeyPressed('w'), Math.max(touchMove.y, 0));
+    if (forwardAmount > 0) {
+      this.moveDirection.addScaledVector(this.forward, forwardAmount);
     }
-    if (this.inputManager.isKeyPressed('s') || touchMove.y < 0) {
-      const amount = isTouchDevice ? Math.abs(touchMove.y) : 1.0;
-      this.moveDirection.addScaledVector(this.forward, -amount);
+    const backwardAmount = movementAmount(this.inputManager.isKeyPressed('s'), Math.max(-touchMove.y, 0));
+    if (backwardAmount > 0) {
+      this.moveDirection.addScaledVector(this.forward, -backwardAmount);
     }
 
     // Strafe left/right (A/D or touch joystick X)
-    if (this.inputManager.isKeyPressed('a') || touchMove.x < 0) {
-      const amount = isTouchDevice ? Math.abs(touchMove.x) : 1.0;
-      this.moveDirection.addScaledVector(this.right, -amount);
+    const leftAmount = movementAmount(this.inputManager.isKeyPressed('a'), Math.max(-touchMove.x, 0));
+    if (leftAmount > 0) {
+      this.moveDirection.addScaledVector(this.right, -leftAmount);
     }
-    if (this.inputManager.isKeyPressed('d') || touchMove.x > 0) {
-      const amount = isTouchDevice ? Math.abs(touchMove.x) : 1.0;
-      this.moveDirection.addScaledVector(this.right, amount);
+    const rightAmount = movementAmount(this.inputManager.isKeyPressed('d'), Math.max(touchMove.x, 0));
+    if (rightAmount > 0) {
+      this.moveDirection.addScaledVector(this.right, rightAmount);
     }
 
     // Up/down (E for up, Q for down, or touch buttons)
-    const verticalInput = isTouchDevice ? this.inputManager.getVerticalInput() : 0;
-    if (this.inputManager.isKeyPressed('e') || verticalInput > 0) {
-      const amount = isTouchDevice ? Math.abs(verticalInput) : 1.0;
-      this.moveDirection.addScaledVector(this.up, amount);
+    const upAmount = movementAmount(this.inputManager.isKeyPressed('e'), Math.max(verticalInput, 0));
+    if (upAmount > 0) {
+      this.moveDirection.addScaledVector(this.up, upAmount);
     }
-    if (this.inputManager.isKeyPressed('q') || verticalInput < 0) {
-      const amount = isTouchDevice ? Math.abs(verticalInput) : 1.0;
-      this.moveDirection.addScaledVector(this.up, -amount);
+    const downAmount = movementAmount(this.inputManager.isKeyPressed('q'), Math.max(-verticalInput, 0));
+    if (downAmount > 0) {
+      this.moveDirection.addScaledVector(this.up, -downAmount);
     }
 
     // Normalize if moving diagonally

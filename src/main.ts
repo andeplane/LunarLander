@@ -191,14 +191,14 @@ engine.getCamera().rotation.z -= 0.06;
 // Force initial render after camera position is set
 engine.requestRender();
 
-// Set up click to enable pointer lock (desktop only)
-if (!isTouchDevice()) {
-  canvas.addEventListener('click', () => {
-    inputManager.requestPointerLock();
-  });
-}
+// Set up click to enable pointer lock. Always registered so hybrid devices
+// (touchscreen laptops) keep mouse look — requestPointerLock() itself is a
+// no-op when the primary pointer is coarse (phones/tablets).
+canvas.addEventListener('click', () => {
+  inputManager.requestPointerLock();
+});
 
-// Initialize touch controls (mobile only)
+// Initialize touch controls (touch-capable devices)
 let touchControls: TouchControls | null = null;
 if (isTouchDevice()) {
   touchControls = new TouchControls(inputManager);
