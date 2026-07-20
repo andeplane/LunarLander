@@ -25,38 +25,76 @@ export class InputManager {
     this.setupEventListeners();
   }
 
+  private readonly onKeyDown = (e: KeyboardEvent): void => {
+    const key = e.key.toLowerCase();
+    // Track just-pressed keys (not already held)
+    if (!this.keys.has(key)) {
+      this.keysJustPressed.add(key);
+    }
+    this.keys.add(key);
+  };
+
+  private readonly onKeyUp = (e: KeyboardEvent): void => {
+    this.keys.delete(e.key.toLowerCase());
+  };
+
+  private readonly onMouseMove = (e: MouseEvent): void => {
+    if (this.isPointerLocked) {
+      this.mouseDelta.x += e.movementX;
+      this.mouseDelta.y += e.movementY;
+    }
+  };
+
+  private readonly onPointerLockChange = (): void => {
+    this.isPointerLocked = document.pointerLockElement !== null;
+    // Drop any held keys/deltas when the pointer unlocks (e.g. Esc to use the GUI),
+    // otherwise keys held at unlock time would stick
+    if (!this.isPointerLocked) {
+      this.clearTransientState();
+    }
+  };
+
+  // Scroll wheel for speed adjustment — only while pointer-locked,
+  // so scrolling over the GUI doesn't change flight speed
+  private readonly onWheel = (e: WheelEvent): void => {
+    if (this.isPointerLocked) {
+      this.scrollDelta += e.deltaY;
+    }
+  };
+
+  private readonly onBlur = (): void => {
+    this.clearTransientState();
+  };
+
+  private readonly onVisibilityChange = (): void => {
+    if (document.hidden) {
+      this.clearTransientState();
+    }
+  };
+
   /**
    * Set up keyboard and mouse event listeners
    */
   private setupEventListeners(): void {
-    window.addEventListener('keydown', (e) => {
-      const key = e.key.toLowerCase();
-      // Track just-pressed keys (not already held)
-      if (!this.keys.has(key)) {
-        this.keysJustPressed.add(key);
-      }
-      this.keys.add(key);
-    });
+    window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('keyup', this.onKeyUp);
+    window.addEventListener('wheel', this.onWheel);
+    window.addEventListener('blur', this.onBlur);
+    document.addEventListener('mousemove', this.onMouseMove);
+    document.addEventListener('pointerlockchange', this.onPointerLockChange);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
+  }
 
-    window.addEventListener('keyup', (e) => {
-      this.keys.delete(e.key.toLowerCase());
-    });
-
-    document.addEventListener('mousemove', (e) => {
-      if (this.isPointerLocked) {
-        this.mouseDelta.x += e.movementX;
-        this.mouseDelta.y += e.movementY;
-      }
-    });
-
-    document.addEventListener('pointerlockchange', () => {
-      this.isPointerLocked = document.pointerLockElement !== null;
-    });
-
-    // Scroll wheel for speed adjustment
-    window.addEventListener('wheel', (e) => {
-      this.scrollDelta += e.deltaY;
-    });
+  /**
+   * Clear transient input state (held keys, accumulated deltas).
+   * Called on blur / tab hide / pointer-lock loss so keys never stick
+   * when keyup events are missed.
+   */
+  private clearTransientState(): void {
+    this.keys.clear();
+    this.keysJustPressed.clear();
+    this.mouseDelta = { x: 0, y: 0 };
+    this.scrollDelta = 0;
   }
 
   /**
@@ -176,6 +214,16 @@ export class InputManager {
    * Cleanup event listeners
    */
   dispose(): void {
-    // Event listeners will be cleaned up automatically
+    window.removeEventListener('keydown', this.onKeyDown);
+    window.removeEventListener('keyup', this.onKeyUp);
+    window.removeEventListener('wheel', this.onWheel);
+    window.removeEventListener('blur', this.onBlur);
+    document.removeEventListener('mousemove', this.onMouseMove);
+    document.removeEventListener('pointerlockchange', this.onPointerLockChange);
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    this.clearTransientState();
+    this.touchMoveDirection = { x: 0, y: 0 };
+    this.touchLookDelta = { x: 0, y: 0 };
+    this.verticalInput = 0;
   }
 }

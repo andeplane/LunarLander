@@ -103,7 +103,7 @@ export class FlightController {
     const scrollDelta = this.inputManager.getScrollDelta();
     
     if (scrollDelta !== 0) {
-      // Scroll down increases speed, scroll up decreases
+      // Scroll up (negative deltaY) increases speed, scroll down decreases
       const scrollFactor = 1.0 - scrollDelta * 0.001;
       this.speedMultiplier *= scrollFactor;
       
