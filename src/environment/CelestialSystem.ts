@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { EarthMaterial } from '../shaders/EarthMaterial';
 import { SunMaterial } from '../shaders/SunMaterial';
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
+import { applyCurvatureStep, directionFromObserver } from './celestialMath';
 
 /**
  * CelestialSystem manages the sun, Earth, starfield, and directional lighting
@@ -23,11 +24,12 @@ import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
  * AFTER curvature rotation is applied to the celestialContainer. This ensures
  * lighting direction matches the visual positions of celestial objects.
  * 
- * The curvature uses the same formula as the terrain shader:
- * - θ (theta) = distance / planetRadius (rotation angle)
- * - φ (phi) = atan2(z, x) (direction of travel)
- * 
- * Flying a full circumference (2πR) brings the sky back to its original position.
+ * The curvature rotation is accumulated incrementally (parallel transport):
+ * each frame the sky rotates by dθ = stepDistance / planetRadius around the
+ * horizontal axis perpendicular to the direction of travel. This stays smooth
+ * for any flight path (tangential flight and origin crossings included) and
+ * flying a straight line of length 2πR brings the sky back to its original
+ * orientation.
  */
 
 export interface CelestialConfig {
@@ -117,12 +119,26 @@ export class CelestialSystem {
   // Reusable objects for calculations (avoid per-frame allocations)
   private readonly sunDirection = new THREE.Vector3();
   private readonly curvatureQuaternion = new THREE.Quaternion();
-  private readonly rotationAxis = new THREE.Vector3();
-  
+  private readonly flashlightForward = new THREE.Vector3();
+
   // Reusable vectors for world position calculations
   private readonly sunWorldPos = new THREE.Vector3();
   private readonly earthWorldPos = new THREE.Vector3();
-  
+
+  // Sun/Earth offsets relative to the observer (camera). The celestial
+  // container follows the camera, so world positions include the camera
+  // position; these observer-relative offsets are what lighting math needs.
+  private readonly sunOffset = new THREE.Vector3();
+  private readonly earthOffset = new THREE.Vector3();
+
+  // Previous camera position for incremental curvature (parallel transport)
+  private readonly prevCameraPosition = new THREE.Vector3();
+  private hasPrevCameraPosition = false;
+
+  // Earth spin accumulated since the last requested render; used to request
+  // renders often enough that the rotation never visibly snaps after idling
+  private pendingEarthRotation = 0;
+
   // Current sun horizon fade (0 = below horizon, 1 = above horizon)
   private currentSunHorizonFade: number = 1.0;
   
@@ -300,18 +316,10 @@ export class CelestialSystem {
     // 1. Main directional light from sun
     this.sunLight = new THREE.DirectionalLight(0xffffff, this.config.sunIntensity);
     this.sunLight.name = 'SunLight';
-    
-    // Shadow configuration for sun
-    this.sunLight.castShadow = true;
-    this.sunLight.shadow.mapSize.width = 2048;
-    this.sunLight.shadow.mapSize.height = 2048;
-    this.sunLight.shadow.camera.near = 0.5;
-    this.sunLight.shadow.camera.far = 5000;
-    this.sunLight.shadow.camera.left = -2000;
-    this.sunLight.shadow.camera.right = 2000;
-    this.sunLight.shadow.camera.top = 2000;
-    this.sunLight.shadow.camera.bottom = -2000;
-    
+
+    // Note: no shadow configuration. Shadows are not used in this project
+    // (renderer.shadowMap is never enabled and no mesh casts/receives shadows).
+
     // Light is positioned at scene root (not in container)
     // Position will be updated each frame from sun's world position
     this.scene.add(this.sunLight);
@@ -372,39 +380,32 @@ export class CelestialSystem {
   }
   
   /**
-   * Calculate curvature rotation based on camera position
-   * Uses the same formula as terrain shader: θ = d / R
-   * 
+   * Update the curvature rotation incrementally from camera movement
+   * (parallel transport).
+   *
+   * Each step rotates the sky by dθ = stepDistance / planetRadius around the
+   * horizontal axis perpendicular to the movement direction. Deriving the
+   * rotation from the current position relative to the world origin (the old
+   * approach) is only correct for radial travel: tangential flight swings the
+   * rotation axis while θ stays constant and crossing near the origin flips
+   * the axis, which made the sky slew or snap intermittently while flying.
+   * The incremental form is smooth for any path.
+   *
    * @param cameraPosition Camera world position
    */
-  private calculateCurvatureRotation(cameraPosition: THREE.Vector3): void {
-    const x = cameraPosition.x;
-    const z = cameraPosition.z;
-    
-    // Horizontal distance from origin
-    const d = Math.sqrt(x * x + z * z);
-    
-    // Rotation angle (same formula as shader)
-    // θ = d / R where R is planetRadius
-    // At d = 2πR, θ = 2π (full circle, back to start)
-    const theta = d / this.planetRadius;
-    
-    if (theta < 0.0001) {
-      // At origin, no rotation needed
-      this.curvatureQuaternion.identity();
+  private updateCurvatureRotation(cameraPosition: THREE.Vector3): void {
+    if (!this.hasPrevCameraPosition) {
+      // First update: establish the reference position, keep identity rotation
+      this.prevCameraPosition.copy(cameraPosition);
+      this.hasPrevCameraPosition = true;
       return;
     }
-    
-    // Direction of travel (azimuth angle)
-    const phi = Math.atan2(z, x);
-    
-    // The rotation axis is perpendicular to the travel direction
-    // If traveling in direction phi, we tilt around axis at phi + 90°
-    // This axis lies in the XZ plane
-    this.rotationAxis.set(-Math.sin(phi), 0, Math.cos(phi));
-    
-    // Create rotation: tilt by theta around the perpendicular axis
-    this.curvatureQuaternion.setFromAxisAngle(this.rotationAxis, theta);
+
+    const dx = cameraPosition.x - this.prevCameraPosition.x;
+    const dz = cameraPosition.z - this.prevCameraPosition.z;
+    this.prevCameraPosition.copy(cameraPosition);
+
+    applyCurvatureStep(this.curvatureQuaternion, dx, dz, this.planetRadius);
   }
   
   /**
@@ -421,21 +422,29 @@ export class CelestialSystem {
     // This is critical for correct lighting direction after curvature rotation
     this.sunMesh.getWorldPosition(this.sunWorldPos);
     this.earthMesh.getWorldPosition(this.earthWorldPos);
-    
+
+    // The container follows the camera, so world positions include the camera
+    // position. Subtract the container (observer) position to get the pure
+    // observer-relative offsets used for all directional lighting math.
+    this.sunOffset.copy(this.sunWorldPos).sub(this.celestialContainer.position);
+    this.earthOffset.copy(this.earthWorldPos).sub(this.celestialContainer.position);
+
     // Calculate direction FROM Earth TO Sun (for Earth shader)
     // Earth's day/night depends on which side faces the sun
+    // (the shared camera offset cancels in the subtraction)
     this.sunDirection.copy(this.sunWorldPos).sub(this.earthWorldPos).normalize();
-    
+
     // Update Earth material with world-space sun direction
     this.earthMaterial.setSunDirection(this.sunDirection);
-    
+
     // Update sun directional light position
-    // Light should come FROM the sun's world position
-    this.sunLight.position.copy(this.sunWorldPos);
-    
-    // Update earth directional light position
-    // Earthshine comes FROM Earth's world position
-    this.earthLight.position.copy(this.earthWorldPos);
+    // DirectionalLight direction is position -> target (at the origin), so use
+    // the observer-relative offset: copying the raw world position would mix
+    // the camera position into the light direction (~4.6 deg error 4 km out)
+    this.sunLight.position.copy(this.sunOffset);
+
+    // Update earth directional light position (same reasoning as sun light)
+    this.earthLight.position.copy(this.earthOffset);
   }
   
   /**
@@ -445,10 +454,10 @@ export class CelestialSystem {
    * @param cameraPosition Camera world position
    * @param deltaTime Time since last frame (seconds)
    */
-  update(cameraPosition: THREE.Vector3, deltaTime: number = 0.016): void {
-    // Calculate curvature rotation based on position
-    this.calculateCurvatureRotation(cameraPosition);
-    
+  update(cameraPosition: THREE.Vector3, deltaTime: number): void {
+    // Accumulate curvature rotation from camera movement (parallel transport)
+    this.updateCurvatureRotation(cameraPosition);
+
     // Apply curvature rotation to celestial container
     this.celestialContainer.quaternion.copy(this.curvatureQuaternion);
     
@@ -463,11 +472,13 @@ export class CelestialSystem {
     
     // Calculate sun elevation relative to local horizon and fade light intensity
     // This prevents light from reaching terrain when sun is below the virtual curved surface
-    const sunLength = this.sunWorldPos.length();
+    // Uses the observer-relative offset: the raw world position includes the
+    // camera position and would fade the sun at the wrong elevation
+    const sunLength = this.sunOffset.length();
     if (sunLength > 0.001) {
       // Calculate elevation angle: y component normalized by distance
       // Positive = above horizon, negative = below horizon
-      const sunElevation = this.sunWorldPos.y / sunLength;
+      const sunElevation = this.sunOffset.y / sunLength;
       
       // Smooth fade from -0.1 (fully below) to 0.1 (fully above horizon)
       // THREE.MathUtils.smoothstep signature is (x, min, max)
@@ -495,13 +506,24 @@ export class CelestialSystem {
       // Update flashlight position and direction
       this.flashlight.position.copy(this.camera.position);
       // Get camera forward direction and place target 100m ahead
-      const forward = new THREE.Vector3(0, 0, -1);
-      forward.applyQuaternion(this.camera.quaternion);
-      this.flashlightTarget.position.copy(this.camera.position).add(forward.multiplyScalar(100));
+      this.flashlightForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+      this.flashlightTarget.position
+        .copy(this.camera.position)
+        .add(this.flashlightForward.multiplyScalar(100));
     }
-    
+
     // Slowly rotate Earth (one rotation per ~24 hours scaled down)
-    this.earthMesh.rotation.y += deltaTime * 0.01;
+    const earthRotationStep = deltaTime * 0.01;
+    this.earthMesh.rotation.y += earthRotationStep;
+
+    // Request a render once enough rotation has accumulated so the spin never
+    // visibly snaps after idle periods (0.005 rad is sub-pixel at Earth's
+    // apparent size, so idle frames stay cheap between requests)
+    this.pendingEarthRotation += earthRotationStep;
+    if (this.pendingEarthRotation >= 0.005) {
+      this.pendingEarthRotation = 0;
+      this.requestRender();
+    }
   }
   
   /**
@@ -527,10 +549,12 @@ export class CelestialSystem {
   // ============================================
   
   /**
-   * Get sun light intensity
+   * Get sun light intensity (base config value, not the horizon-faded value
+   * applied to the light — keeps the getter symmetric with the setter so UI
+   * controls seeded near sunset don't permanently lower the base intensity)
    */
   get sunIntensity(): number {
-    return this.sunLight.intensity;
+    return this.config.sunIntensity;
   }
   
   /**
@@ -666,11 +690,14 @@ export class CelestialSystem {
   }
 
   /**
-   * Get the sun direction for terrain lighting (direction TO the sun from terrain surface)
-   * This is the normalized sun world position, representing the direction to the sun
+   * Get the sun direction for terrain lighting (direction TO the sun from the
+   * observer). Uses the observer-relative offset — the celestial container
+   * follows the camera, so normalizing the raw world position would mix the
+   * camera position into the direction and skew terrain lighting as the
+   * camera moves away from the origin.
    */
   getSunDirectionForTerrain(): THREE.Vector3 {
-    return this.sunWorldPos.clone().normalize();
+    return directionFromObserver(this.sunWorldPos, this.celestialContainer.position);
   }
 
   /**

@@ -52,7 +52,7 @@ The development server will start at `http://localhost:5173` (or the next availa
 - **Earth**: Realistic day/night cycle using 4 texture layers (day map, night map, clouds, specular)
 - **Milky Way Starfield**: Large-scale skybox with equirectangular starfield texture
 - **Four Light Sources**:
-  - Sun directional light (main illumination with shadows)
+  - Sun directional light (main illumination)
   - Earthshine directional light (weak bluish reflected light from Earth)
   - Spaceship point light (local illumination attached to camera)
   - Flashlight spot light (directional cone pointing where camera looks)
