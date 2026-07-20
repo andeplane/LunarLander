@@ -134,6 +134,9 @@ export class CelestialSystem {
 
   // Previous camera position for incremental curvature (parallel transport)
   private readonly prevCameraPosition = new THREE.Vector3();
+
+  // Reusable output vector for getSunDirectionForTerrain (called every frame)
+  private readonly sunDirectionForTerrain = new THREE.Vector3();
   private hasPrevCameraPosition = false;
 
   // Earth spin accumulated since the last requested render; used to request
@@ -705,7 +708,13 @@ export class CelestialSystem {
    * camera moves away from the origin.
    */
   getSunDirectionForTerrain(): THREE.Vector3 {
-    return directionFromObserver(this.sunWorldPos, this.celestialContainer.position);
+    // Reuses a scratch vector: called every frame, and consumers copy the
+    // value into their uniforms rather than retaining the reference.
+    return directionFromObserver(
+      this.sunWorldPos,
+      this.celestialContainer.position,
+      this.sunDirectionForTerrain
+    );
   }
 
   /**

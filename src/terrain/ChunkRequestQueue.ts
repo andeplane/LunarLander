@@ -125,6 +125,14 @@ export class ChunkRequestQueue {
   private dependencies: ChunkRequestQueueDependencies;
   private chunkConfig: ChunkConfig;
 
+  // Lazy sort state: skip re-sorting when nothing changed since the last sort.
+  private needsSort: boolean = false;
+  private lastSortCameraPos = { x: NaN, y: NaN, z: NaN };
+  private lastSortCameraForward = { x: NaN, y: NaN, z: NaN };
+
+  // Reusable priority buffer to avoid per-sort allocations
+  private priorityCache: Map<QueuedRequest, number> = new Map();
+
   constructor(
     chunkConfig: ChunkConfig,
     dependencyOverrides?: Partial<ChunkRequestQueueDependencies>
@@ -151,6 +159,7 @@ export class ChunkRequestQueue {
     }
     this.queue.push(request);
     this.queuedSet.add(key);
+    this.needsSort = true;
     return true;
   }
 
@@ -178,9 +187,30 @@ export class ChunkRequestQueue {
   }
 
   /**
+   * Check whether the camera has moved since the last sort.
+   * Uses a small epsilon so an idle camera never triggers a re-sort.
+   */
+  private hasCameraMoved(cameraPos: Vector3, cameraForward: Vector3): boolean {
+    const POSITION_EPSILON = 0.001; // meters
+    const DIRECTION_EPSILON = 0.0001;
+
+    return (
+      Math.abs(cameraPos.x - this.lastSortCameraPos.x) > POSITION_EPSILON ||
+      Math.abs(cameraPos.y - this.lastSortCameraPos.y) > POSITION_EPSILON ||
+      Math.abs(cameraPos.z - this.lastSortCameraPos.z) > POSITION_EPSILON ||
+      Math.abs(cameraForward.x - this.lastSortCameraForward.x) > DIRECTION_EPSILON ||
+      Math.abs(cameraForward.y - this.lastSortCameraForward.y) > DIRECTION_EPSILON ||
+      Math.abs(cameraForward.z - this.lastSortCameraForward.z) > DIRECTION_EPSILON
+    );
+  }
+
+  /**
    * Sort the queue by priority (lowest priority value first).
-   * Should be called each frame after camera moves.
-   * 
+   * Safe to call every frame: the sort is skipped entirely when the camera
+   * hasn't moved and no new requests were added since the last sort, and
+   * priorities are precomputed once per request (O(n)) instead of being
+   * recomputed inside the sort comparator (O(n log n)).
+   *
    * @param cameraPos - Camera world position
    * @param cameraForward - Camera forward direction (normalized)
    * @param nearestChunkKeys - Set of nearest chunk keys by distance (size set by NEAREST_CHUNKS_HIGH_PRIORITY in ChunkManager)
@@ -191,27 +221,39 @@ export class ChunkRequestQueue {
     nearestChunkKeys: Set<string>,
     maxLodLevel?: number
   ): void {
-    this.queue.sort((a, b) => {
-      const priorityA = this.dependencies.calculatePriority(
-        a.gridKey,
-        cameraPos,
-        cameraForward,
-        this.chunkConfig,
-        nearestChunkKeys,
-        a.lodLevel,
-        maxLodLevel
+    if (!this.needsSort && !this.hasCameraMoved(cameraPos, cameraForward)) {
+      return;
+    }
+
+    // Precompute priorities once per request (O(n))
+    this.priorityCache.clear();
+    for (const request of this.queue) {
+      this.priorityCache.set(
+        request,
+        this.dependencies.calculatePriority(
+          request.gridKey,
+          cameraPos,
+          cameraForward,
+          this.chunkConfig,
+          nearestChunkKeys,
+          request.lodLevel,
+          maxLodLevel
+        )
       );
-      const priorityB = this.dependencies.calculatePriority(
-        b.gridKey,
-        cameraPos,
-        cameraForward,
-        this.chunkConfig,
-        nearestChunkKeys,
-        b.lodLevel,
-        maxLodLevel
-      );
-      return priorityA - priorityB;
-    });
+    }
+
+    this.queue.sort(
+      (a, b) => (this.priorityCache.get(a) ?? 0) - (this.priorityCache.get(b) ?? 0)
+    );
+    this.priorityCache.clear();
+
+    this.needsSort = false;
+    this.lastSortCameraPos.x = cameraPos.x;
+    this.lastSortCameraPos.y = cameraPos.y;
+    this.lastSortCameraPos.z = cameraPos.z;
+    this.lastSortCameraForward.x = cameraForward.x;
+    this.lastSortCameraForward.y = cameraForward.y;
+    this.lastSortCameraForward.z = cameraForward.z;
   }
 
   /**
@@ -276,5 +318,6 @@ export class ChunkRequestQueue {
   clear(): void {
     this.queue = [];
     this.queuedSet.clear();
+    this.needsSort = false;
   }
 }
