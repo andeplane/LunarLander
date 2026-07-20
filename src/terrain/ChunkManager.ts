@@ -93,26 +93,21 @@ export class ChunkManager {
 
     // Base terrain args (without position/resolution - those are per-request)
     this.baseTerrainArgs = {
+      // Noise parameters for lunar terrain
       seed: 0,
       gain: 0.5,
-      lacunarity: 2,
-      frequency: 0.07,
-      amplitude: 0.5,
+      lacunarity: 5,
+      frequency: 0.015,            // Low frequency for broad lunar features
+      amplitude: 1.0,              // Gentle height variation
       altitude: 0.1,
-      falloff: 0.0,
-      erosion: 0.6,
-      erosionSoftness: 0.3,
-      rivers: 0.18,
-      riverWidth: 0.35,
-      riverFalloff: 0.06,
-      lakes: 0.5,
-      lakesFalloff: 0.5,
-      riversFrequency: 0.13,
+      octaves: 4,                  // Few octaves for smooth terrain (craters add detail)
       smoothLowerPlanes: 0,
-      octaves: 10,
+      
+      // Chunk dimensions
       width: config.chunkWidth,
       depth: config.chunkDepth,
       renderDistance: config.renderDistance,
+      
       // Crater generation parameters
       craterSeed: craterGenerationConfig.seed,
       craterDensity: craterGenerationConfig.density,

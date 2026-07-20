@@ -66,15 +66,29 @@ export class FlightController {
 
   /**
    * Handle mouse look (pitch and yaw)
+   * Also handles touch look on mobile devices
    */
   private handleMouseLook(): void {
-    if (!this.inputManager.isPointerLockActive()) return;
-
-    const mouseDelta = this.inputManager.getMouseDelta();
-    
-    // Apply mouse sensitivity
-    this.yaw -= mouseDelta.x * this.config.mouseSensitivity;
-    this.pitch -= mouseDelta.y * this.config.mouseSensitivity;
+    // Handle pointer lock (desktop)
+    if (this.inputManager.isPointerLockActive()) {
+      const mouseDelta = this.inputManager.getMouseDelta();
+      
+      // Apply mouse sensitivity
+      this.yaw -= mouseDelta.x * this.config.mouseSensitivity;
+      this.pitch -= mouseDelta.y * this.config.mouseSensitivity;
+    } else if (this.inputManager.getIsTouchDevice()) {
+      // Handle touch look (mobile)
+      const touchDelta = this.inputManager.getTouchLookDelta();
+      
+      if (touchDelta.x !== 0 || touchDelta.y !== 0) {
+        // Apply touch sensitivity (same as mouse)
+        this.yaw -= touchDelta.x * this.config.mouseSensitivity;
+        this.pitch -= touchDelta.y * this.config.mouseSensitivity;
+      }
+    } else {
+      // No input active
+      return;
+    }
     
     // Clamp pitch to prevent flipping (slightly less than 90 degrees)
     const maxPitch = Math.PI / 2 - 0.01;
@@ -83,6 +97,7 @@ export class FlightController {
 
   /**
    * Handle scroll wheel speed adjustment
+   * Touch devices can set speed multiplier via setSpeedMultiplier()
    */
   private handleSpeedAdjustment(): void {
     const scrollDelta = this.inputManager.getScrollDelta();
@@ -97,6 +112,15 @@ export class FlightController {
       const maxMultiplier = this.config.maxSpeed / this.config.baseSpeed;
       this.speedMultiplier = Math.max(minMultiplier, Math.min(maxMultiplier, this.speedMultiplier));
     }
+  }
+
+  /**
+   * Set speed multiplier (for touch controls)
+   */
+  setSpeedMultiplier(multiplier: number): void {
+    const minMultiplier = this.config.minSpeed / this.config.baseSpeed;
+    const maxMultiplier = this.config.maxSpeed / this.config.baseSpeed;
+    this.speedMultiplier = Math.max(minMultiplier, Math.min(maxMultiplier, multiplier));
   }
 
   /**
@@ -119,28 +143,42 @@ export class FlightController {
     // Build movement direction from input
     this.moveDirection.set(0, 0, 0);
 
-    // Forward/backward (W/S)
-    if (this.inputManager.isKeyPressed('w')) {
-      this.moveDirection.add(this.forward);
-    }
-    if (this.inputManager.isKeyPressed('s')) {
-      this.moveDirection.sub(this.forward);
-    }
-
-    // Strafe left/right (A/D)
-    if (this.inputManager.isKeyPressed('a')) {
-      this.moveDirection.sub(this.right);
-    }
-    if (this.inputManager.isKeyPressed('d')) {
-      this.moveDirection.add(this.right);
+    // Check if touch device and get touch movement
+    const isTouchDevice = this.inputManager.getIsTouchDevice();
+    let touchMove = { x: 0, y: 0 };
+    if (isTouchDevice) {
+      touchMove = this.inputManager.getMoveDirection();
     }
 
-    // Up/down (E for up, Q for down)
-    if (this.inputManager.isKeyPressed('e')) {
-      this.moveDirection.add(this.up);
+    // Forward/backward (W/S or touch joystick Y)
+    if (this.inputManager.isKeyPressed('w') || touchMove.y > 0) {
+      const amount = isTouchDevice ? Math.abs(touchMove.y) : 1.0;
+      this.moveDirection.addScaledVector(this.forward, amount);
     }
-    if (this.inputManager.isKeyPressed('q')) {
-      this.moveDirection.sub(this.up);
+    if (this.inputManager.isKeyPressed('s') || touchMove.y < 0) {
+      const amount = isTouchDevice ? Math.abs(touchMove.y) : 1.0;
+      this.moveDirection.addScaledVector(this.forward, -amount);
+    }
+
+    // Strafe left/right (A/D or touch joystick X)
+    if (this.inputManager.isKeyPressed('a') || touchMove.x < 0) {
+      const amount = isTouchDevice ? Math.abs(touchMove.x) : 1.0;
+      this.moveDirection.addScaledVector(this.right, -amount);
+    }
+    if (this.inputManager.isKeyPressed('d') || touchMove.x > 0) {
+      const amount = isTouchDevice ? Math.abs(touchMove.x) : 1.0;
+      this.moveDirection.addScaledVector(this.right, amount);
+    }
+
+    // Up/down (E for up, Q for down, or touch buttons)
+    const verticalInput = isTouchDevice ? this.inputManager.getVerticalInput() : 0;
+    if (this.inputManager.isKeyPressed('e') || verticalInput > 0) {
+      const amount = isTouchDevice ? Math.abs(verticalInput) : 1.0;
+      this.moveDirection.addScaledVector(this.up, amount);
+    }
+    if (this.inputManager.isKeyPressed('q') || verticalInput < 0) {
+      const amount = isTouchDevice ? Math.abs(verticalInput) : 1.0;
+      this.moveDirection.addScaledVector(this.up, -amount);
     }
 
     // Normalize if moving diagonally

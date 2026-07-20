@@ -1,13 +1,15 @@
 import { GUI } from 'lil-gui';
 import type { MoonMaterial, MoonMaterialParams } from '../shaders/MoonMaterial';
 import type { CelestialSystem } from '../environment/CelestialSystem';
+import { isTouchDevice } from '../utils/mobile';
 
 /**
  * UI Controller for MoonMaterial shader parameters and lighting
  * Provides organized GUI controls using lil-gui
+ * Hidden on mobile/touch devices
  */
 export class ShaderUIController {
-  private gui: GUI;
+  private gui: GUI | null = null;
   private material: MoonMaterial;
   private params: MoonMaterialParams;
   private celestialSystem: CelestialSystem | null = null;
@@ -23,6 +25,11 @@ export class ShaderUIController {
     // Sync initial planetRadius to celestial system
     if (this.celestialSystem) {
       this.celestialSystem.setPlanetRadius(this.params.planetRadius);
+    }
+    
+    // Skip GUI creation on touch devices
+    if (isTouchDevice()) {
+      return;
     }
     
     // Create GUI instance
@@ -45,6 +52,7 @@ export class ShaderUIController {
    * Setup toggles folder
    */
   private setupTogglesFolder(): void {
+    if (!this.gui) return;
     const folder = this.gui.addFolder('Toggles');
     
     folder.add(this.params, 'enableColorVariation')
@@ -61,6 +69,7 @@ export class ShaderUIController {
    * Setup color parameters folder
    */
   private setupColorsFolder(): void {
+    if (!this.gui) return;
     const folder = this.gui.addFolder('Colors');
     
     folder.add(this.params, 'colorVariationFrequency', 0.001, 0.02, 0.001)
@@ -89,6 +98,7 @@ export class ShaderUIController {
    * Setup curvature parameters folder
    */
   private setupCurvatureFolder(): void {
+    if (!this.gui) return;
     const folder = this.gui.addFolder('Curvature');
     
     folder.add(this.params, 'enableCurvature')
@@ -118,6 +128,7 @@ export class ShaderUIController {
    * Controls for distance-based texture blending and hex tiling
    */
   private setupTextureLodFolder(): void {
+    if (!this.gui) return;
     const folder = this.gui.addFolder('Texture LOD');
     
     folder.add(this.params, 'enableTexture')
@@ -172,7 +183,7 @@ export class ShaderUIController {
    * Controls for sun, earthshine, and spaceship lights
    */
   private setupLightingFolder(): void {
-    if (!this.celestialSystem) return;
+    if (!this.gui || !this.celestialSystem) return;
     
     const folder = this.gui.addFolder('Lighting');
     
@@ -251,6 +262,8 @@ export class ShaderUIController {
    * Dispose of the GUI
    */
   dispose(): void {
-    this.gui.destroy();
+    if (this.gui) {
+      this.gui.destroy();
+    }
   }
 }
