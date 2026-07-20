@@ -4,23 +4,58 @@ import type { CelestialSystem } from '../environment/CelestialSystem';
 import { isTouchDevice } from '../utils/mobile';
 
 /**
+ * Minimal surface of MoonMaterial needed for a live params view.
+ * Kept structural so the helper can be unit tested with a stub.
+ */
+export interface MaterialParamAccess {
+  getParam<K extends keyof MoonMaterialParams>(key: K): MoonMaterialParams[K];
+  setParam<K extends keyof MoonMaterialParams>(key: K, value: MoonMaterialParams[K]): void;
+}
+
+/**
+ * Create a live view over the material's params: every read delegates to
+ * `getParam` and every write to `setParam` (plus `onSet`).
+ *
+ * A plain `material.getParams()` snapshot would go stale as soon as anything
+ * else (e.g. console `setParam` calls via `window.debug`) touches the
+ * material — and worse, dragging a GUI slider would then write the stale
+ * snapshot values back. The live view keeps the GUI and the material in sync
+ * by construction.
+ */
+export function createLiveMaterialParams(
+  material: MaterialParamAccess,
+  onSet?: () => void
+): MoonMaterialParams {
+  return new Proxy({} as MoonMaterialParams, {
+    get: (_target, prop) => material.getParam(prop as keyof MoonMaterialParams),
+    set: (_target, prop, value) => {
+      material.setParam(
+        prop as keyof MoonMaterialParams,
+        value as MoonMaterialParams[keyof MoonMaterialParams]
+      );
+      onSet?.();
+      return true;
+    },
+    has: (_target, prop) => material.getParam(prop as keyof MoonMaterialParams) !== undefined,
+  });
+}
+
+/**
  * UI Controller for MoonMaterial shader parameters and lighting
  * Provides organized GUI controls using lil-gui
  * Hidden on mobile/touch devices
  */
 export class ShaderUIController {
   private gui: GUI | null = null;
-  private material: MoonMaterial;
   private params: MoonMaterialParams;
   private celestialSystem: CelestialSystem | null = null;
-  private requestRender: () => void;
 
   constructor(material: MoonMaterial, requestRender: () => void, celestialSystem?: CelestialSystem) {
-    this.material = material;
-    this.requestRender = requestRender;
     this.celestialSystem = celestialSystem ?? null;
-    // Get initial params - we'll use onChange handlers instead of Proxy
-    this.params = material.getParams();
+    // Live view over material params: GUI reads/writes always hit the
+    // material directly, so external setParam calls can't leave the GUI
+    // holding (and later re-applying) stale values
+    this.params = createLiveMaterialParams(material, requestRender);
     
     // Sync initial planetRadius to celestial system
     if (this.celestialSystem) {
@@ -55,12 +90,9 @@ export class ShaderUIController {
     if (!this.gui) return;
     const folder = this.gui.addFolder('Toggles');
     
-    folder.add(this.params, 'enableColorVariation')
-      .name('Enable Color Variation')
-      .onChange((value: boolean) => {
-        this.material.setParam('enableColorVariation', value);
-        this.requestRender();
-      });
+    // Note: writes go through the live params view, which already updates the
+    // material and requests a render — no onChange mirroring needed
+    folder.add(this.params, 'enableColorVariation').name('Enable Color Variation');
 
     folder.open();
   }
@@ -73,25 +105,13 @@ export class ShaderUIController {
     const folder = this.gui.addFolder('Colors');
     
     folder.add(this.params, 'colorVariationFrequency', 0.001, 0.02, 0.001)
-      .name('Variation Frequency')
-      .onChange((value: number) => {
-        this.material.setParam('colorVariationFrequency', value);
-        this.requestRender();
-      });
+      .name('Variation Frequency');
 
     folder.add(this.params, 'baseColorBlend', 0.0, 1.0, 0.1)
-      .name('Base Color Blend')
-      .onChange((value: number) => {
-        this.material.setParam('baseColorBlend', value);
-        this.requestRender();
-      });
+      .name('Base Color Blend');
 
     folder.add(this.params, 'brightnessBoost', 1.0, 5.0, 0.1)
-      .name('Brightness Boost')
-      .onChange((value: number) => {
-        this.material.setParam('brightnessBoost', value);
-        this.requestRender();
-      });
+      .name('Brightness Boost');
   }
 
   /**
@@ -102,22 +122,16 @@ export class ShaderUIController {
     const folder = this.gui.addFolder('Curvature');
     
     folder.add(this.params, 'enableCurvature')
-      .name('Enable Curvature')
-      .onChange((value: boolean) => {
-        this.material.setParam('enableCurvature', value);
-        this.requestRender();
-      });
+      .name('Enable Curvature');
 
     folder.add(this.params, 'planetRadius', 1000, 50000, 500)
       .name('Planet Radius (m)')
       .onChange((value: number) => {
-        // Update terrain shader
-        this.material.setParam('planetRadius', value);
-        // Sync to celestial system (sun, Earth, stars rotation)
+        // Material update is handled by the live params view; only the
+        // celestial system (sun, Earth, stars rotation) needs syncing here
         if (this.celestialSystem) {
           this.celestialSystem.setPlanetRadius(value);
         }
-        this.requestRender();
       });
     
     folder.open();
@@ -132,49 +146,25 @@ export class ShaderUIController {
     const folder = this.gui.addFolder('Texture LOD');
     
     folder.add(this.params, 'enableTexture')
-      .name('Enable Texture')
-      .onChange((value: boolean) => {
-        this.material.setParam('enableTexture', value);
-        this.requestRender();
-      });
-    
+      .name('Enable Texture');
+
     folder.add(this.params, 'enableHexTiling')
-      .name('Enable Hex Tiling')
-      .onChange((value: boolean) => {
-        this.material.setParam('enableHexTiling', value);
-        this.requestRender();
-      });
-    
+      .name('Enable Hex Tiling');
+
     // Hex tiling controls (0 = disabled for debugging)
     folder.add(this.params, 'hexPatchScale', 0, 20, 0.5)
-      .name('Hex Patch Scale')
-      .onChange((value: number) => {
-        this.material.setParam('hexPatchScale', value);
-        this.requestRender();
-      });
-    
+      .name('Hex Patch Scale');
+
     folder.add(this.params, 'hexContrastCorrection')
-      .name('Hex Contrast Correct')
-      .onChange((value: boolean) => {
-        this.material.setParam('hexContrastCorrection', value);
-        this.requestRender();
-      });
-    
+      .name('Hex Contrast Correct');
+
     // UV scale controls for height-based interpolation
     folder.add(this.params, 'nonHexUvScale', 0.05, 1.0, 0.01)
-      .name('Non-Hex UV Scale')
-      .onChange((value: number) => {
-        this.material.setParam('nonHexUvScale', value);
-        this.requestRender();
-      });
-    
+      .name('Non-Hex UV Scale');
+
     folder.add(this.params, 'hexUvScale', 0.05, 1.0, 0.01)
-      .name('Hex UV Scale')
-      .onChange((value: number) => {
-        this.material.setParam('hexUvScale', value);
-        this.requestRender();
-      });
-    
+      .name('Hex UV Scale');
+
     folder.open();
   }
 
@@ -256,6 +246,18 @@ export class ShaderUIController {
       });
     
     folder.open();
+  }
+
+  /**
+   * Re-read all controller values from their sources and update the display.
+   * Call after changing material params outside the GUI (e.g. console
+   * `setParam` via `window.debug`) so the sliders reflect the live values.
+   */
+  refreshDisplay(): void {
+    if (!this.gui) return;
+    for (const controller of this.gui.controllersRecursive()) {
+      controller.updateDisplay();
+    }
   }
 
   /**

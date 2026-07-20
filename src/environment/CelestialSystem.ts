@@ -213,10 +213,10 @@ export class CelestialSystem {
   private initializeEarth(): void {
     const geometry = new THREE.SphereGeometry(this.config.earthSize, 64, 64);
     this.earthMaterial = new EarthMaterial({
-      dayMapPath: `${import.meta.env.BASE_URL}textures/8k_earth_daymap.jpg`,
-      nightMapPath: `${import.meta.env.BASE_URL}textures/8k_earth_nightmap.jpg`,
-      cloudsMapPath: `${import.meta.env.BASE_URL}textures/8k_earth_clouds.jpg`,
-      specularMapPath: `${import.meta.env.BASE_URL}textures/8k_earth_specular_map.jpg`,
+      dayMapPath: `${import.meta.env.BASE_URL}textures/2k_earth_daymap.jpg`,
+      nightMapPath: `${import.meta.env.BASE_URL}textures/2k_earth_nightmap.jpg`,
+      cloudsMapPath: `${import.meta.env.BASE_URL}textures/2k_earth_clouds.jpg`,
+      specularMapPath: `${import.meta.env.BASE_URL}textures/2k_earth_specular_map.jpg`,
       onTextureLoad: this.config.onEarthTextureLoad,
       onTextureError: this.config.onEarthTextureError,
     });

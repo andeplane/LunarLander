@@ -364,27 +364,29 @@ interface DebugWindow extends Window {
     render: () => void;
   };
 }
+// Wrap a live material's setParam to auto-trigger re-render and keep the GUI
+// in sync. Idempotent: materials are wrapped at most once, so repeated
+// window.debug.get*Material() calls don't nest wrappers without bound.
+const debugWrappedMaterials = new WeakSet<MoonMaterial>();
+const wrapMaterialForDebug = (mat: MoonMaterial): MoonMaterial => {
+  if (debugWrappedMaterials.has(mat)) {
+    return mat;
+  }
+  debugWrappedMaterials.add(mat);
+  const originalSetParam = mat.setParam.bind(mat);
+  mat.setParam = <K extends keyof MoonMaterialParams>(key: K, value: MoonMaterialParams[K]) => {
+    originalSetParam(key, value);
+    engine.requestRender();
+    // Reflect console tweaks in the shader GUI sliders
+    shaderUI.refreshDisplay();
+  };
+  return mat;
+};
+
 (window as DebugWindow).debug = {
   engine,
-  getTerrainMaterial: () => {
-    const mat = terrainGenerator.getMaterial();
-    // Wrap setParam to auto-trigger re-render
-    const originalSetParam = mat.setParam.bind(mat);
-    mat.setParam = <K extends keyof MoonMaterialParams>(key: K, value: MoonMaterialParams[K]) => {
-      originalSetParam(key, value);
-      engine.requestRender();
-    };
-    return mat;
-  },
-  getRockMaterial: () => {
-    const mat = rockManager.getMaterial();
-    const originalSetParam = mat.setParam.bind(mat);
-    mat.setParam = <K extends keyof MoonMaterialParams>(key: K, value: MoonMaterialParams[K]) => {
-      originalSetParam(key, value);
-      engine.requestRender();
-    };
-    return mat;
-  },
+  getTerrainMaterial: () => wrapMaterialForDebug(terrainGenerator.getMaterial()),
+  getRockMaterial: () => wrapMaterialForDebug(rockManager.getMaterial()),
   setDebugMode: (mode: number) => {
     terrainGenerator.getMaterial().setParam('debugMode', mode);
     rockManager.getMaterial().setParam('debugMode', mode);

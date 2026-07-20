@@ -26,6 +26,51 @@ export function effectivePhysicsResolution(
 }
 
 /**
+ * Choose which built LOD level a chunk's physics collider should be sampled
+ * from.
+ *
+ * Every mesh at or above the physics cap produces a bit-identical downsampled
+ * heightfield (they all sample the same world grid points), so the coarsest
+ * such built level is preferred: neighboring chunks then agree exactly along
+ * shared edges even when their visual LODs differ, eliminating collider seams
+ * (balls catching or slipping through at chunk borders). Previously the
+ * collider tracked each chunk's *displayed* LOD, so a chunk showing a
+ * below-cap mesh got a coarser collider than its neighbor.
+ *
+ * When no built level meets the cap, the finest built level is the least-bad
+ * fallback (only reachable at high altitude where every retained LOD is
+ * coarse).
+ *
+ * @param builtLevels - LOD indices that currently have a built mesh
+ * @param lodResolutions - resolution (cells per axis) per LOD index, finest first
+ * @param cap - physics resolution cap (cells per axis)
+ * @returns the LOD index to sample from, or null when nothing is built
+ */
+export function selectPhysicsSourceLod(
+  builtLevels: Iterable<number>,
+  lodResolutions: readonly number[],
+  cap: number = PHYSICS_RESOLUTION_CAP
+): number | null {
+  let coarsestAtOrAboveCap: number | null = null;
+  let finest: number | null = null;
+
+  for (const lod of builtLevels) {
+    const resolution = lodResolutions[lod];
+    if (resolution === undefined) {
+      continue;
+    }
+    if (finest === null || lod < finest) {
+      finest = lod;
+    }
+    if (resolution >= cap && (coarsestAtOrAboveCap === null || lod > coarsestAtOrAboveCap)) {
+      coarsestAtOrAboveCap = lod;
+    }
+  }
+
+  return coarsestAtOrAboveCap ?? finest;
+}
+
+/**
  * Result of sampling a mesh into a Rapier heightfield.
  */
 export interface HeightfieldSample {

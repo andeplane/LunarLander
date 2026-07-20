@@ -154,6 +154,10 @@ export function getChunkWorldCenter(
  * @param gridZ - Chunk grid Z coordinate
  * @param chunkWidth - Width of each chunk
  * @param chunkDepth - Depth of each chunk
+ * @param terrainY - Approximate terrain height (world Y) near the camera.
+ *   Defaults to 0; without it, flying low over elevated terrain would measure
+ *   distance down to the Y=0 plane and bias LOD selection coarser exactly
+ *   where detail matters most.
  * @returns 3D distance in world units from camera to nearest point on chunk plane
  */
 export function getDistanceToChunk(
@@ -163,7 +167,8 @@ export function getDistanceToChunk(
   gridX: number,
   gridZ: number,
   chunkWidth: number,
-  chunkDepth: number
+  chunkDepth: number,
+  terrainY: number = 0
 ): number {
   // Calculate chunk bounds in world space
   // Chunks are CENTERED around their grid position, not starting at the corner
@@ -179,8 +184,8 @@ export function getDistanceToChunk(
   const nearestX = Math.max(minX, Math.min(maxX, pointX));
   const nearestZ = Math.max(minZ, Math.min(maxZ, pointZ));
   
-  // The projected point is on the chunk plane at Y=0 (terrain height)
-  const nearestY = 0;
+  // The projected point is on the chunk plane at the (approximate) terrain height
+  const nearestY = terrainY;
   
   // Calculate 3D distance from camera to the projected point on chunk plane
   const dx = pointX - nearestX;
