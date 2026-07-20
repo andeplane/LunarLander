@@ -11,11 +11,18 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { CurvedStandardMaterial } from '../shaders/CurvedStandardMaterial';
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
+import { clampSpawnY, isBallMoving, shouldDespawnBall } from './BallUtils';
 
 interface Ball {
   rigidBody: RAPIER.RigidBody;
   mesh: THREE.Mesh;
 }
+
+/**
+ * Samples the terrain height at a world (x, z) position.
+ * Returns null when the height is unknown (e.g. chunk not loaded).
+ */
+export type HeightSampler = (x: number, z: number) => number | null;
 
 export interface BallManagerConfig {
   ballRadius?: number;
@@ -24,6 +31,12 @@ export interface BallManagerConfig {
   restitution?: number;
   friction?: number;
   ballColor?: number;
+  /**
+   * Balls whose Y position drops below this altitude are despawned.
+   * Terrain colliders only exist near the camera, so a ball outside that
+   * window falls forever; despawning it lets rendering go idle again.
+   */
+  killY?: number;
 }
 
 const DEFAULT_CONFIG: Required<BallManagerConfig> = {
@@ -33,6 +46,7 @@ const DEFAULT_CONFIG: Required<BallManagerConfig> = {
   restitution: 0.7,
   friction: 0.3,
   ballColor: 0xff4444, // Red
+  killY: -50, // Safely below any generated terrain height
 };
 
 export class BallManager {
@@ -42,15 +56,18 @@ export class BallManager {
   private material: CurvedStandardMaterial;
   private geometry: THREE.SphereGeometry;
   private config: Required<BallManagerConfig>;
+  private heightSampler: HeightSampler | null;
 
   constructor(
     world: RAPIER.World,
     scene: THREE.Scene,
-    config?: BallManagerConfig
+    config?: BallManagerConfig,
+    heightSampler?: HeightSampler
   ) {
     this.world = world;
     this.scene = scene;
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.heightSampler = heightSampler ?? null;
 
     // Shared geometry for all balls (16 segments for decent sphere)
     this.geometry = new THREE.SphereGeometry(this.config.ballRadius, 16, 16);
@@ -78,6 +95,13 @@ export class BallManager {
     const spawnPos = camera.position.clone().add(
       forward.clone().multiplyScalar(spawnOffset)
     );
+
+    // Clamp spawn height so the ball never starts beneath the terrain
+    // surface (it would fall through the thin heightfield collider)
+    const terrainHeight = this.heightSampler
+      ? this.heightSampler(spawnPos.x, spawnPos.z)
+      : null;
+    spawnPos.y = clampSpawnY(spawnPos.y, terrainHeight, this.config.ballRadius);
 
     // Initial velocity: forward direction * shoot speed
     const velocity = forward.clone().multiplyScalar(this.config.shootSpeed);
@@ -150,32 +174,48 @@ export class BallManager {
    * CurvedStandardMaterial which applies curvature in the vertex shader,
    * so balls will visually match the curved terrain.
    * 
-   * @returns true if any balls are moving (velocity > threshold), false otherwise
+   * Balls that fall below the kill altitude (e.g. after leaving the
+   * terrain-collider window around the camera) are despawned so they cannot
+   * keep the simulation "moving" forever and defeat render-on-demand.
+   *
+   * @returns true if any balls are moving (or were just despawned and need
+   *          one more render to disappear), false otherwise
    */
   update(): boolean {
     if (this.balls.length === 0) return false;
-    
-    const VELOCITY_THRESHOLD = 0.01; // Minimum velocity to consider "moving" (m/s)
+
     let hasMovingBalls = false;
-    
-    for (const ball of this.balls) {
+    let despawnedBalls = false;
+
+    // Iterate backwards so despawning (splice) doesn't skip elements
+    for (let i = this.balls.length - 1; i >= 0; i--) {
+      const ball = this.balls[i];
+
       // Get position from physics body (flat world space)
       const pos = ball.rigidBody.translation();
+
+      // Despawn balls that fell below the kill altitude (nothing can
+      // catch them anymore — they would fall forever)
+      if (shouldDespawnBall(pos, this.config.killY)) {
+        this.removeBall(i);
+        despawnedBalls = true;
+        continue;
+      }
+
       ball.mesh.position.set(pos.x, pos.y, pos.z);
 
       // Get rotation from physics body
       const rot = ball.rigidBody.rotation();
       ball.mesh.quaternion.set(rot.x, rot.y, rot.z, rot.w);
-      
-      // Check if ball is moving (has significant velocity)
-      const vel = ball.rigidBody.linvel();
-      const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
-      if (speed > VELOCITY_THRESHOLD) {
+
+      // Check if ball is moving (linear or angular velocity above threshold)
+      if (isBallMoving(ball.rigidBody.linvel(), ball.rigidBody.angvel())) {
         hasMovingBalls = true;
       }
     }
-    
-    return hasMovingBalls;
+
+    // A despawn needs one more render so the removed mesh disappears
+    return hasMovingBalls || despawnedBalls;
   }
 
   /**
