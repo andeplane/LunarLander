@@ -151,11 +151,93 @@ describe(ChunkRequestQueue.name, () => {
       // Act
       customQueue.sort(cameraPos, cameraForward, nearestKeys);
 
-      // Assert - with 2 items, sort calls comparator once (2 calls to calculatePriority)
+      // Assert - priorities are precomputed once per request (2 items = 2 calls)
       expect(mockCalculator).toHaveBeenCalledTimes(2);
       // Each call includes gridKey, cameraPos, cameraForward, chunkConfig, nearestKeys, lodLevel, maxLodLevel
       expect(mockCalculator).toHaveBeenCalledWith('0,0', cameraPos, cameraForward, chunkConfig, nearestKeys, 0, undefined);
       expect(mockCalculator).toHaveBeenCalledWith('1,1', cameraPos, cameraForward, chunkConfig, nearestKeys, 0, undefined);
+    });
+
+    it('should compute priority exactly once per request (not per comparison)', () => {
+      const mockCalculator = vi.fn(() => 0);
+      const customQueue = new ChunkRequestQueue(chunkConfig, {
+        calculatePriority: mockCalculator,
+      });
+      for (let i = 0; i < 8; i++) {
+        customQueue.add(createMockRequest(`${i},0`, 0));
+      }
+
+      customQueue.sort(new Vector3(0, 0, 0), new Vector3(0, 0, 1), new Set());
+
+      // O(n) priority computation: 8 items = exactly 8 calls
+      expect(mockCalculator).toHaveBeenCalledTimes(8);
+    });
+
+    it('should skip re-sorting when camera has not moved and no requests were added', () => {
+      const mockCalculator = vi.fn(() => 0);
+      const customQueue = new ChunkRequestQueue(chunkConfig, {
+        calculatePriority: mockCalculator,
+      });
+      customQueue.add(createMockRequest('0,0', 0));
+      customQueue.add(createMockRequest('1,1', 0));
+
+      const cameraPos = new Vector3(0, 0, 0);
+      const cameraForward = new Vector3(0, 0, 1);
+
+      customQueue.sort(cameraPos, cameraForward, new Set());
+      expect(mockCalculator).toHaveBeenCalledTimes(2);
+
+      // Same camera, no new requests - no priority recomputation
+      customQueue.sort(cameraPos, cameraForward, new Set());
+      customQueue.sort(cameraPos, cameraForward, new Set());
+      expect(mockCalculator).toHaveBeenCalledTimes(2);
+    });
+
+    it('should re-sort when the camera moves', () => {
+      const mockCalculator = vi.fn(() => 0);
+      const customQueue = new ChunkRequestQueue(chunkConfig, {
+        calculatePriority: mockCalculator,
+      });
+      customQueue.add(createMockRequest('0,0', 0));
+
+      customQueue.sort(new Vector3(0, 0, 0), new Vector3(0, 0, 1), new Set());
+      expect(mockCalculator).toHaveBeenCalledTimes(1);
+
+      // Camera moved - priorities must be recomputed
+      customQueue.sort(new Vector3(10, 0, 0), new Vector3(0, 0, 1), new Set());
+      expect(mockCalculator).toHaveBeenCalledTimes(2);
+    });
+
+    it('should re-sort when the camera rotates', () => {
+      const mockCalculator = vi.fn(() => 0);
+      const customQueue = new ChunkRequestQueue(chunkConfig, {
+        calculatePriority: mockCalculator,
+      });
+      customQueue.add(createMockRequest('0,0', 0));
+
+      const cameraPos = new Vector3(0, 0, 0);
+      customQueue.sort(cameraPos, new Vector3(0, 0, 1), new Set());
+      expect(mockCalculator).toHaveBeenCalledTimes(1);
+
+      // Camera rotated in place - priorities must be recomputed
+      customQueue.sort(cameraPos, new Vector3(1, 0, 0), new Set());
+      expect(mockCalculator).toHaveBeenCalledTimes(2);
+    });
+
+    it('should re-sort after a new request is added even if camera is unchanged', () => {
+      const cameraPos = new Vector3(0, 0, 0);
+      const cameraForward = new Vector3(0, 0, 1);
+
+      queue.add(createMockRequest('2,0', 0)); // Far
+      queue.sort(cameraPos, cameraForward, new Set());
+
+      // Add a closer chunk after sorting, without moving the camera
+      queue.add(createMockRequest('0,0', 0)); // Close
+      queue.sort(cameraPos, cameraForward, new Set());
+
+      // The newly added closer chunk must be sorted to the front
+      expect(queue.shift()?.gridKey).toBe('0,0');
+      expect(queue.shift()?.gridKey).toBe('2,0');
     });
   });
 

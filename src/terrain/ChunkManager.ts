@@ -70,6 +70,8 @@ export class ChunkManager {
   private baseTerrainArgs: Omit<TerrainArgs, 'resolution' | 'posX' | 'posZ'>;
   private camera: Camera | null = null;
   private cameraForward: Vector3 = new Vector3();
+  // Reusable vector for rock bounding sphere world-space center (avoids per-rock allocation)
+  private readonly rockWorldCenter: Vector3 = new Vector3();
   private debugMode: boolean = false;
   private collisionLodLevel: number = 0;
   private requestRender: () => void;
@@ -656,9 +658,10 @@ export class ChunkManager {
             continue;
           }
 
-          // Transform bounding sphere center to world space
-          const sphereCenterLocal = rockMesh.boundingSphere.center;
-          const worldCenter = sphereCenterLocal.clone().applyMatrix4(rockMesh.matrixWorld);
+          // Transform bounding sphere center to world space (reusable vector)
+          const worldCenter = this.rockWorldCenter
+            .copy(rockMesh.boundingSphere.center)
+            .applyMatrix4(rockMesh.matrixWorld);
           
           // Calculate distance from camera to bounding sphere center in world space
           const dx = cameraPosition.x - worldCenter.x;

@@ -57,12 +57,9 @@ export class Engine {
   private currentFPS: number = 0;
   private lastTriangleCount: number | null = null; // null means not yet measured
   private lastDrawCalls: number | null = null; // null means not yet measured
-  private statsUpdateCounter: number = 0;
-  private readonly STATS_UPDATE_INTERVAL: number = 30; // Update stats every 30 frames
-  
-  // Offscreen render target for stats collection (prevents visual glitches)
-  private statsRenderTarget: THREE.WebGLRenderTarget;
-  
+  private lastStatsHTML: string = ''; // Last rendered stats markup (skip DOM writes when unchanged)
+  private readonly STATS_UPDATE_INTERVAL_S: number = 0.5; // Update stats display every 500ms
+
   // Camera state tracking for render optimization
   private previousCameraPosition: THREE.Vector3 = new THREE.Vector3();
   private previousCameraQuaternion: THREE.Quaternion = new THREE.Quaternion();
@@ -113,15 +110,13 @@ export class Engine {
     this.outputPass = new OutputPass();
     this.composer.addPass(this.outputPass);
 
-    // Initialize offscreen render target for stats collection
-    // This prevents visual glitches when collecting stats
-    this.statsRenderTarget = new THREE.WebGLRenderTarget(
-      window.innerWidth,
-      window.innerHeight
-    );
+    // Render stats (draw calls / triangles) are read from renderer.info right
+    // after composer.render(). autoReset must be off because the composer
+    // issues multiple internal render calls per frame; we reset manually.
+    this.renderer.info.autoReset = false;
 
-    // Handle window resize
-    window.addEventListener('resize', () => this.handleResize());
+    // Handle window resize (removable in dispose)
+    window.addEventListener('resize', this.handleResize);
     
     // Create stats display
     this.createStatsDisplay();
@@ -155,19 +150,24 @@ export class Engine {
   }
 
   /**
-   * Update the stats display
+   * Update the stats display.
+   * Throttled to the FPS-counter cadence (500ms): the value gathering
+   * (including the getHeightAt terrain raycast) and the innerHTML rebuild
+   * only run when the display is due for a refresh, and the DOM is only
+   * touched when the rendered markup actually changed.
    */
   private updateStatsDisplay(deltaTime: number): void {
     if (!this.statsElement) return;
-    
-    // Update FPS counter (every 500ms)
+
+    // Accumulate FPS counter; skip all display work between refreshes
     this.fpsUpdateTime += deltaTime;
-    if (this.fpsUpdateTime >= 0.5) {
-      this.currentFPS = Math.round(this.frameCount / this.fpsUpdateTime);
-      this.frameCount = 0;
-      this.fpsUpdateTime = 0;
+    if (this.fpsUpdateTime < this.STATS_UPDATE_INTERVAL_S) {
+      return;
     }
-    
+    this.currentFPS = Math.round(this.frameCount / this.fpsUpdateTime);
+    this.frameCount = 0;
+    this.fpsUpdateTime = 0;
+
     const chunks = this.chunkManager?.getActiveChunkCount() ?? 0;
     const buildQueue = this.chunkManager?.getBuildQueueLength() ?? 0;
     const busyWorkers = this.chunkManager?.getActiveWorkerCount() ?? 0;
@@ -190,7 +190,7 @@ export class Engine {
     const phi = Math.atan2(cameraPos.z, cameraPos.x);
     const phiDeg = (phi * 180 / Math.PI).toFixed(1);
     
-    this.statsElement.innerHTML = `
+    const statsHTML = `
       <strong>Camera Position</strong><br>
       X: ${cameraPos.x.toFixed(1)}m<br>
       Y: ${cameraPos.y.toFixed(1)}m<br>
@@ -218,6 +218,12 @@ export class Engine {
       Terrain Y: ${terrainH}m<br>
       AGL: ${agl}m
     `;
+
+    // Only touch the DOM when the content actually changed
+    if (statsHTML !== this.lastStatsHTML) {
+      this.statsElement.innerHTML = statsHTML;
+      this.lastStatsHTML = statsHTML;
+    }
   }
 
   /**
@@ -456,37 +462,20 @@ export class Engine {
       return;
     }
     
-    // Update stats periodically (every N frames) to avoid double rendering every frame
-    // EffectComposer uses render targets which don't update renderer.info correctly,
-    // so we need to render directly occasionally to get accurate stats
-    this.statsUpdateCounter++;
-    if (this.statsUpdateCounter >= this.STATS_UPDATE_INTERVAL) {
-      this.statsUpdateCounter = 0;
-      
-      // Reset renderer info and render to offscreen target to get accurate stats
-      // This prevents visual glitches since we're not rendering to the main canvas
-      this.renderer.info.reset();
-      
-      // Save current render target
-      const previousRenderTarget = this.renderer.getRenderTarget();
-      
-      // Render to offscreen target for stats collection
-      this.renderer.setRenderTarget(this.statsRenderTarget);
-      this.renderer.render(this.scene, this.camera);
-      
-      // Restore previous render target (null = main canvas)
-      this.renderer.setRenderTarget(previousRenderTarget);
-      
-      // Read render stats after offscreen rendering
-      // In wireframe mode, Three.js counts lines instead of triangles.
-      // We add render.lines / 3 to account for triangles rendered as wireframes.
-      this.lastDrawCalls = this.renderer.info.render.calls;
-      this.lastTriangleCount = Math.round(this.renderer.info.render.triangles + this.renderer.info.render.lines / 3);
-    }
-    
-    // Render with post-processing composer for final output
+    // Render with post-processing composer for final output.
+    // renderer.info.autoReset is disabled (see constructor), so we reset
+    // manually and read the accumulated stats right after composer.render().
+    // This avoids the extra full scene render that was previously done into
+    // an offscreen target just to collect stats.
+    this.renderer.info.reset();
     this.composer.render(this.deltaTime);
-    
+
+    // In wireframe mode, Three.js counts lines instead of triangles.
+    // We add render.lines / 3 to account for triangles rendered as wireframes.
+    this.lastDrawCalls = this.renderer.info.render.calls;
+    this.lastTriangleCount = Math.round(this.renderer.info.render.triangles + this.renderer.info.render.lines / 3);
+
+
     // Update previous camera state after rendering
     this.previousCameraPosition.copy(this.camera.position);
     this.previousCameraQuaternion.copy(this.camera.quaternion);
@@ -494,26 +483,24 @@ export class Engine {
   }
 
   /**
-   * Handle window resize
+   * Handle window resize.
+   * Arrow function property so the listener can be removed in dispose().
    */
-  private handleResize(): void {
+  private handleResize = (): void => {
     const width = window.innerWidth;
     const height = window.innerHeight;
-    
+
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
     this.composer.setSize(width, height);
-    
+
     // Update bloom pass resolution
     this.bloomPass.resolution.set(width, height);
-    
-    // Update stats render target size
-    this.statsRenderTarget.setSize(width, height);
-    
+
     // Force re-render after resize
     this.needsRender = true;
-  }
+  };
 
   /**
    * Enable or disable post-processing effects (bloom, tone mapping, etc.)
@@ -529,6 +516,7 @@ export class Engine {
    */
   dispose(): void {
     this.stop();
+    window.removeEventListener('resize', this.handleResize);
     if (this.physicsWorld) {
       this.physicsWorld.dispose();
     }
@@ -541,7 +529,8 @@ export class Engine {
     if (this.statsElement) {
       this.statsElement.remove();
     }
-    this.statsRenderTarget.dispose();
+    this.bloomPass.dispose();
+    this.outputPass.dispose();
     this.composer.dispose();
     this.renderer.dispose();
   }

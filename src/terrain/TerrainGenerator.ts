@@ -22,6 +22,9 @@ export class TerrainGenerator {
   private material: MoonMaterial;
   private config: TerrainGeneratorConfig;
   private raycaster: Raycaster = new Raycaster();
+  // Reusable ray vectors for raycastHeight (avoids per-query allocations)
+  private readonly rayOrigin: Vector3 = new Vector3();
+  private readonly rayDirection: Vector3 = new Vector3(0, -1, 0);
 
   // Track original indices for edge stitching restoration
   // Key: "gridKey:lodLevel"
@@ -224,13 +227,17 @@ export class TerrainGenerator {
    * Raycast to find terrain height at a given world position
    */
   raycastHeight(x: number, z: number, mesh: Mesh): number | null {
-    // Ensure world matrix is up to date for accurate raycasting
-    mesh.updateMatrixWorld(true);
+    // Ensure world matrix is up to date for accurate raycasting.
+    // Terrain meshes are static once placed, so this only needs to run the
+    // first time a given mesh is queried (avoids per-query matrix updates).
+    if (mesh.userData.raycastMatrixWorldReady !== true) {
+      mesh.updateMatrixWorld(true);
+      mesh.userData.raycastMatrixWorldReady = true;
+    }
 
-    // Start ray far above terrain
-    const rayOrigin = new Vector3(x, 10000, z);
-    const rayDirection = new Vector3(0, -1, 0);
-    this.raycaster.set(rayOrigin, rayDirection);
+    // Start ray far above terrain (reusable vectors; Raycaster.set copies them)
+    this.rayOrigin.set(x, 10000, z);
+    this.raycaster.set(this.rayOrigin, this.rayDirection);
 
     const intersects = this.raycaster.intersectObject(mesh, false);
     if (intersects.length > 0) {

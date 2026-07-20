@@ -37,6 +37,10 @@ export class FlightController {
   private readonly right: THREE.Vector3 = new THREE.Vector3();
   private readonly up: THREE.Vector3 = new THREE.Vector3(0, 1, 0);
   private readonly targetPosition: THREE.Vector3 = new THREE.Vector3();
+  private readonly targetVelocity: THREE.Vector3 = new THREE.Vector3();
+
+  // Reusable Euler to avoid per-frame allocations in applyTransform
+  private readonly rotationEuler: THREE.Euler = new THREE.Euler(0, 0, 0, 'YXZ');
 
   constructor(
     camera: THREE.PerspectiveCamera, 
@@ -220,18 +224,16 @@ export class FlightController {
     }
 
     // Split movement into horizontal and vertical components to apply scaling separately
-    const targetVelocity = new THREE.Vector3();
-    
-    // Horizontal component (X, Z) - remains at base speed
-    targetVelocity.x = this.moveDirection.x * baseTargetSpeed;
-    targetVelocity.z = this.moveDirection.z * baseTargetSpeed;
-    
-    // Vertical component (Y) - scaled by ySpeedFactor
-    targetVelocity.y = this.moveDirection.y * baseTargetSpeed * ySpeedFactor;
+    // (reusable vector, avoids per-frame allocation)
+    this.targetVelocity.set(
+      this.moveDirection.x * baseTargetSpeed, // Horizontal X - remains at base speed
+      this.moveDirection.y * baseTargetSpeed * ySpeedFactor, // Vertical Y - scaled by ySpeedFactor
+      this.moveDirection.z * baseTargetSpeed // Horizontal Z - remains at base speed
+    );
 
     // Smooth acceleration/deceleration using exponential decay
     const smoothing = 1.0 - Math.exp(-this.config.acceleration * deltaTime);
-    this.velocity.lerp(targetVelocity, smoothing);
+    this.velocity.lerp(this.targetVelocity, smoothing);
 
     // Predict next position
     this.targetPosition.copy(this.camera.position);
@@ -275,9 +277,9 @@ export class FlightController {
   private applyTransform(): void {
     // Apply rotation using YXZ order (yaw, pitch, roll)
     // This prevents gimbal lock and gives intuitive FPS-style controls
-    this.camera.quaternion.setFromEuler(
-      new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ')
-    );
+    // (reusable Euler, avoids per-frame allocation)
+    this.rotationEuler.set(this.pitch, this.yaw, 0);
+    this.camera.quaternion.setFromEuler(this.rotationEuler);
   }
 
   /**
