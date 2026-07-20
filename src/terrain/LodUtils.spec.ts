@@ -211,6 +211,32 @@ describe(getDistanceToChunk.name, () => {
     const distance = getDistanceToChunk(1, 5, 1, 0, 0, chunkWidth, chunkDepth);
     expect(distance).toBe(5);
   });
+
+  it('measures altitude above the terrain plane when terrainY is provided', () => {
+    // Flying 50 m above elevated terrain at height 100: distance should be
+    // the 50 m altitude AGL, not the 150 m down to the Y=0 plane
+    const distance = getDistanceToChunk(0, 150, 0, 0, 0, chunkWidth, chunkDepth, 100);
+    expect(distance).toBe(50);
+  });
+
+  it('uses terrainY for the vertical term of edge distances too', () => {
+    // Point at (0, 110, 50) outside on Z, terrain at height 100
+    // Projects to (0, 100, 25): distance = sqrt(10^2 + 25^2)
+    const distance = getDistanceToChunk(0, 110, 50, 0, 0, chunkWidth, chunkDepth, 100);
+    expect(distance).toBeCloseTo(Math.sqrt(100 + 625), 5);
+  });
+
+  it('defaults terrainY to 0 (previous behavior)', () => {
+    expect(getDistanceToChunk(0, 50, 0, 0, 0, chunkWidth, chunkDepth)).toBe(
+      getDistanceToChunk(0, 50, 0, 0, 0, chunkWidth, chunkDepth, 0)
+    );
+  });
+
+  it('handles terrain above the camera (flying below a ridge line)', () => {
+    // Camera at Y=20, terrain plane at 100 -> vertical distance 80
+    const distance = getDistanceToChunk(0, 20, 0, 0, 0, chunkWidth, chunkDepth, 100);
+    expect(distance).toBe(80);
+  });
 });
 
 // ============================================================================

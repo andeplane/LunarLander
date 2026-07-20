@@ -3,6 +3,7 @@ import {
   PHYSICS_RESOLUTION_CAP,
   effectivePhysicsResolution,
   sampleHeightfield,
+  selectPhysicsSourceLod,
   type HeightfieldSample,
 } from './HeightfieldUtils';
 
@@ -60,6 +61,52 @@ describe('effectivePhysicsResolution', () => {
 
   it('supports a custom cap', () => {
     expect(effectivePhysicsResolution(64, 16)).toBe(16);
+  });
+});
+
+describe(selectPhysicsSourceLod.name, () => {
+  // Matches DEFAULT_LOD_LEVELS: finest first
+  const lodResolutions = [1024, 512, 256, 128, 64, 32, 16, 8, 4];
+
+  it('prefers the coarsest built level at or above the cap', () => {
+    // Levels 0..3 (1024..128) all meet the 128 cap; 3 is the coarsest
+    expect(selectPhysicsSourceLod([0, 1, 2, 3, 5, 8], lodResolutions)).toBe(3);
+  });
+
+  it('yields the same source class for chunks displaying different LODs', () => {
+    // Two neighboring chunks with different visual LODs but each having some
+    // mesh at/above the cap: both colliders sample a >=cap mesh, which the
+    // sampling invariant makes bit-identical along the shared edge
+    const chunkA = selectPhysicsSourceLod([0, 1, 5, 8], lodResolutions);
+    const chunkB = selectPhysicsSourceLod([2, 3, 5, 8], lodResolutions);
+    expect(chunkA).not.toBeNull();
+    expect(chunkB).not.toBeNull();
+    if (chunkA === null || chunkB === null) return;
+    expect(lodResolutions[chunkA]).toBeGreaterThanOrEqual(PHYSICS_RESOLUTION_CAP);
+    expect(lodResolutions[chunkB]).toBeGreaterThanOrEqual(PHYSICS_RESOLUTION_CAP);
+  });
+
+  it('falls back to the finest built level when nothing meets the cap', () => {
+    expect(selectPhysicsSourceLod([5, 6, 8], lodResolutions)).toBe(5);
+  });
+
+  it('returns null when nothing is built', () => {
+    expect(selectPhysicsSourceLod([], lodResolutions)).toBeNull();
+  });
+
+  it('ignores levels with no known resolution', () => {
+    expect(selectPhysicsSourceLod([42], lodResolutions)).toBeNull();
+  });
+
+  it('is order-independent over the built set', () => {
+    expect(selectPhysicsSourceLod([8, 3, 0], lodResolutions)).toBe(
+      selectPhysicsSourceLod([0, 3, 8], lodResolutions)
+    );
+  });
+
+  it('supports a custom cap', () => {
+    // With a cap of 32, level 5 (res 32) is the coarsest that meets it
+    expect(selectPhysicsSourceLod([2, 4, 5, 6], lodResolutions, 32)).toBe(5);
   });
 });
 

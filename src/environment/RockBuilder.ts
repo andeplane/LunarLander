@@ -60,6 +60,21 @@ export class RockBuilder {
   // Reusable temp vectors (avoid GC pressure in hot loops)
   private static readonly _v1 = new Vector3();
 
+  /**
+   * Deterministic restart directions for power iteration, tried in order when
+   * the iterated vector collapses to zero (initial guess orthogonal to the
+   * dominant eigenvector). Using Math.random() here would be the only
+   * non-seeded step in an otherwise fully deterministic rock pipeline and
+   * would make rock orientations differ between sessions.
+   * Three linearly independent axes plus a diagonal guarantee a productive
+   * restart for any non-degenerate tensor.
+   */
+  private static readonly POWER_ITERATION_RESTARTS: readonly Vector3[] = [
+    new Vector3(0, 1, 0),
+    new Vector3(0, 0, 1),
+    new Vector3(1, 1, 1).normalize(),
+  ];
+
 
   /**
    * Project point p onto plane defined by normal n and point r0.
@@ -476,7 +491,8 @@ export class RockBuilder {
     
     const v = new Vector3(1, 0, 0); // Initial guess
     const temp = new Vector3();
-    
+    let restartCount = 0;
+
     // Power iteration: v = (A * v) / ||A * v||
     // Converges to the eigenvector with largest eigenvalue
     for (let iter = 0; iter < 20; iter++) {
@@ -491,8 +507,11 @@ export class RockBuilder {
       // Normalize
       const len = temp.length();
       if (len < 1e-6) {
-        // If vector becomes zero, restart with random direction
-        v.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+        // If vector becomes zero, restart with the next deterministic
+        // direction (never Math.random() — rocks must be reproducible)
+        const restarts = RockBuilder.POWER_ITERATION_RESTARTS;
+        v.copy(restarts[restartCount % restarts.length]);
+        restartCount++;
         continue;
       }
       

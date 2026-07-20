@@ -12,7 +12,11 @@ import type { Vector3, Mesh as ThreeMesh } from 'three';
 import type { ChunkManager } from '../terrain/ChunkManager';
 import { parseGridKey } from '../terrain/LodUtils';
 import type { Chunk } from '../terrain/Chunk';
-import { effectivePhysicsResolution, sampleHeightfield } from './HeightfieldUtils';
+import {
+  effectivePhysicsResolution,
+  sampleHeightfield,
+  selectPhysicsSourceLod,
+} from './HeightfieldUtils';
 
 /**
  * Configuration for terrain collider management
@@ -30,6 +34,7 @@ interface ChunkCollider {
   /** Fixed rigid body the collider is attached to (must be removed with it) */
   rigidBody: RAPIER.RigidBody;
   gridKey: string;
+  /** LOD level of the source mesh the heightfield was sampled from */
   lodLevel: number;
   /** Effective heightfield resolution (cells) used for this collider */
   physicsResolution: number;
@@ -74,17 +79,21 @@ export class TerrainColliderManager {
 
     // Create/update colliders for nearby chunks
     for (const chunk of nearbyChunks) {
-      const mesh = chunk.getTerrainMesh(chunk.currentLodLevel);
-      if (!mesh) {
+      // Sample from the coarsest built mesh at/above the physics cap (all such
+      // meshes produce bit-identical heightfields), NOT the displayed LOD:
+      // neighbors then agree exactly along shared edges even when their visual
+      // LODs differ, so balls can't catch or fall at chunk borders.
+      const sourceLod = selectPhysicsSourceLod(chunk.builtLevels, this.lodLevels);
+      const mesh = sourceLod !== null ? chunk.getTerrainMesh(sourceLod) : null;
+      if (sourceLod === null || !mesh) {
         continue; // Chunk not ready yet
       }
 
       const existing = this.colliders.get(chunk.gridKey);
       // The collider downsamples the mesh to a capped physics resolution, so a
-      // LOD change only requires a rebuild if the effective resolution differs
-      // (e.g. 1024 <-> 512 flips both sample the same 128-cell heightfield).
-      const meshResolution =
-        this.lodLevels[chunk.currentLodLevel] ?? this.lodLevels[0];
+      // source change only requires a rebuild if the effective resolution
+      // differs (e.g. 1024 <-> 512 both sample the same 128-cell heightfield).
+      const meshResolution = this.lodLevels[sourceLod] ?? this.lodLevels[0];
       const physicsResolution = effectivePhysicsResolution(meshResolution);
       const needsRebuild =
         !existing || existing.physicsResolution !== physicsResolution;
@@ -92,7 +101,7 @@ export class TerrainColliderManager {
       if (needsRebuild) {
         // Build-then-swap: only replace the old collider once the new one is
         // valid, so a failed rebuild never leaves the chunk colliderless
-        const collider = this.createHeightfieldCollider(chunk, mesh);
+        const collider = this.createHeightfieldCollider(chunk, mesh, sourceLod);
         if (collider) {
           if (existing) {
             this.removeChunkCollider(existing);
@@ -101,9 +110,9 @@ export class TerrainColliderManager {
         }
         // On failure the previous collider (if any) is kept so balls don't
         // fall through; the rebuild retries once the mesh becomes valid.
-      } else if (existing.lodLevel !== chunk.currentLodLevel) {
-        // Same effective heightfield, just track the new LOD level
-        existing.lodLevel = chunk.currentLodLevel;
+      } else if (existing.lodLevel !== sourceLod) {
+        // Same effective heightfield, just track the new source LOD level
+        existing.lodLevel = sourceLod;
       }
     }
 
@@ -161,7 +170,8 @@ export class TerrainColliderManager {
    */
   private createHeightfieldCollider(
     chunk: Chunk,
-    mesh: ThreeMesh
+    mesh: ThreeMesh,
+    sourceLod: number
   ): ChunkCollider | null {
     const geometry = mesh.geometry;
     const positions = geometry.attributes.position;
@@ -170,8 +180,8 @@ export class TerrainColliderManager {
       return null;
     }
 
-    // Get mesh resolution from chunk's LOD level
-    const lodLevel = chunk.currentLodLevel;
+    // Get mesh resolution from the source LOD level the mesh was built at
+    const lodLevel = sourceLod;
     const meshResolution = this.lodLevels[lodLevel] ?? this.lodLevels[0];
     const meshVertexCount = meshResolution + 1;
     const meshTotalVertices = meshVertexCount * meshVertexCount;

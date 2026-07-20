@@ -74,6 +74,8 @@ export class ChunkManager {
   private readonly rockWorldCenter: Vector3 = new Vector3();
   private debugMode: boolean = false;
   private collisionLodLevel: number = 0;
+  /** Last known terrain height (world Y) under the camera, for LOD distances */
+  private cameraTerrainY: number = 0;
   private requestRender: () => void;
 
   constructor(
@@ -495,7 +497,8 @@ export class ChunkManager {
       gridX,
       gridZ,
       this.config.chunkWidth,
-      this.config.chunkDepth
+      this.config.chunkDepth,
+      this.cameraTerrainY
     );
 
     return getLodLevelForScreenSize(
@@ -514,6 +517,15 @@ export class ChunkManager {
   update(cameraPosition: Vector3): void {
     if (this.camera) {
       this.camera.getWorldDirection(this.cameraForward);
+    }
+
+    // Track the terrain height under the camera so LOD distances measure
+    // altitude above the terrain instead of distance to the Y=0 plane
+    // (which would bias LOD coarser when flying low over elevated terrain).
+    // Keeps the last known height while the chunk under the camera loads.
+    const terrainY = this.getHeightAt(cameraPosition.x, cameraPosition.z);
+    if (terrainY !== null) {
+      this.cameraTerrainY = terrainY;
     }
 
     const camPosInGrid = cameraPosition.clone();
@@ -895,7 +907,8 @@ export class ChunkManager {
         gridX,
         gridZ,
         this.config.chunkWidth,
-        this.config.chunkDepth
+        this.config.chunkDepth,
+        this.cameraTerrainY
       );
 
       const desiredLod = this.getLodLevelForChunkOptimized(

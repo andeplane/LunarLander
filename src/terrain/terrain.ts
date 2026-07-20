@@ -47,6 +47,41 @@ export function terrainDisplacementStrength(smoothLowerPlanes: number): number {
 }
 
 /**
+ * Dimensions of the extended (skirted) chunk grid used for normal computation.
+ * The mesh is generated with a one-vertex skirt on each edge so edge vertices
+ * have full face neighborhoods, then the skirt is stripped.
+ */
+export interface SkirtedGridDimensions {
+  /** Segments per axis including the skirt (+1 vertex per edge) */
+  extendedResolution: number;
+  extendedWidth: number;
+  extendedDepth: number;
+}
+
+/**
+ * Compute the extended grid dimensions for a one-vertex skirt on each edge.
+ *
+ * Vertex spacing is derived per axis (width/resolution and depth/resolution
+ * independently) so the interior vertices of the extended grid land exactly on
+ * the base grid even for non-square chunks — deriving both extensions from the
+ * width alone would shift every interior vertex whenever width != depth.
+ */
+export function computeSkirtedGridDimensions(
+  width: number,
+  depth: number,
+  resolution: number
+): SkirtedGridDimensions {
+  const extendedResolution = resolution + 2; // +2 segments = +1 vertex per edge
+  const vertexSpacingX = width / resolution;
+  const vertexSpacingZ = depth / resolution;
+  return {
+    extendedResolution,
+    extendedWidth: width + 2 * vertexSpacingX,
+    extendedDepth: depth + 2 * vertexSpacingZ,
+  };
+}
+
+/**
  * Creates a terrain height evaluation function that can be used for both
  * full mesh generation and single-point sampling.
  *

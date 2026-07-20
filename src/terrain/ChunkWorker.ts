@@ -1,4 +1,4 @@
-import { generateTerrain, createTerrainEvaluator, terrainDisplacementStrength, type TerrainArgs } from './terrain';
+import { generateTerrain, createTerrainEvaluator, terrainDisplacementStrength, computeSkirtedGridDimensions, type TerrainArgs } from './terrain';
 import { 
   generateCratersForRegion, 
   getCraterHeightModAt, 
@@ -692,11 +692,13 @@ self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
 
   // Generate extended terrain geometry (with +1 vertex skirt on each edge)
   // This allows edge vertices to have full face neighborhoods for correct normals
-  const extendedResolution = terrainArgs.resolution + 2; // +2 segments = +1 vertex per edge
-  const vertexSpacing = terrainArgs.width / terrainArgs.resolution;
-  const extendedWidth = terrainArgs.width + 2 * vertexSpacing;
-  const extendedDepth = terrainArgs.depth + 2 * vertexSpacing;
-  
+  // (spacing is per-axis so non-square chunks keep seamless edges)
+  const { extendedResolution, extendedWidth, extendedDepth } = computeSkirtedGridDimensions(
+    terrainArgs.width,
+    terrainArgs.depth,
+    terrainArgs.resolution
+  );
+
   // Create extended terrain args
   // The terrain evaluator will automatically sample correct positions for extended vertices
   const extendedTerrainArgs: TerrainArgs = {
