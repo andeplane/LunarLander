@@ -14,7 +14,7 @@ import {
   projectToScreenSpace,
   type NeighborLods
 } from './LodUtils';
-import { ChunkRequestQueue } from './ChunkRequestQueue';
+import { ChunkRequestQueue, type QueuedRequest } from './ChunkRequestQueue';
 
 /**
  * Configuration for chunk management
@@ -218,11 +218,13 @@ export class ChunkManager {
     const requestKey = `${gridKey}:${lodLevel}`;
     this.inFlight.delete(requestKey);
 
-    // Get or create chunk
-    let chunk = this.chunks.get(gridKey);
+    // Ignore results for chunks that are no longer wanted (pruned while the
+    // build was in flight). Re-creating them here would resurrect zombie
+    // chunks that get disposed again on the next update.
+    const chunk = this.chunks.get(gridKey);
     if (!chunk) {
-      chunk = this.createChunk(gridKey);
-      this.chunks.set(gridKey, chunk);
+      this.dispatchNext();
+      return;
     }
 
     // Create terrain mesh via TerrainGenerator
@@ -237,6 +239,10 @@ export class ChunkManager {
     const distance = this.computeLodDistance(lodLevel);
     chunk.addTerrainMesh(terrainMesh, lodLevel, distance);
     this.requestRender();
+
+    // Replace any existing rock meshes for this LOD level so a repeated
+    // result never leaves duplicated rock instances behind
+    chunk.clearRockMeshes(lodLevel);
 
     // Create rock meshes via RockManager (if placements exist)
     if (result.rockPlacements && result.rockPlacements.length > 0) {
@@ -348,6 +354,11 @@ export class ChunkManager {
       return;
     }
 
+    // Already being built by a worker - don't re-queue it
+    if (this.inFlight.has(`${gridKey}:${lodLevel}`)) {
+      return;
+    }
+
     const chunk = this.chunks.get(gridKey);
     if (chunk?.hasLodLevel(lodLevel)) {
       return;
@@ -367,6 +378,30 @@ export class ChunkManager {
   }
 
   /**
+   * Pop queued requests until one is still worth building.
+   * Drops requests whose chunk has been pruned or already has the LOD built
+   * (e.g. a duplicate queued while the same build was in flight).
+   */
+  private takeNextValidRequest(isHighPriority: boolean): QueuedRequest | undefined {
+    for (;;) {
+      const request = isHighPriority
+        ? this.requestQueue.shiftMatching(this.hpWorkerKeys, this.inFlight) || this.requestQueue.shiftAny(this.inFlight)
+        : this.requestQueue.shiftAny(this.inFlight);
+
+      if (!request) {
+        return undefined;
+      }
+
+      const chunk = this.chunks.get(request.gridKey);
+      if (!chunk || chunk.hasLodLevel(request.lodLevel)) {
+        continue;
+      }
+
+      return request;
+    }
+  }
+
+  /**
    * Dispatch next highest-priority requests to idle workers
    */
   private dispatchNext(): void {
@@ -375,9 +410,7 @@ export class ChunkManager {
         continue;
       }
 
-      const request = workerState.isHighPriority
-        ? this.requestQueue.shiftMatching(this.hpWorkerKeys, this.inFlight) || this.requestQueue.shiftAny(this.inFlight)
-        : this.requestQueue.shiftAny(this.inFlight);
+      const request = this.takeNextValidRequest(workerState.isHighPriority);
 
       if (request) {
         const key = `${request.gridKey}:${request.lodLevel}`;
@@ -736,8 +769,9 @@ export class ChunkManager {
     // Use collision LOD mesh if available
     let mesh = chunk.getTerrainMesh(this.collisionLodLevel);
     if (!mesh || !chunk.hasLodLevel(this.collisionLodLevel)) {
-      // Fallback: use any available LOD mesh
-      for (let i = this.config.lodLevels.length - 1; i >= 0; i--) {
+      // Fallback: use the finest available LOD mesh so collision queries
+      // never run against a coarser mesh than necessary
+      for (let i = 0; i < this.config.lodLevels.length; i++) {
         if (chunk.hasLodLevel(i)) {
           mesh = chunk.getTerrainMesh(i);
           break;
