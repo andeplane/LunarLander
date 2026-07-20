@@ -54,6 +54,7 @@ function makeResult(
   return {
     positions: new Float32Array(9),
     normals: new Float32Array(9),
+    index: new Uint32Array(3),
     rockPlacements,
     gridKey,
     lodLevel,
@@ -262,6 +263,20 @@ describe(ChunkManager.name, () => {
 
       expect(manager.getChunk('0,0')).toBeUndefined();
       expect(manager.getActiveChunkCount()).toBe(chunkCountAfterMove);
+    });
+  });
+
+  describe('worker results', () => {
+    it('stores the worker index array for stitching without copying it', () => {
+      const manager = createManager();
+      manager.update(new Vector3(0, 50, 0));
+
+      const result = makeResult('0,0', 1, 32);
+      handleWorkerResult(manager, result);
+
+      expect(terrainGenerator.storeOriginalIndices).toHaveBeenCalledWith('0,0', 1, result.index);
+      const storedIndex = vi.mocked(terrainGenerator.storeOriginalIndices).mock.calls[0][2];
+      expect(storedIndex).toBe(result.index);
     });
   });
 

@@ -49,11 +49,11 @@ export function terrainDisplacementStrength(smoothLowerPlanes: number): number {
 /**
  * Creates a terrain height evaluation function that can be used for both
  * full mesh generation and single-point sampling.
- * 
+ *
  * @param args Terrain generation arguments
- * @returns Function that takes (x, z) in local chunk space and returns {y: height, biome: [biome, water, 0]}
+ * @returns Function that takes (x, z) in local chunk space and returns the height
  */
-export function createTerrainEvaluator(args: TerrainArgs): (x: number, z: number) => {y: number; biome: number[]} {
+export function createTerrainEvaluator(args: TerrainArgs): (x: number, z: number) => number {
   // Primary terrain noise - gentle undulating lunar surface
   const fbm = new FbmNoiseBuilder()
     .octaves(args.octaves)
@@ -84,14 +84,19 @@ export function createTerrainEvaluator(args: TerrainArgs): (x: number, z: number
     const altitudeVariation = fbmAltitude(x + args.posX, z + args.posZ) * 0.5;
     
     // Combine: base terrain + altitude + variation
-    const height = terrainNoise + args.altitude + altitudeVariation;
-    
-    // Return height with neutral biome (no water, no special biomes)
-    return { y: height, biome: [0.5, 0, 0] };
+    return terrainNoise + args.altitude + altitudeVariation;
   };
 }
 
-export function generateTerrain(args: TerrainArgs) {
+/**
+ * Generate a displaced terrain plane.
+ *
+ * @param args Terrain generation arguments
+ * @param computeNormals Recompute vertex normals after displacement (default
+ *   true). Pass false when heights will be modified again (e.g. craters) and
+ *   normals recomputed afterwards, to avoid a wasted normals pass.
+ */
+export function generateTerrain(args: TerrainArgs, computeNormals: boolean = true) {
   const geometry = new PlaneGeometry(
     args.width,
     args.depth,
@@ -102,7 +107,7 @@ export function generateTerrain(args: TerrainArgs) {
 
   const evaluateTerrain = createTerrainEvaluator(args);
 
-  displaceY(geometry, evaluateTerrain, terrainDisplacementStrength(args.smoothLowerPlanes));
+  displaceY(geometry, evaluateTerrain, terrainDisplacementStrength(args.smoothLowerPlanes), computeNormals);
 
   return geometry;
 }

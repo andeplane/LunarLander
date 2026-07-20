@@ -230,10 +230,10 @@ export class ChunkManager {
     // Create terrain mesh via TerrainGenerator
     const terrainMesh = this.terrainGenerator.createTerrainMesh(result, this.debugMode, gridKey);
 
-    // Store original indices for edge stitching
-    if (result.index) {
-      this.terrainGenerator.storeOriginalIndices(gridKey, lodLevel, new Uint32Array(result.index));
-    }
+    // Store original indices for edge stitching. The same array the geometry
+    // wraps is stored: stitching swaps in separately cached index arrays and
+    // never mutates this one, so no defensive copy is needed.
+    this.terrainGenerator.storeOriginalIndices(gridKey, lodLevel, result.index);
 
     // Add terrain mesh to chunk
     const distance = this.computeLodDistance(lodLevel);
@@ -437,14 +437,21 @@ export class ChunkManager {
           }
         }
 
-        workerState.worker.postMessage({
+        const message = {
           terrainArgs: request.terrainArgs,
           gridKey: request.gridKey,
           lodLevel: request.lodLevel,
           rockLibrarySize: this.rockManager.getLibrarySize(),
           rockConfig: this.rockGenerationConfig,
           stableAxes: stableAxesFlat,
-        });
+        };
+
+        // Transfer the freshly built stableAxes buffer instead of cloning it
+        if (stableAxesFlat) {
+          workerState.worker.postMessage(message, [stableAxesFlat.buffer]);
+        } else {
+          workerState.worker.postMessage(message);
+        }
       }
     }
   }

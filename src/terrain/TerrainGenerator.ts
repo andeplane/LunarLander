@@ -42,27 +42,14 @@ export class TerrainGenerator {
     debugMode: boolean,
     gridKey: string
   ): Mesh {
-    const { positions, normals, index, biome } = result;
+    const { positions, normals, index } = result;
 
-    // Create geometry
+    // Create geometry, wrapping the transferred worker buffers directly
+    // (no copies - the worker transferred ownership of these buffers)
     const geometry = new BufferGeometry();
-    geometry.setAttribute(
-      'position',
-      new BufferAttribute(new Float32Array(positions), 3)
-    );
-    geometry.setAttribute(
-      'normal',
-      new BufferAttribute(new Float32Array(normals), 3)
-    );
-    if (biome) {
-      geometry.setAttribute(
-        'biome',
-        new BufferAttribute(new Float32Array(biome), 3)
-      );
-    }
-    if (index) {
-      geometry.setIndex(new BufferAttribute(new Uint32Array(index), 1));
-    }
+    geometry.setAttribute('position', new BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new BufferAttribute(normals, 3));
+    geometry.setIndex(new BufferAttribute(index, 1));
 
     // Compute bounding sphere for correct frustum culling
     geometry.computeBoundingSphere();

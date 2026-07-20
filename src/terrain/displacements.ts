@@ -1,29 +1,33 @@
-import * as THREE from 'three';
+import type * as THREE from 'three';
 import type { BufferGeometry } from 'three';
 
+/**
+ * Displace the Y coordinate of every vertex using a height function.
+ *
+ * @param geometry - Geometry whose position attribute is displaced in place
+ * @param yFunction - Height function in local chunk space
+ * @param strength - Height multiplier applied to every sample
+ * @param computeNormals - Recompute vertex normals after displacement
+ *   (default true). Callers that modify heights again afterwards (e.g. the
+ *   chunk worker applying craters) should pass false and compute normals
+ *   once at the end, since the first pass would be thrown away.
+ */
 export function displaceY(
   geometry: BufferGeometry,
-  yFunction: (x: number, z: number) => {y: number, biome: number[]},
+  yFunction: (x: number, z: number) => number,
   strength: number,
+  computeNormals: boolean = true,
 ) {
   const position = geometry.attributes.position as THREE.BufferAttribute;
-
-  const biome = new Float32Array(position.count * 3);
 
   for (let i = 0; i < position.count; i++) {
     const x = position.getX(i);
     const z = position.getZ(i);
-    const result = yFunction(x, z);
-
-    biome[i * 3 + 0] = result.biome[0];
-    biome[i * 3 + 1] = result.biome[1];
-    biome[i * 3 + 2] = result.biome[2];
-
-    const newY = result.y * strength;
-    position.setY(i, newY);
+    position.setY(i, yFunction(x, z) * strength);
   }
 
-  geometry.setAttribute("biome", new THREE.Float32BufferAttribute(biome, 3));
   position.needsUpdate = true;
-  geometry.computeVertexNormals();
+  if (computeNormals) {
+    geometry.computeVertexNormals();
+  }
 }
