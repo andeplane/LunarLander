@@ -12,6 +12,7 @@ import type { Vector3, Mesh as ThreeMesh } from 'three';
 import type { ChunkManager } from '../terrain/ChunkManager';
 import { parseGridKey } from '../terrain/LodUtils';
 import type { Chunk } from '../terrain/Chunk';
+import { effectivePhysicsResolution, sampleHeightfield } from './HeightfieldUtils';
 
 /**
  * Configuration for terrain collider management
@@ -26,8 +27,12 @@ export interface TerrainColliderConfig {
  */
 interface ChunkCollider {
   collider: RAPIER.Collider;
+  /** Fixed rigid body the collider is attached to (must be removed with it) */
+  rigidBody: RAPIER.RigidBody;
   gridKey: string;
   lodLevel: number;
+  /** Effective heightfield resolution (cells) used for this collider */
+  physicsResolution: number;
   minHeight: number;
   maxHeight: number;
 }
@@ -75,20 +80,30 @@ export class TerrainColliderManager {
       }
 
       const existing = this.colliders.get(chunk.gridKey);
-      // Rebuild if collider doesn't exist OR if LOD changed (to match visual mesh)
-      const needsRebuild = !existing || existing.lodLevel !== chunk.currentLodLevel;
+      // The collider downsamples the mesh to a capped physics resolution, so a
+      // LOD change only requires a rebuild if the effective resolution differs
+      // (e.g. 1024 <-> 512 flips both sample the same 128-cell heightfield).
+      const meshResolution =
+        this.lodLevels[chunk.currentLodLevel] ?? this.lodLevels[0];
+      const physicsResolution = effectivePhysicsResolution(meshResolution);
+      const needsRebuild =
+        !existing || existing.physicsResolution !== physicsResolution;
 
       if (needsRebuild) {
-        // Remove old collider if exists
-        if (existing) {
-          this.world.removeCollider(existing.collider, true);
-          this.colliders.delete(chunk.gridKey);
-        }
-
+        // Build-then-swap: only replace the old collider once the new one is
+        // valid, so a failed rebuild never leaves the chunk colliderless
         const collider = this.createHeightfieldCollider(chunk, mesh);
         if (collider) {
+          if (existing) {
+            this.removeChunkCollider(existing);
+          }
           this.colliders.set(chunk.gridKey, collider);
         }
+        // On failure the previous collider (if any) is kept so balls don't
+        // fall through; the rebuild retries once the mesh becomes valid.
+      } else if (existing.lodLevel !== chunk.currentLodLevel) {
+        // Same effective heightfield, just track the new LOD level
+        existing.lodLevel = chunk.currentLodLevel;
       }
     }
 
@@ -96,10 +111,19 @@ export class TerrainColliderManager {
     const nearbyKeys = new Set(nearbyChunks.map(c => c.gridKey));
     for (const [gridKey, colliderData] of this.colliders.entries()) {
       if (!nearbyKeys.has(gridKey)) {
-        this.world.removeCollider(colliderData.collider, true);
+        this.removeChunkCollider(colliderData);
         this.colliders.delete(gridKey);
       }
     }
+  }
+
+  /**
+   * Remove a chunk collider AND its fixed rigid body from the physics world.
+   * Removing the rigid body also removes its attached collider, so this frees
+   * both WASM-side objects (previously the body was leaked on every rebuild).
+   */
+  private removeChunkCollider(colliderData: ChunkCollider): void {
+    this.world.removeRigidBody(colliderData.rigidBody);
   }
 
   /**
@@ -159,74 +183,23 @@ export class TerrainColliderManager {
       return null;
     }
 
-    // Use FIXED physics resolution (128 cells max) - Rapier can't handle 1M+ heights
-    // We'll sample from the visual mesh at appropriate intervals
-    const PHYSICS_RESOLUTION = 128; // 129x129 vertices = 16,641 heights (manageable)
-    const numCells = Math.min(meshResolution, PHYSICS_RESOLUTION);
-    const numVertices = numCells + 1;
-    
-    // Rapier expects heights as Float32Array
-    const heights = new Float32Array(numVertices * numVertices);
-    
-    // Calculate sampling step if mesh is higher res than physics
-    const sampleStep = meshResolution / numCells; // e.g., 1024/64 = 16
-    let minHeight = Infinity;
-    let maxHeight = -Infinity;
+    // Sample the visual mesh down to the capped physics resolution
+    // (Rapier can't handle 1M+ heights; 129x129 vertices is manageable)
+    const numCells = effectivePhysicsResolution(meshResolution);
+    const sample = sampleHeightfield(
+      (i) => positions.getY(i),
+      meshResolution,
+      numCells
+    );
 
-    // First, find the actual mesh bounds to understand coordinate system
-    let meshMinX = Infinity, meshMaxX = -Infinity;
-    let meshMinZ = Infinity, meshMaxZ = -Infinity;
-    for (let i = 0; i < positions.count; i++) {
-      const x = positions.getX(i);
-      const z = positions.getZ(i);
-      meshMinX = Math.min(meshMinX, x);
-      meshMaxX = Math.max(meshMaxX, x);
-      meshMinZ = Math.min(meshMinZ, z);
-      meshMaxZ = Math.max(meshMaxZ, z);
-    }
-
-    // Copy heights using X-major storage for Rapier (matching demo-rapier-three)
-    // Sample from mesh at sampleStep intervals when mesh is higher res than physics
-    // PlaneGeometry: col=X, row=Z (vertex index = row * meshVertexCount + col)
-    // Rapier heightfield: index = X * stride + Z = col * numVertices + row
-    for (let row = 0; row < numVertices; row++) {
-      for (let col = 0; col < numVertices; col++) {
-        // Sample from mesh at appropriate position (rounded to nearest vertex)
-        const meshRow = Math.min(Math.round(row * sampleStep), meshVertexCount - 1);
-        const meshCol = Math.min(Math.round(col * sampleStep), meshVertexCount - 1);
-        const meshVertexIndex = meshRow * meshVertexCount + meshCol;
-        
-        const y = positions.getY(meshVertexIndex);
-        
-        // Storage: index = X * stride + Z (matching demo-rapier-three)
-        // col = X index, row = Z index
-        const heightIndex = col * numVertices + row;
-        heights[heightIndex] = y;
-        minHeight = Math.min(minHeight, y);
-        maxHeight = Math.max(maxHeight, y);
-      }
-    }
-
-    // Validate heights array
-    if (heights.length === 0) {
-      console.error(`[TerrainCollider] Empty heights array for chunk ${chunk.gridKey}`);
+    if (!sample) {
+      console.error(
+        `[TerrainCollider] Mesh for chunk ${chunk.gridKey} contains non-finite heights`
+      );
       return null;
     }
-    
-    // Check for NaN or Infinity values
-    let hasInvalidValues = false;
-    for (let i = 0; i < heights.length; i++) {
-      if (!Number.isFinite(heights[i])) {
-        console.error(`[TerrainCollider] Invalid height value at index ${i}: ${heights[i]}`);
-        hasInvalidValues = true;
-        break;
-      }
-    }
-    if (hasInvalidValues) {
-      return null;
-    }
-    
-    console.log(`[TerrainCollider] Using visual mesh resolution: ${numVertices}x${numVertices} vertices, ${numCells}x${numCells} cells, range: [${minHeight.toFixed(2)}, ${maxHeight.toFixed(2)}]`);
+
+    const { heights, minHeight, maxHeight } = sample;
 
     // Create heightfield collider
     if (!RAPIER || !RAPIER.ColliderDesc) {
@@ -236,8 +209,6 @@ export class TerrainColliderManager {
 
     // Create scale as plain object (Rapier accepts {x, y, z} format)
     const scale = { x: this.chunkWidth, y: 1, z: this.chunkDepth };
-
-    console.log(`[TerrainCollider] Creating heightfield: ${numCells}x${numCells} cells (${numVertices}x${numVertices} vertices), scale:`, scale);
 
     // Rapier heightfield API: ColliderDesc.heightfield(nrows, ncols, heights: Float32Array, scale: Vector)
     // IMPORTANT: nrows/ncols = number of CELLS, heights.length = (nrows+1)*(ncols+1) VERTICES
@@ -253,8 +224,6 @@ export class TerrainColliderManager {
       console.error(`[TerrainCollider] Failed to create heightfield collider for chunk ${chunk.gridKey}`);
       return null;
     }
-    
-    console.log(`[TerrainCollider] Heightfield collider created successfully for chunk ${chunk.gridKey}`);
 
     // Create static rigid body for the terrain
     if (!this.world) {
@@ -291,15 +260,12 @@ export class TerrainColliderManager {
       return null;
     }
 
-    // Log for debugging
-    console.log(
-      `[Physics] Chunk ${chunk.gridKey}: heights range [${minHeight.toFixed(2)}, ${maxHeight.toFixed(2)}], collider at (${offsetX.toFixed(1)}, 0, ${offsetZ.toFixed(1)})`
-    );
-
     return {
       collider,
+      rigidBody,
       gridKey: chunk.gridKey,
       lodLevel,
+      physicsResolution: numCells,
       minHeight,
       maxHeight,
     };
@@ -317,7 +283,7 @@ export class TerrainColliderManager {
    */
   dispose(): void {
     for (const colliderData of this.colliders.values()) {
-      this.world.removeCollider(colliderData.collider, true);
+      this.removeChunkCollider(colliderData);
     }
     this.colliders.clear();
   }
