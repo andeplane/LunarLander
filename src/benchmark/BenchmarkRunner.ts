@@ -361,7 +361,7 @@ export async function runChunkBenchmark(
         // Capture geometry info on last iteration
         if (i === runs - 1) {
           vertices = result.positions.length / 3;
-          triangles = result.index ? result.index.length / 3 : vertices / 3;
+          triangles = result.index.length / 3;
         }
       }
 

@@ -34,12 +34,10 @@ export interface RockPlacement {
  * Result from chunk worker including terrain and rock data
  */
 export interface ChunkWorkerResult {
-  // Terrain data
-  positions: ArrayLike<number>;
-  normals: ArrayLike<number>;
-  uvs?: ArrayLike<number>;
-  biome?: ArrayLike<number>;
-  index?: ArrayLike<number>;
+  // Terrain data (typed arrays so their buffers can be transferred, not cloned)
+  positions: Float32Array;
+  normals: Float32Array;
+  index: Uint32Array;
 
   // Rock placement data
   rockPlacements: RockPlacement[];
@@ -187,7 +185,7 @@ const MIN_BURIAL_PERCENT = 0.4; // Minimum percentage of rock below surface (40%
 const MAX_BURIAL_PERCENT = 0.6; // Maximum percentage of rock below surface (60%)
 
 // Terrain evaluator cached per chunk (reuses exact same logic as generateTerrain)
-let cachedTerrainEvaluator: ((x: number, z: number) => {y: number; biome: number[]}) | null = null;
+let cachedTerrainEvaluator: ((x: number, z: number) => number) | null = null;
 
 // Cached craters for current chunk (used by both terrain and rock placement)
 let cachedCraters: Crater[] = [];
@@ -242,12 +240,12 @@ function sampleHeightFromVertices(
   }
 
   // Call terrain evaluator directly (x, z are already in local chunk space)
-  const result = cachedTerrainEvaluator(x, z);
-  
+  const height = cachedTerrainEvaluator(x, z);
+
   // Apply the same strength multiplier as displaceY() in terrain.ts
   // This ensures rock height matches actual terrain mesh height
   const strength = 2.8 * (1 - smoothLowerPlanes * 0.5);
-  const baseHeight = result.y * strength;
+  const baseHeight = height * strength;
   
   // Apply crater modifications (convert local to world coordinates)
   const worldX = x + cachedChunkWorldX;
@@ -260,64 +258,43 @@ function sampleHeightFromVertices(
 /**
  * Extract interior vertices from an extended mesh (with skirt).
  * Removes the outer row/column of vertices to get the original chunk size.
- * 
+ *
  * @param extendedPositions - Positions from extended mesh (with skirt)
  * @param extendedNormals - Normals from extended mesh
- * @param extendedBiome - Biome data from extended mesh (optional)
- * @param extendedUv - UV data from extended mesh (optional)
  * @param extendedRes - Resolution of extended mesh (original resolution + 2)
  * @param targetRes - Target resolution (original resolution)
- * @returns Extracted positions, normals, biome, and UV for interior vertices only
+ * @returns Extracted positions and normals for interior vertices only
  */
 function extractInterior(
   extendedPositions: Float32Array,
   extendedNormals: Float32Array,
-  extendedBiome: Float32Array | undefined,
-  extendedUv: Float32Array | undefined,
   extendedRes: number,  // resolution + 2
   targetRes: number     // resolution
-): { 
-  positions: Float32Array; 
+): {
+  positions: Float32Array;
   normals: Float32Array;
-  biome: Float32Array | undefined;
-  uv: Float32Array | undefined;
 } {
   const targetVerticesPerRow = targetRes + 1;
   const extendedVerticesPerRow = extendedRes + 1;
   const positions = new Float32Array(targetVerticesPerRow * targetVerticesPerRow * 3);
   const normals = new Float32Array(targetVerticesPerRow * targetVerticesPerRow * 3);
-  const biome = extendedBiome ? new Float32Array(targetVerticesPerRow * targetVerticesPerRow * 3) : undefined;
-  const uv = extendedUv ? new Float32Array(targetVerticesPerRow * targetVerticesPerRow * 2) : undefined;
-  
+
   for (let z = 0; z < targetVerticesPerRow; z++) {
     for (let x = 0; x < targetVerticesPerRow; x++) {
       // Skip first row/column of extended mesh (the skirt)
       const srcIdx = ((z + 1) * extendedVerticesPerRow + (x + 1)) * 3;
       const dstIdx = (z * targetVerticesPerRow + x) * 3;
-      
+
       positions[dstIdx] = extendedPositions[srcIdx];
       positions[dstIdx + 1] = extendedPositions[srcIdx + 1];
       positions[dstIdx + 2] = extendedPositions[srcIdx + 2];
-      
+
       normals[dstIdx] = extendedNormals[srcIdx];
       normals[dstIdx + 1] = extendedNormals[srcIdx + 1];
       normals[dstIdx + 2] = extendedNormals[srcIdx + 2];
-      
-      if (biome && extendedBiome) {
-        biome[dstIdx] = extendedBiome[srcIdx];
-        biome[dstIdx + 1] = extendedBiome[srcIdx + 1];
-        biome[dstIdx + 2] = extendedBiome[srcIdx + 2];
-      }
-      
-      if (uv && extendedUv) {
-        const srcUvIdx = ((z + 1) * extendedVerticesPerRow + (x + 1)) * 2;
-        const dstUvIdx = (z * targetVerticesPerRow + x) * 2;
-        uv[dstUvIdx] = extendedUv[srcUvIdx];
-        uv[dstUvIdx + 1] = extendedUv[srcUvIdx + 1];
-      }
     }
   }
-  return { positions, normals, biome, uv };
+  return { positions, normals };
 }
 
 /**
@@ -729,7 +706,9 @@ self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
     depth: extendedDepth,
   };
   
-  const geometry = generateTerrain(extendedTerrainArgs);
+  // Skip the normals pass here: craters modify heights below, after which
+  // normals are computed once. Computing them now would be wasted work.
+  const geometry = generateTerrain(extendedTerrainArgs, false);
 
   // Extract terrain attributes (positions is mutable Float32Array)
   const extendedPositions = geometry.attributes.position.array as Float32Array;
@@ -745,19 +724,16 @@ self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
   // Apply to extended mesh (using extended dimensions)
   applyCratersToHeightBuffer(extendedPositions, extendedWidth, extendedDepth, localCraters);
   
-  // Update geometry and compute normals on extended mesh
+  // Update geometry and compute normals on extended mesh (single normals pass
+  // over the final, cratered heights)
   geometry.attributes.position.needsUpdate = true;
   geometry.computeVertexNormals();
   const extendedNormals = geometry.attributes.normal.array as Float32Array;
-  const extendedBiome = geometry.attributes.biome?.array as Float32Array | undefined;
-  const extendedUv = geometry.attributes.uv?.array as Float32Array | undefined;
-  
+
   // Extract interior vertices (remove skirt)
-  const { positions, normals, biome, uv } = extractInterior(
+  const { positions, normals } = extractInterior(
     extendedPositions,
     extendedNormals,
-    extendedBiome,
-    extendedUv,
     extendedResolution,
     terrainArgs.resolution
   );
@@ -799,8 +775,6 @@ self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
   const result: ChunkWorkerResult = {
     positions,
     normals,
-    uvs: uv,
-    biome: biome,
     index,
     rockPlacements,
     gridKey,
@@ -808,5 +782,14 @@ self.onmessage = (m: MessageEvent<ChunkWorkerMessage>) => {
     resolution: terrainArgs.resolution,
   };
 
-  postMessage(result);
+  // Transfer all freshly allocated buffers instead of structure-cloning them.
+  // This moves ownership to the main thread with zero copying.
+  const transfer: Transferable[] = [
+    positions.buffer,
+    normals.buffer,
+    index.buffer,
+    ...rockPlacements.map((placement) => placement.matrices.buffer),
+  ];
+
+  postMessage(result, { transfer });
 };
