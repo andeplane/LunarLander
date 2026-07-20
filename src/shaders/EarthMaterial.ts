@@ -97,6 +97,7 @@ export interface EarthMaterialOptions {
   cloudsMapPath: string;
   specularMapPath: string;
   onTextureLoad?: () => void; // Optional callback for each texture load
+  onTextureError?: (path: string) => void; // Optional callback for each texture load failure
 }
 
 export class EarthMaterial extends THREE.ShaderMaterial {
@@ -106,38 +107,30 @@ export class EarthMaterial extends THREE.ShaderMaterial {
     const textureLoader = new THREE.TextureLoader();
     
     // Load textures with proper settings and callbacks
-    const dayMap = textureLoader.load(
-      options.dayMapPath,
-      () => {
-        if (options.onTextureLoad) options.onTextureLoad();
-      }
-    );
+    const loadTexture = (path: string): THREE.Texture =>
+      textureLoader.load(
+        path,
+        () => {
+          if (options.onTextureLoad) options.onTextureLoad();
+        },
+        undefined,
+        () => {
+          if (options.onTextureError) options.onTextureError(path);
+        }
+      );
+
+    const dayMap = loadTexture(options.dayMapPath);
     dayMap.colorSpace = THREE.SRGBColorSpace;
     dayMap.anisotropy = 8;
-    
-    const nightMap = textureLoader.load(
-      options.nightMapPath,
-      () => {
-        if (options.onTextureLoad) options.onTextureLoad();
-      }
-    );
+
+    const nightMap = loadTexture(options.nightMapPath);
     nightMap.colorSpace = THREE.SRGBColorSpace;
     nightMap.anisotropy = 8;
-    
-    const cloudsMap = textureLoader.load(
-      options.cloudsMapPath,
-      () => {
-        if (options.onTextureLoad) options.onTextureLoad();
-      }
-    );
+
+    const cloudsMap = loadTexture(options.cloudsMapPath);
     cloudsMap.anisotropy = 8;
-    
-    const specularMap = textureLoader.load(
-      options.specularMapPath,
-      () => {
-        if (options.onTextureLoad) options.onTextureLoad();
-      }
-    );
+
+    const specularMap = loadTexture(options.specularMapPath);
     specularMap.anisotropy = 8;
     
     const sunDirectionUniform = new THREE.Uniform(new THREE.Vector3(1, 0, 0));
