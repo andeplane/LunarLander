@@ -413,7 +413,7 @@ export class Engine {
 
     // Update physics simulation
     // If physics objects are moving, request render
-    if (this.physicsWorld && this.physicsWorld.isReady()) {
+    if (this.physicsWorld?.isReady()) {
       const physicsObjectsMoving = this.physicsWorld.step(deltaTime);
       if (physicsObjectsMoving) {
         this.requestRender();
