@@ -1,0 +1,33 @@
+/* Explore-mode chrome: corner menu button (the onboarding panel reuses the
+   shared screen styles from LanderScreens.css). */
+
+.explore-menu-button {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 300;
+  min-height: 40px;
+  padding: 0.35rem 0.9rem;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  color: #e8edf4;
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.explore-menu-button:hover,
+.explore-menu-button:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.6);
+  outline: none;
+}
+
+.explore-menu-button.hidden {
+  display: none;
+}

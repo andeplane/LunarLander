@@ -60,6 +60,20 @@ export class FlightController {
   }
 
   /**
+   * Re-seed cached pitch/yaw from the camera's current orientation.
+   * Must be called when something else has rotated the camera (menu drift,
+   * lander mode) before this controller resumes, otherwise applyTransform()
+   * snaps the view back to stale angles. Roll is not representable and is
+   * dropped (YXZ decomposition).
+   */
+  syncFromCamera(): void {
+    this.rotationEuler.setFromQuaternion(this.camera.quaternion, 'YXZ');
+    this.yaw = this.rotationEuler.y;
+    this.pitch = this.rotationEuler.x;
+    this.velocity.set(0, 0, 0);
+  }
+
+  /**
    * Update camera position and rotation based on input
    */
   update(deltaTime: number): void {

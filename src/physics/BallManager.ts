@@ -9,6 +9,7 @@
  */
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
+import type { PhysicsStepListener } from './PhysicsWorld';
 import { CurvedStandardMaterial } from '../shaders/CurvedStandardMaterial';
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 import {
@@ -80,7 +81,7 @@ const DEFAULT_CONFIG: Required<BallManagerConfig> = {
   killY: -50, // Safely below any generated terrain height
 };
 
-export class BallManager {
+export class BallManager implements PhysicsStepListener {
   private balls: Ball[] = [];
   private world: RAPIER.World;
   private scene: THREE.Scene;
@@ -214,7 +215,7 @@ export class BallManager {
    * prevTransform holds the state before the step and the physics body
    * itself holds the state after it.
    */
-  beforePhysicsStep(): void {
+  beforePhysicsStep(_dtFixed: number): void {
     for (const ball of this.balls) {
       copyBodyTransform(ball.rigidBody, ball.prevTransform);
     }
@@ -241,7 +242,7 @@ export class BallManager {
    * @returns true if any balls are moving (or were just despawned and need
    *          one more render to disappear), false otherwise
    */
-  update(alpha: number = 1): boolean {
+  afterPhysicsSync(alpha: number = 1): boolean {
     if (this.balls.length === 0) return false;
 
     let hasMovingBalls = false;

@@ -109,12 +109,12 @@ describe(BallManager.name, () => {
     manager.dropBallAt(0, 100, 0);
 
     // Let the ball fall for a while
-    manager.beforePhysicsStep();
+    manager.beforePhysicsStep(1 / 60);
     for (let i = 0; i < 30; i++) {
       world.step();
     }
 
-    const moving = manager.update(1);
+    const moving = manager.afterPhysicsSync(1);
 
     expect(moving).toBe(true);
     const mesh = getBallMesh();
@@ -129,7 +129,7 @@ describe(BallManager.name, () => {
     const manager = new BallManager(world, scene);
     manager.dropBallAt(0, 100, 0);
 
-    manager.beforePhysicsStep(); // prev = spawn transform (y = 100)
+    manager.beforePhysicsStep(1 / 60); // prev = spawn transform (y = 100)
     world.step(); // curr = one step of free fall
 
     const body = world.bodies.getAll()[0];
@@ -138,13 +138,13 @@ describe(BallManager.name, () => {
 
     const mesh = getBallMesh();
 
-    manager.update(0);
+    manager.afterPhysicsSync(0);
     expect(mesh.position.y).toBeCloseTo(100, 5);
 
-    manager.update(0.5);
+    manager.afterPhysicsSync(0.5);
     expect(mesh.position.y).toBeCloseTo((100 + yAfterStep) / 2, 5);
 
-    manager.update(1);
+    manager.afterPhysicsSync(1);
     expect(mesh.position.y).toBeCloseTo(yAfterStep, 5);
     manager.dispose();
   });
@@ -154,13 +154,13 @@ describe(BallManager.name, () => {
     manager.dropBallAt(0, -100, 0); // already below the kill altitude
 
     // Despawn frame: returns true so the removed mesh gets rendered away
-    expect(manager.update(1)).toBe(true);
+    expect(manager.afterPhysicsSync(1)).toBe(true);
     expect(manager.getBallCount()).toBe(0);
     expect(world.bodies.len()).toBe(0);
     expect(scene.children.some((c) => c instanceof THREE.Mesh)).toBe(false);
 
     // With no balls left, the manager reports idle
-    expect(manager.update(1)).toBe(false);
+    expect(manager.afterPhysicsSync(1)).toBe(false);
     manager.dispose();
   });
 
@@ -180,9 +180,9 @@ describe(BallManager.name, () => {
     // Settle: a couple of seconds of fixed steps
     let moving = true;
     for (let i = 0; i < 240; i++) {
-      manager.beforePhysicsStep();
+      manager.beforePhysicsStep(1 / 60);
       world.step();
-      moving = manager.update(1);
+      moving = manager.afterPhysicsSync(1);
     }
 
     expect(moving).toBe(false);

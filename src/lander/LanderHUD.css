@@ -1,0 +1,473 @@
+/* Cockpit instruments HUD (ADR-0003 §4).
+   Pure overlay: pointer-events none everywhere, sits below screens/menu. */
+
+.lander-hud {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  overflow: hidden;
+  pointer-events: none;
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  color: #e8edf4;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  -webkit-user-select: none;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.lander-hud.hidden {
+  display: none;
+}
+
+.hud-cluster {
+  position: absolute;
+}
+
+.hud-label {
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #9aa7ba;
+}
+
+.hud-instrument {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 0.4rem 0.7rem;
+}
+
+/* --- Center-right primary cluster: vertical speed + altitude --- */
+
+.hud-primary {
+  right: clamp(64px, 11vw, 132px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+  text-align: right;
+}
+
+.hud-value-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.3rem;
+}
+
+.hud-vspeed-value {
+  font-size: clamp(1.9rem, 5vw, 2.8rem);
+  font-weight: 700;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+
+.hud-vspeed-value.band-green { color: #63e08a; }
+.hud-vspeed-value.band-amber { color: #ffc94d; }
+.hud-vspeed-value.band-red { color: #ff5f56; }
+
+.hud-altitude-value {
+  font-size: clamp(1.3rem, 3.5vw, 1.9rem);
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.hud-unit {
+  font-size: 0.7rem;
+  color: #9aa7ba;
+}
+
+/* --- Left cluster: drift scope --- */
+
+.hud-drift {
+  left: clamp(12px, 4vw, 48px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* 88px face; dot travel 36px = 3 m/s full scale (see LanderHUD.ts consts) */
+.hud-drift-scope {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.hud-drift-scope::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 6%;
+  bottom: 6%;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.hud-drift-scope::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 6%;
+  right: 6%;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Safe ring: 1.5 m/s of the 3 m/s full scale → half the dot-travel radius */
+.hud-drift-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 36px;
+  height: 36px;
+  margin: -18px 0 0 -18px;
+  border-radius: 50%;
+  border: 1px dashed rgba(99, 224, 138, 0.55);
+}
+
+.hud-drift-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  background: #63e08a;
+  box-shadow: 0 0 6px rgba(99, 224, 138, 0.8);
+  will-change: transform;
+}
+
+.hud-drift-dot.over {
+  background: #ff5f56;
+  box-shadow: 0 0 6px rgba(255, 95, 86, 0.8);
+}
+
+.hud-drift-value {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.hud-drift-value.over {
+  color: #ff5f56;
+}
+
+/* --- Bottom center: artificial horizon --- */
+
+.hud-attitude {
+  left: 50%;
+  bottom: clamp(10px, 3vh, 32px);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+/* 96px ball; horizon shift ±30px at the ±30° clamp (see LanderHUD.ts) */
+.hud-attitude-ball {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(24, 34, 48, 0.55); /* sky */
+}
+
+.hud-horizon {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0) 0%,
+    rgba(0, 0, 0, 0) calc(50% - 1px),
+    rgba(255, 255, 255, 0.9) calc(50% - 1px),
+    rgba(255, 255, 255, 0.9) calc(50% + 1px),
+    rgba(150, 120, 88, 0.65) calc(50% + 1px),
+    rgba(104, 82, 58, 0.8) 100%
+  );
+  transform: translate(-50%, -50%);
+  will-change: transform;
+}
+
+/* Fixed lander reference symbol (the rigid frame tilt is read against) */
+.hud-attitude-ref {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 34px;
+  height: 2px;
+  margin: -1px 0 0 -17px;
+  background: #ffc94d;
+  border-radius: 1px;
+}
+
+.hud-attitude-ref::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: #ffc94d;
+}
+
+.hud-attitude-nums {
+  font-size: 0.72rem;
+  color: #c6cfdc;
+  letter-spacing: 0.05em;
+  white-space: pre;
+}
+
+.hud-att-tag {
+  color: #9aa7ba;
+  font-weight: 600;
+}
+
+/* --- Right edge: throttle tape + fuel bar --- */
+
+.hud-right {
+  right: clamp(8px, 1.6vw, 18px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.hud-tape {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.hud-tape-track {
+  position: relative;
+  width: 14px;
+  height: clamp(110px, 22vh, 190px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.hud-tape-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0%;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #cfe3ff 0%, #7fa8e0 100%);
+}
+
+.hud-fuel-fill {
+  background: linear-gradient(180deg, #9be8b0 0%, #56b877 100%);
+}
+
+.hud-fuel-fill.band-amber { background: #ffc94d; }
+.hud-fuel-fill.band-red { background: #ff5f56; }
+
+/* Hover-thrust tick: where "neutral" lives (drifts as mass falls) */
+.hud-hover-tick {
+  position: absolute;
+  left: -5px;
+  right: -5px;
+  height: 2px;
+  bottom: 45%;
+  background: #ffc94d;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+}
+
+.hud-tape-value {
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.hud-tape-label {
+  font-size: 0.55rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #9aa7ba;
+}
+
+.hud-hold-badge {
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #63e08a;
+  border: 1px solid rgba(99, 224, 138, 0.6);
+  background: rgba(99, 224, 138, 0.12);
+  border-radius: 4px;
+  padding: 1px 5px;
+  opacity: 0;
+}
+
+.hud-hold-badge.active {
+  opacity: 1;
+}
+
+/* --- Pad designator: projected diamond / edge arrow --- */
+
+.hud-pad-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.hud-pad-marker.hidden,
+.hud-pad-arrow.hidden {
+  display: none;
+}
+
+.hud-pad-diamond {
+  font-size: 1.5rem;
+  line-height: 1;
+  color: #7fd4ff;
+  text-shadow: 0 0 8px rgba(127, 212, 255, 0.7);
+}
+
+.hud-pad-distance {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #bfe6ff;
+}
+
+.hud-pad-arrow {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.hud-pad-arrow-glyph {
+  font-size: 1.2rem;
+  line-height: 1;
+  color: #7fd4ff;
+  text-shadow: 0 0 8px rgba(127, 212, 255, 0.7);
+  will-change: transform;
+}
+
+/* --- Touchdown readiness strip --- */
+
+.hud-readiness {
+  position: absolute;
+  left: 50%;
+  top: clamp(10px, 4vh, 36px);
+  transform: translateX(-50%);
+  display: flex;
+  gap: 14px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+  padding: 6px 14px;
+}
+
+.hud-readiness.hidden {
+  display: none;
+}
+
+.hud-pip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.hud-pip-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ff5f56;
+  box-shadow: 0 0 5px rgba(255, 95, 86, 0.7);
+}
+
+.hud-pip-dot.ok {
+  background: #63e08a;
+  box-shadow: 0 0 5px rgba(99, 224, 138, 0.7);
+}
+
+.hud-pip-label {
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: #c6cfdc;
+}
+
+/* --- Slope warning --- */
+
+.hud-slope-warning {
+  position: absolute;
+  left: 50%;
+  top: clamp(52px, 12vh, 96px);
+  transform: translateX(-50%);
+  font-size: clamp(0.9rem, 2.5vw, 1.15rem);
+  font-weight: 800;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  color: #ff5f56;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 95, 86, 0.6);
+  border-radius: 6px;
+  padding: 4px 12px;
+  animation: hud-slope-flash 0.7s ease-in-out infinite;
+}
+
+.hud-slope-warning.hidden {
+  display: none;
+  animation: none;
+}
+
+@keyframes hud-slope-flash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+/* --- Small screens: tighten and lift clusters clear of touch controls --- */
+
+@media (max-width: 640px) {
+  .hud-primary {
+    right: clamp(48px, 14vw, 80px);
+    top: 42%;
+  }
+
+  .hud-drift {
+    top: 42%;
+  }
+
+  .hud-vspeed-value {
+    font-size: 1.7rem;
+  }
+
+  .hud-altitude-value {
+    font-size: 1.2rem;
+  }
+
+  .hud-attitude-ball {
+    width: 80px;
+    height: 80px;
+  }
+
+  .hud-tape-track {
+    height: clamp(90px, 18vh, 140px);
+  }
+}

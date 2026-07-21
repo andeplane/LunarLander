@@ -382,6 +382,17 @@ export class ChunkManager {
   }
 
   /**
+   * Base terrain generation args shared by every chunk request (noise,
+   * dimensions, crater params — everything except per-chunk
+   * resolution/posX/posZ). Used by the lander mode's terrain height
+   * sampler and deterministic rock queries so they can never drift from
+   * the meshes the workers build.
+   */
+  getBaseTerrainArgs(): Omit<TerrainArgs, 'resolution' | 'posX' | 'posZ'> {
+    return { ...this.baseTerrainArgs };
+  }
+
+  /**
    * Pop queued requests until one is still worth building.
    * Drops requests whose chunk has been pruned or already has the LOD built
    * (e.g. a duplicate queued while the same build was in flight).

@@ -3,13 +3,12 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import type { FlightController } from '../camera/FlightController';
+import type { ModeManager } from '../modes/ModeManager';
 import type { ChunkManager } from '../terrain/ChunkManager';
 import type { CelestialSystem } from '../environment/CelestialSystem';
 import type { InputManager } from './InputManager';
 import type { PhysicsWorld } from '../physics/PhysicsWorld';
 import type { TerrainColliderManager } from '../physics/TerrainColliderManager';
-import type { BallManager } from '../physics/BallManager';
 import { DEFAULT_PLANET_RADIUS } from './EngineSettings';
 import type { CameraConfig } from '../types';
 
@@ -33,13 +32,16 @@ export class Engine {
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private animationId: number | null = null;
-  private flightController: FlightController | null = null;
+  private modeManager: ModeManager | null = null;
   private chunkManager: ChunkManager | null = null;
   private celestialSystem: CelestialSystem | null = null;
   private inputManager: InputManager | null = null;
   private physicsWorld: PhysicsWorld | null = null;
   private terrainColliderManager: TerrainColliderManager | null = null;
-  private ballManager: BallManager | null = null;
+  /** Debug keys (O/I/C) active — disabled while the Lander game runs. */
+  private debugKeysEnabled: boolean = true;
+  /** Pause state seen last frame, to reset the physics accumulator on resume. */
+  private wasPaused: boolean = false;
   
   // Post-processing
   private composer: EffectComposer;
@@ -228,10 +230,10 @@ export class Engine {
   }
 
   /**
-   * Set the flight controller for camera updates
+   * Set the mode manager that drives per-frame mode updates
    */
-  setFlightController(controller: FlightController): void {
-    this.flightController = controller;
+  setModeManager(manager: ModeManager): void {
+    this.modeManager = manager;
   }
 
   /**
@@ -270,10 +272,20 @@ export class Engine {
   }
 
   /**
-   * Set the ball manager (called from main.ts after physics init)
+   * Enable/disable Engine-level debug keys (O/I/C). LanderMode disables
+   * them so game keys can't collide with debug toggles.
    */
-  setBallManager(manager: BallManager): void {
-    this.ballManager = manager;
+  setDebugKeysEnabled(enabled: boolean): void {
+    this.debugKeysEnabled = enabled;
+  }
+
+  /**
+   * Show or hide the stats overlay (hidden in Menu and Lander modes).
+   */
+  setStatsVisible(visible: boolean): void {
+    if (this.statsElement) {
+      this.statsElement.style.display = visible ? '' : 'none';
+    }
   }
 
   /**
@@ -365,47 +377,52 @@ export class Engine {
    */
   private update(deltaTime: number): void {
     this.deltaTime = deltaTime;
-    
-    // Check for debug toggle (O key)
-    if (this.inputManager?.isKeyJustPressed('o') && this.chunkManager) {
-      this.chunkManager.toggleDebugMode();
+
+    if (this.debugKeysEnabled) {
+      // Check for debug toggle (O key)
+      if (this.inputManager?.isKeyJustPressed('o') && this.chunkManager) {
+        this.chunkManager.toggleDebugMode();
+      }
+
+      // Check for chunk distance/LOD debug (I key)
+      if (this.inputManager?.isKeyJustPressed('i') && this.chunkManager) {
+        this.chunkManager.logChunkDistancesAndLods(this.camera.position);
+      }
+
+      // Check for camera position debug (C key)
+      if (this.inputManager?.isKeyJustPressed('c')) {
+        const pos = this.camera.position;
+        this.camera.getWorldDirection(this.cameraForward);
+
+        const positionStr = `Position: (${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)})`;
+        const directionStr = `Direction: (${this.cameraForward.x.toFixed(3)}, ${this.cameraForward.y.toFixed(3)}, ${this.cameraForward.z.toFixed(3)})`;
+        const copyText = `${positionStr}\n${directionStr}`;
+
+        console.log(positionStr);
+        console.log(directionStr);
+
+        // Copy to clipboard
+        navigator.clipboard.writeText(copyText).then(() => {
+          console.log('Camera position and direction copied to clipboard');
+        }).catch((err) => {
+          console.error('Failed to copy to clipboard:', err);
+        });
+      }
     }
 
-    // Check for chunk distance/LOD debug (I key)
-    if (this.inputManager?.isKeyJustPressed('i') && this.chunkManager) {
-      this.chunkManager.logChunkDistancesAndLods(this.camera.position);
+    // Pause handling: while paused, freeze mode logic and physics but keep
+    // rendering (pause overlays still draw). On resume, drop the physics
+    // accumulator so no catch-up burst of steps fires for the paused time.
+    const paused = this.modeManager?.isPaused() ?? false;
+    if (this.wasPaused && !paused) {
+      this.physicsWorld?.resetTimestep();
     }
+    this.wasPaused = paused;
 
-    // Check for camera position debug (C key)
-    if (this.inputManager?.isKeyJustPressed('c')) {
-      const pos = this.camera.position;
-      this.camera.getWorldDirection(this.cameraForward);
-      
-      const positionStr = `Position: (${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)})`;
-      const directionStr = `Direction: (${this.cameraForward.x.toFixed(3)}, ${this.cameraForward.y.toFixed(3)}, ${this.cameraForward.z.toFixed(3)})`;
-      const copyText = `${positionStr}\n${directionStr}`;
-      
-      console.log(positionStr);
-      console.log(directionStr);
-      
-      // Copy to clipboard
-      navigator.clipboard.writeText(copyText).then(() => {
-        console.log('Camera position and direction copied to clipboard');
-      }).catch((err) => {
-        console.error('Failed to copy to clipboard:', err);
-      });
-    }
-
-    // Check for ball shooting (Space key)
-    if (this.inputManager?.isKeyJustPressed(' ') && this.ballManager) {
-      this.ballManager.shootBall(this.camera);
-      this.requestRender();
-    }
-
-
-    // Update flight controller
-    if (this.flightController) {
-      this.flightController.update(deltaTime);
+    // Update active mode (flight control / lander control / menu drift).
+    // ModeManager itself skips the mode update while paused.
+    if (this.modeManager) {
+      this.modeManager.update(deltaTime);
     }
 
     // Update chunk manager with camera position
@@ -418,9 +435,9 @@ export class Engine {
       this.terrainColliderManager.update(this.camera.position);
     }
 
-    // Update physics simulation
+    // Update physics simulation (skipped while paused)
     // If physics objects are moving, request render
-    if (this.physicsWorld?.isReady()) {
+    if (!paused && this.physicsWorld?.isReady()) {
       const physicsObjectsMoving = this.physicsWorld.step(deltaTime);
       if (physicsObjectsMoving) {
         this.requestRender();
