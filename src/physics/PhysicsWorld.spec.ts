@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { PhysicsWorld } from './PhysicsWorld';
-import type { BallManager } from './BallManager';
+import { PhysicsWorld, type PhysicsStepListener } from './PhysicsWorld';
 
 /**
  * Integration tests against the real Rapier WASM module, which initializes
@@ -10,20 +9,20 @@ import type { BallManager } from './BallManager';
 describe(PhysicsWorld.name, () => {
   const STEP = 1 / 60;
 
-  function makeBallManagerStub(updateReturns: boolean | boolean[] = false) {
-    const returns = Array.isArray(updateReturns) ? [...updateReturns] : null;
-    const update = vi.fn((_alpha?: number) => {
+  function makeListenerStub(syncReturns: boolean | boolean[] = false) {
+    const returns = Array.isArray(syncReturns) ? [...syncReturns] : null;
+    const afterPhysicsSync = vi.fn((_alpha?: number) => {
       if (returns) {
         return returns.length > 1 ? (returns.shift() ?? false) : returns[0];
       }
-      return updateReturns as boolean;
+      return syncReturns as boolean;
     });
     const beforePhysicsStep = vi.fn();
-    return {
-      stub: { update, beforePhysicsStep } as unknown as BallManager,
-      update,
+    const stub: PhysicsStepListener = {
       beforePhysicsStep,
+      afterPhysicsSync: afterPhysicsSync as unknown as PhysicsStepListener['afterPhysicsSync'],
     };
+    return { stub, afterPhysicsSync, beforePhysicsStep };
   }
 
   it('throws when getWorld is called before initialization', () => {
@@ -82,11 +81,11 @@ describe(PhysicsWorld.name, () => {
     physics.dispose();
   });
 
-  it('runs fixed steps from accumulated frame time and notifies the ball manager before each', async () => {
+  it('runs fixed steps from accumulated frame time and notifies listeners before each', async () => {
     const physics = new PhysicsWorld();
     await physics.initialize();
-    const { stub, update, beforePhysicsStep } = makeBallManagerStub(false);
-    physics.setBallManager(stub);
+    const { stub, afterPhysicsSync, beforePhysicsStep } = makeListenerStub(false);
+    physics.addPhysicsStepListener(stub);
 
     // Half a fixed step: no physics step yet
     physics.step(STEP / 2);
@@ -95,7 +94,8 @@ describe(PhysicsWorld.name, () => {
     // Second half completes the accumulator: exactly one step
     physics.step(STEP / 2);
     expect(beforePhysicsStep).toHaveBeenCalledTimes(1);
-    expect(update).toHaveBeenCalledTimes(1);
+    expect(beforePhysicsStep).toHaveBeenCalledWith(STEP);
+    expect(afterPhysicsSync).toHaveBeenCalledTimes(1);
 
     // A large frame delta is capped at maxStepsPerFrame (5) catch-up steps
     beforePhysicsStep.mockClear();
@@ -105,38 +105,93 @@ describe(PhysicsWorld.name, () => {
     physics.dispose();
   });
 
-  it('returns the ball manager movement flag and caches it across zero-step frames', async () => {
+  it('returns the listener movement flag and caches it across zero-step frames', async () => {
     const physics = new PhysicsWorld();
     await physics.initialize();
-    const { stub, update } = makeBallManagerStub(true);
-    physics.setBallManager(stub);
+    const { stub, afterPhysicsSync } = makeListenerStub(true);
+    physics.addPhysicsStepListener(stub);
 
-    // Full step: balls report moving
+    // Full step: objects report moving
     expect(physics.step(STEP)).toBe(true);
-    expect(update).toHaveBeenCalledTimes(1);
+    expect(afterPhysicsSync).toHaveBeenCalledTimes(1);
 
     // Sub-step frame (display faster than physics rate): no fixed step runs,
     // but the cached moving flag is returned and meshes are re-interpolated
     expect(physics.step(STEP / 4)).toBe(true);
-    expect(update).toHaveBeenCalledTimes(2);
+    expect(afterPhysicsSync).toHaveBeenCalledTimes(2);
     // The re-interpolation call uses the grown alpha, not a full step
-    const alpha = update.mock.calls[1][0] as number;
+    const alpha = afterPhysicsSync.mock.calls[1][0] as number;
     expect(alpha).toBeGreaterThan(0);
     expect(alpha).toBeLessThan(1);
 
     physics.dispose();
   });
 
-  it('reports not moving once the ball manager goes idle after a step', async () => {
+  it('reports not moving once a listener goes idle after a step', async () => {
     const physics = new PhysicsWorld();
     await physics.initialize();
-    const { stub } = makeBallManagerStub([true, false]);
-    physics.setBallManager(stub);
+    const { stub, afterPhysicsSync } = makeListenerStub([true, false]);
+    physics.addPhysicsStepListener(stub);
 
     expect(physics.step(STEP)).toBe(true);
     expect(physics.step(STEP)).toBe(false);
-    // Idle state also caches across zero-step frames
+    // Idle state also caches across zero-step frames: no re-interpolation call
+    const calls = afterPhysicsSync.mock.calls.length;
     expect(physics.step(STEP / 4)).toBe(false);
+    expect(afterPhysicsSync).toHaveBeenCalledTimes(calls);
+
+    physics.dispose();
+  });
+
+  it('tracks moving flags per listener (one idle listener cannot mask a moving one)', async () => {
+    const physics = new PhysicsWorld();
+    await physics.initialize();
+    const idle = makeListenerStub(false);
+    const moving = makeListenerStub(true);
+    physics.addPhysicsStepListener(idle.stub);
+    physics.addPhysicsStepListener(moving.stub);
+
+    expect(physics.step(STEP)).toBe(true);
+
+    // Zero-step frame: only the moving listener is re-interpolated
+    const idleCalls = idle.afterPhysicsSync.mock.calls.length;
+    expect(physics.step(STEP / 4)).toBe(true);
+    expect(idle.afterPhysicsSync).toHaveBeenCalledTimes(idleCalls);
+    expect(moving.afterPhysicsSync).toHaveBeenCalledTimes(2);
+
+    physics.dispose();
+  });
+
+  it('removed listeners are no longer stepped and re-adding is idempotent', async () => {
+    const physics = new PhysicsWorld();
+    await physics.initialize();
+    const { stub, beforePhysicsStep } = makeListenerStub(true);
+    physics.addPhysicsStepListener(stub);
+    physics.addPhysicsStepListener(stub); // duplicate add is a no-op
+
+    physics.step(STEP);
+    expect(beforePhysicsStep).toHaveBeenCalledTimes(1);
+
+    physics.removePhysicsStepListener(stub);
+    physics.step(STEP);
+    expect(beforePhysicsStep).toHaveBeenCalledTimes(1);
+    // Removing again is safe
+    physics.removePhysicsStepListener(stub);
+
+    physics.dispose();
+  });
+
+  it('resetTimestep drops accumulated time so no catch-up steps fire', async () => {
+    const physics = new PhysicsWorld();
+    await physics.initialize();
+    const { stub, beforePhysicsStep } = makeListenerStub(false);
+    physics.addPhysicsStepListener(stub);
+
+    // Accumulate almost a full step, then reset (e.g. on unpause)
+    physics.step(STEP * 0.9);
+    physics.resetTimestep();
+    physics.step(STEP * 0.5);
+    expect(beforePhysicsStep).not.toHaveBeenCalled();
 
     physics.dispose();
   });

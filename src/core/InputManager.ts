@@ -100,6 +100,18 @@ export class InputManager {
   }
 
   /**
+   * Reset ALL input state, including touch axes (which clearTransientState
+   * deliberately leaves alone — touch axes are level-based, not event-deltas).
+   * Called on mode switches so a hidden joystick can't leave inputs stuck.
+   */
+  resetAll(): void {
+    this.clearTransientState();
+    this.touchMoveDirection = { x: 0, y: 0 };
+    this.touchLookDelta = { x: 0, y: 0 };
+    this.verticalInput = 0;
+  }
+
+  /**
    * Check if a key is currently pressed
    */
   isKeyPressed(key: string): boolean {
@@ -156,8 +168,19 @@ export class InputManager {
    * (touchscreen laptops) still get pointer lock.
    */
   requestPointerLock(): void {
-    if (!hasCoarsePrimaryPointer()) {
-      document.body.requestPointerLock();
+    if (hasCoarsePrimaryPointer()) {
+      return;
+    }
+    // Can throw or reject: browsers refuse lock during the ~1s cooldown
+    // after Esc, without user activation, or in headless/sandboxed
+    // contexts. Losing mouse look for one click is fine; crashing isn't.
+    try {
+      const result = document.body.requestPointerLock() as unknown;
+      if (result instanceof Promise) {
+        result.catch(() => {});
+      }
+    } catch {
+      // ignore — the next click retries
     }
   }
 

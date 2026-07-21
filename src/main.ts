@@ -2,6 +2,10 @@ import './style.css';
 import { Engine } from './core/Engine';
 import { InputManager } from './core/InputManager';
 import { FlightController } from './camera/FlightController';
+import { ModeManager } from './modes/ModeManager';
+import { MenuMode } from './modes/MenuMode';
+import { ExploreMode } from './modes/ExploreMode';
+import { LanderMode } from './modes/LanderMode';
 // Skybox is now handled as a mesh inside CelestialSystem
 import { CelestialSystem } from './environment/CelestialSystem';
 import { ChunkManager, type ChunkConfig } from './terrain/ChunkManager';
@@ -54,6 +58,8 @@ const cameraConfig: CameraConfig = {
 
 // Initialize engine (camera frustum comes from cameraConfig)
 const engine = new Engine(canvas, cameraConfig);
+// Debug stats stay hidden until Explore mode is entered (onModeChange below)
+engine.setStatsVisible(false);
 
 // Initialize input manager
 const inputManager = new InputManager();
@@ -129,10 +135,65 @@ const flightController = new FlightController(
   cameraConfig,
   chunkManager
 );
-engine.setFlightController(flightController);
 
 // Set input manager in engine
 engine.setInputManager(inputManager);
+
+// Initialize touch controls early so modes can toggle their visibility
+// (touch-capable devices only); hidden until Explore mode is entered
+let touchControls: TouchControls | null = null;
+if (isTouchDevice()) {
+  touchControls = new TouchControls(inputManager);
+  touchControls.setFlightController(flightController);
+  touchControls.setVisible(false);
+}
+
+// Debug UI (stats overlay, shader panel, debug keys) requires ?debug=true
+const debugEnabled =
+  new URLSearchParams(window.location.search).get('debug') === 'true';
+
+// --- Game modes (ADR-0001): Menu, Explore, Lander share one world ---
+const modeManager = new ModeManager(inputManager, (mode) => {
+  const isExplore = mode === exploreMode;
+  // Debug UI and the O/I/C debug keys all require ?debug=true
+  engine.setStatsVisible(debugEnabled && isExplore);
+  engine.setDebugKeysEnabled(debugEnabled && mode !== landerMode);
+  shaderUI.setVisible(debugEnabled && isExplore);
+});
+engine.setModeManager(modeManager);
+
+const exploreMode = new ExploreMode({
+  camera: engine.getCamera(),
+  flightController,
+  inputManager,
+  touchControls,
+  canvas,
+  requestRender: () => engine.requestRender(),
+  onExitToMenu: () => modeManager.switchTo(menuMode),
+});
+
+const landerMode = new LanderMode({
+  camera: engine.getCamera(),
+  scene: engine.getScene(),
+  inputManager,
+  chunkManager,
+  rockConfig: rockGeneration,
+  rockLibrarySize: 30, // must match the RockManager prototype count above
+  requestRender: () => engine.requestRender(),
+  onExitToMenu: () => modeManager.switchTo(menuMode),
+  setPaused: (paused) => modeManager.setPaused(paused),
+});
+
+const menuMode = new MenuMode(engine.getCamera(), {
+  onSelectExplore: () => modeManager.switchTo(exploreMode),
+  onSelectLander: () => modeManager.switchTo(landerMode),
+  requestRender: () => engine.requestRender(),
+});
+
+// Show the main menu once loading completes
+loadingManager.setOnComplete(() => {
+  modeManager.switchTo(menuMode);
+});
 
 // Initialize physics system (async)
 const physicsWorld = new PhysicsWorld();
@@ -167,12 +228,15 @@ physicsWorld.initialize().then(() => {
   
   // Wire up physics system
   physicsWorld.setTerrainColliderManager(terrainColliderManager);
-  physicsWorld.setBallManager(ballManager);
+  physicsWorld.addPhysicsStepListener(ballManager);
   engine.setPhysicsWorld(physicsWorld);
   engine.setTerrainColliderManager(terrainColliderManager);
-  engine.setBallManager(ballManager);
-  
-  console.log('[Physics] Physics system ready. Press Space to shoot balls.');
+
+  // Late injection into modes (they exist before physics is ready)
+  exploreMode.setBallManager(ballManager);
+  landerMode.setPhysics(physicsWorld, ballManager);
+
+  console.log('[Physics] Physics system ready. Press Space to shoot balls (Explore mode).');
 }).catch((err) => {
   console.error('[Physics] Failed to initialize:', err);
 });
@@ -193,58 +257,8 @@ engine.getCamera().rotation.z -= 0.06;
 // Force initial render after camera position is set
 engine.requestRender();
 
-// Set up click to enable pointer lock. Always registered so hybrid devices
-// (touchscreen laptops) keep mouse look — requestPointerLock() itself is a
-// no-op when the primary pointer is coarse (phones/tablets).
-canvas.addEventListener('click', () => {
-  inputManager.requestPointerLock();
-});
-
-// Initialize touch controls (touch-capable devices)
-let touchControls: TouchControls | null = null;
-if (isTouchDevice()) {
-  touchControls = new TouchControls(inputManager);
-  touchControls.setFlightController(flightController);
-}
-
-// FPS mode hint overlay — shown for 2.5s when pointer lock is acquired
-const pointerLockHint = document.createElement('div');
-pointerLockHint.textContent = '🖱️ Press ESC to release mouse';
-Object.assign(pointerLockHint.style, {
-  position: 'fixed',
-  top: '20px',
-  left: '50%',
-  transform: 'translateX(-50%)',
-  background: 'rgba(0, 0, 0, 0.65)',
-  color: '#fff',
-  padding: '8px 18px',
-  borderRadius: '8px',
-  fontSize: '14px',
-  fontFamily: 'system-ui, sans-serif',
-  pointerEvents: 'none',
-  opacity: '0',
-  transition: 'opacity 0.3s ease',
-  zIndex: '9999',
-});
-document.body.appendChild(pointerLockHint);
-
-let hintTimeout: ReturnType<typeof setTimeout> | null = null;
-
-document.addEventListener('pointerlockchange', () => {
-  if (document.pointerLockElement) {
-    // Pointer just locked — show hint
-    if (hintTimeout) clearTimeout(hintTimeout);
-    pointerLockHint.style.opacity = '1';
-    hintTimeout = setTimeout(() => {
-      pointerLockHint.style.opacity = '0';
-    }, 2500);
-  } else {
-    // Pointer released — hide immediately
-    if (hintTimeout) { clearTimeout(hintTimeout); hintTimeout = null; }
-    pointerLockHint.style.opacity = '0';
-  }
-});
-
+// Pointer-lock acquisition, the ESC hint, and touch-control visibility are
+// owned by ExploreMode (ADR-0001 §5)
 
 // Initialize celestial system (sun, Earth, skybox, lighting with Moon curvature)
 // Only override position values - all intensity/range defaults come from CelestialSystem
@@ -290,6 +304,8 @@ const shaderUI = new ShaderUIController(
   () => engine.requestRender(),
   celestialSystem
 );
+// Shader panel stays hidden until Explore mode is entered (onModeChange)
+shaderUI.setVisible(false);
 
 // Load texture
 const textureLoader = new TextureLoader();
@@ -417,7 +433,7 @@ if (isTouchDevice()) {
   console.log('  Up/Down buttons - Move up/down');
   console.log('  Speed button (top right) - Tap to cycle speed');
   console.log('  O - Toggle debug wireframe (shows LOD chunks)');
-  console.log('  Space - Shoot ball');
+  console.log('  Space - Shoot ball (Explore mode)');
 } else {
   console.log('Lunar Explorer - Desktop Controls:');
   console.log('  Click to enable mouse look');
@@ -429,12 +445,17 @@ if (isTouchDevice()) {
   console.log('  Scroll - Adjust speed');
   console.log('  Escape - Release mouse');
   console.log('  O - Toggle debug wireframe (shows LOD chunks)');
-  console.log('  Space - Shoot ball');
+  console.log('  Space - Shoot ball (Explore mode)');
 }
 
 // Expose setCameraPosition to window for debugging
 (window as unknown as { setCameraPosition: (x: number, y: number, z: number) => void }).setCameraPosition = (x: number, y: number, z: number) => {
+  if (modeManager.getActiveMode() === landerMode) {
+    console.warn('setCameraPosition is disabled in Lander mode (camera is driven by the lander rig)');
+    return;
+  }
   engine.getCamera().position.set(x, y, z);
+  flightController.syncFromCamera();
   console.log(`Camera position set to: (${x}, ${y}, ${z})`);
 };
 

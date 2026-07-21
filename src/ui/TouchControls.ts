@@ -229,6 +229,15 @@ export class TouchControls {
   }
 
   /**
+   * Show or hide the touch controls overlay. The instance (and its nipplejs
+   * joystick) stays alive so speed presets survive mode switches.
+   * Callers must reset InputManager touch axes when hiding mid-touch.
+   */
+  setVisible(visible: boolean): void {
+    this.container.style.display = visible ? '' : 'none';
+  }
+
+  /**
    * Dispose of touch controls
    */
   dispose(): void {

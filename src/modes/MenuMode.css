@@ -1,0 +1,79 @@
+.menu-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.55) 0%,
+    rgba(0, 0, 0, 0.25) 45%,
+    rgba(0, 0, 0, 0.6) 100%
+  );
+  z-index: 900;
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  color: #fff;
+}
+
+.menu-title {
+  font-size: clamp(2rem, 6vw, 3.5rem);
+  font-weight: 700;
+  letter-spacing: 0.35em;
+  text-indent: 0.35em; /* balance letter-spacing on the last glyph */
+  color: #f0f0f0;
+  text-shadow: 0 0 30px rgba(160, 190, 255, 0.35);
+}
+
+.menu-subtitle {
+  font-size: clamp(0.85rem, 2vw, 1.05rem);
+  color: #b9c2d0;
+  margin-bottom: 2.5rem;
+  letter-spacing: 0.08em;
+}
+
+.menu-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: min(320px, 80vw);
+}
+
+.menu-button {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 1rem 1.25rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  color: #fff;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.menu-button:hover,
+.menu-button:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.6);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.menu-button:active {
+  transform: translateY(0);
+}
+
+.menu-button-name {
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.menu-button-desc {
+  font-size: 0.82rem;
+  color: #aab3c2;
+}

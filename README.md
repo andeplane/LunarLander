@@ -1,6 +1,9 @@
 # Lunar Explorer
 
-A browser-based Moon exploration experience built with TypeScript and Three.js, featuring procedural terrain generation with LOD-based chunk streaming, delivering a visually compelling lunar surface you can fly over freely.
+A browser-based Moon experience built with TypeScript and Three.js, featuring procedural terrain generation with LOD-based chunk streaming. Two modes, selected from the main menu:
+
+- **Explore** — free flight over the lunar surface.
+- **Fly the Lander** — a 3D lunar-lander game played from inside the cockpit: real Rapier physics, drone-style assisted attitude control (tilt-to-translate, auto-level on release), fuel management, seeded missions with landing pads, Apollo-derived landing grades (Perfect / Good / Hard / Crash), and scoring with local best tracking. Design decisions are documented in [docs/adr/](docs/adr/).
 
 **🎮 [Live Demo](https://andeplane.github.io/LunarLander/)** | **📦 [GitHub Repository](https://github.com/andeplane/LunarLander)**
 
@@ -124,7 +127,34 @@ Based on Rüsch et al. 2024 lunar rock distribution research:
 - [`src/environment/RockBuilder.ts`](src/environment/RockBuilder.ts) - Rock geometry generation
 - [`src/environment/RockManager.ts`](src/environment/RockManager.ts) - Rock placement and instancing
 
-### Camera & Controls
+### Lander Game
+
+Cockpit-view lunar landing with honest rigid-body physics and an assist layer that makes 3D landing approachable (ADR-0002):
+
+- **Angle-mode attitude control**: input commands a target tilt (max 25°), a critically-damped PD controller flies it; releasing input auto-levels. Yaw is decoupled and rate-limited — tumbling is impossible in normal play.
+- **Persistent throttle lever** with hover tick, full-thrust punch (Space), instant cut (X), and a toggleable hover-hold auto-throttle (H, costs a score multiplier).
+- **Missions**: seeded landing pads found by a deterministic flat-disc search on unbuilt terrain (with rock exclusion), parameterized difficulty ramp, per-mission best scores in localStorage.
+- **Instruments**: vertical speed, radar altitude (physics raycast), drift meter, artificial horizon, throttle/fuel tapes, pad designator with off-screen arrow, touchdown-readiness pips, in-world pad beacon + ballistic impact reticle (curvature-aware).
+- **Cameras**: cockpit (windows + struts as tilt reference), belly cam (C), glance-down (V), external aftermath shot on crash.
+
+**Lander Controls:**
+
+| Input | Action |
+|-------|--------|
+| **W/S, A/D** | Tilt target (release → auto-level) |
+| **Q/E** or **←/→** | Yaw |
+| **↑/↓** | Throttle lever |
+| **Space** | Full thrust while held |
+| **X** | Cut throttle |
+| **H** | Hover-hold assist |
+| **C** | Cockpit ↔ belly camera |
+| **V** | Glance down |
+| **R** | Restart mission |
+| **Esc** | Pause |
+
+Touch devices get a dedicated control set: right stick = tilt, sticky left slider = throttle, yaw paddles, hover-hold button.
+
+### Camera & Controls (Explore)
 
 Free-flight camera system with smooth movement and terrain awareness:
 

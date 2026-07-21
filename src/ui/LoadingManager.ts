@@ -15,6 +15,7 @@ export class LoadingManager {
   private textElement: HTMLElement | null = null;
   private isComplete: boolean = false;
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+  private onCompleteCallback: (() => void) | null = null;
 
   /**
    * @param watchdogMs Milliseconds before loading is force-completed if
@@ -129,6 +130,12 @@ export class LoadingManager {
       this.watchdogTimer = null;
     }
 
+    // Notify listener (e.g. main.ts activating the main menu). Fires exactly
+    // once, including on watchdog force-completion.
+    if (this.onCompleteCallback) {
+      this.onCompleteCallback();
+    }
+
     // Ensure progress bar is at 100%
     if (this.progressBarElement) {
       this.progressBarElement.style.width = '100%';
@@ -147,6 +154,18 @@ export class LoadingManager {
         }, 500);
       }
     }, 300);
+  }
+
+  /**
+   * Register a callback fired once when loading completes (or is
+   * force-completed by the watchdog). If loading already completed,
+   * the callback fires immediately.
+   */
+  setOnComplete(callback: () => void): void {
+    this.onCompleteCallback = callback;
+    if (this.isComplete) {
+      callback();
+    }
   }
 
   /**

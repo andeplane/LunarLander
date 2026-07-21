@@ -1,15 +1,15 @@
 /**
  * PhysicsWorld - Wrapper for Rapier physics world
- * 
+ *
  * Handles:
  * - Async initialization of Rapier WASM
  * - Physics world creation with lunar gravity
  * - Physics stepping
- * - Coordination between TerrainColliderManager and BallManager
+ * - A registry of PhysicsStepListeners (balls, lander, ...) that apply
+ *   forces per fixed step and sync meshes with interpolation
  */
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { TerrainColliderManager } from './TerrainColliderManager';
-import type { BallManager } from './BallManager';
 import { FixedTimestep } from './FixedTimestep';
 
 /**
@@ -17,12 +17,31 @@ import { FixedTimestep } from './FixedTimestep';
  */
 const LUNAR_GRAVITY = -1.62;
 
+/**
+ * A participant in the fixed-timestep physics loop.
+ *
+ * Contract (see ADR-0001 §3):
+ * - beforePhysicsStep(dtFixed) runs once per fixed step, before world.step().
+ *   Apply forces/torques and snapshot pre-step transforms here.
+ * - afterPhysicsSync(alpha) syncs render meshes to physics state,
+ *   interpolating between pre/post-step transforms by alpha. It runs on
+ *   every frame where at least one fixed step landed, and additionally on
+ *   zero-step frames while this listener's cached moving flag is set (the
+ *   high-refresh-rate re-interpolation path). Returns whether this
+ *   listener's objects are still moving (drives render-on-demand).
+ */
+export interface PhysicsStepListener {
+  beforePhysicsStep(dtFixed: number): void;
+  afterPhysicsSync(alpha: number): boolean;
+}
+
 export class PhysicsWorld {
   private world: RAPIER.World | null = null;
   private isInitialized: boolean = false;
-  private ballManager: BallManager | null = null;
   private timestep = new FixedTimestep();
-  private objectsMoving: boolean = false;
+  private listeners: PhysicsStepListener[] = [];
+  /** Per-listener cached "still moving" flags (parallel to listeners). */
+  private moving: WeakMap<PhysicsStepListener, boolean> = new WeakMap();
 
   /**
    * Initialize Rapier WASM and create physics world.
@@ -73,16 +92,30 @@ export class PhysicsWorld {
   }
 
   /**
-   * Set the ball manager.
+   * Register a physics step listener. Idempotent.
    */
-  setBallManager(manager: BallManager): void {
-    this.ballManager = manager;
+  addPhysicsStepListener(listener: PhysicsStepListener): void {
+    if (!this.listeners.includes(listener)) {
+      this.listeners.push(listener);
+      this.moving.set(listener, false);
+    }
+  }
+
+  /**
+   * Remove a physics step listener. Safe to call for unregistered listeners.
+   */
+  removePhysicsStepListener(listener: PhysicsStepListener): void {
+    const index = this.listeners.indexOf(listener);
+    if (index !== -1) {
+      this.listeners.splice(index, 1);
+      this.moving.delete(listener);
+    }
   }
 
   /**
    * Step the physics simulation forward by deltaTime seconds.
    * Should be called every frame.
-   * 
+   *
    * @returns true if any physics objects are moving (need rendering), false otherwise
    */
   step(deltaTime: number): boolean {
@@ -94,9 +127,11 @@ export class PhysicsWorld {
     // of physics steps, so simulation speed is independent of frame rate
     const steps = this.timestep.advance(deltaTime);
     for (let i = 0; i < steps; i++) {
-      // Capture pre-step transforms so meshes can interpolate between the
-      // previous and current physics states on frames between fixed steps
-      this.ballManager?.beforePhysicsStep();
+      // Listeners apply forces and capture pre-step transforms so meshes can
+      // interpolate between the previous and current physics states
+      for (const listener of this.listeners) {
+        listener.beforePhysicsStep(this.timestep.stepSize);
+      }
       this.world.step();
     }
 
@@ -104,20 +139,34 @@ export class PhysicsWorld {
     // past the last simulated physics step
     const alpha = this.timestep.getAlpha();
 
-    if (steps > 0) {
-      // Update ball meshes to interpolated physics positions
-      // Returns true if any balls are moving
-      this.objectsMoving = this.ballManager ? this.ballManager.update(alpha) : false;
-    } else if (this.objectsMoving && this.ballManager) {
-      // No fixed step landed on this frame (display faster than the physics
-      // rate), but balls are mid-flight: re-interpolate the meshes with the
-      // grown alpha so motion stays smooth instead of stuttering at 60 Hz.
-      // The cached objectsMoving flag is kept — movement/despawn state can
-      // only change when a physics step actually runs.
-      this.ballManager.update(alpha);
+    let anyMoving = false;
+    for (const listener of this.listeners) {
+      if (steps > 0) {
+        // Fixed step(s) landed this frame: sync meshes and refresh the
+        // cached moving flag (movement/despawn state can only change when
+        // a physics step actually runs)
+        this.moving.set(listener, listener.afterPhysicsSync(alpha));
+      } else if (this.moving.get(listener)) {
+        // No fixed step landed (display faster than the physics rate), but
+        // this listener's objects are mid-flight: re-interpolate with the
+        // grown alpha so motion stays smooth instead of stuttering at 60 Hz.
+        // The cached flag is kept — it can only change on a real step.
+        listener.afterPhysicsSync(alpha);
+      }
+      if (this.moving.get(listener)) {
+        anyMoving = true;
+      }
     }
 
-    return this.objectsMoving;
+    return anyMoving;
+  }
+
+  /**
+   * Reset the fixed-timestep accumulator (call on unpause so no catch-up
+   * burst of physics steps fires for the time spent paused).
+   */
+  resetTimestep(): void {
+    this.timestep.reset();
   }
 
   /**
@@ -130,8 +179,8 @@ export class PhysicsWorld {
       this.world = null;
     }
     this.isInitialized = false;
-    this.ballManager = null;
+    this.listeners = [];
+    this.moving = new WeakMap();
     this.timestep.reset();
-    this.objectsMoving = false;
   }
 }

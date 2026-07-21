@@ -816,8 +816,15 @@ const handleChunkMessage = (m: MessageEvent<ChunkWorkerMessage>): void => {
   postMessage(result, { transfer });
 };
 
-// `self` only exists in the worker; the module is also imported under node
-// (vitest) for the exported placement functions
-if (typeof self !== 'undefined') {
+// Register the message handler only inside an actual Web Worker. The module
+// is also imported under node (vitest) and on the browser main thread (pad
+// search reuses generateRockPlacements) — `self` exists as `window` there,
+// and assigning onmessage would hijack the page's message handler.
+declare const WorkerGlobalScope: (new () => unknown) | undefined;
+if (
+  typeof WorkerGlobalScope !== 'undefined' &&
+  typeof self !== 'undefined' &&
+  self instanceof WorkerGlobalScope
+) {
   self.onmessage = handleChunkMessage;
 }

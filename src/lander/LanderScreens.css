@@ -1,0 +1,330 @@
+/* Briefing / pause / debrief overlays (ADR-0004 §2/§3).
+   Sits above the HUD (z 200) and below the loading overlay (z 1000). */
+
+.lander-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 850;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  color: #fff;
+}
+
+.lander-screen.hidden {
+  display: none;
+}
+
+.screen-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  width: min(460px, 94vw);
+  max-height: 92vh;
+  overflow-y: auto;
+  background: rgba(8, 12, 18, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 14px;
+  padding: clamp(1.1rem, 4vw, 1.8rem);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55);
+  text-align: center;
+}
+
+.screen-kicker {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #93a0b4;
+}
+
+.screen-title {
+  font-size: clamp(1.4rem, 5vw, 2rem);
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em; /* balance letter-spacing on the last glyph */
+  color: #f0f0f0;
+}
+
+.screen-objective {
+  font-size: 0.92rem;
+  color: #c3ccd9;
+}
+
+.screen-hint {
+  font-size: 0.72rem;
+  color: #8892a3;
+}
+
+/* --- Buttons (≥ 48px tap targets) --- */
+
+.screen-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.screen-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 48px;
+  padding: 0.7rem 1.1rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  color: #fff;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.screen-button:hover,
+.screen-button:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.6);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.screen-button:active {
+  transform: translateY(0);
+}
+
+.screen-button.primary {
+  background: rgba(99, 224, 138, 0.14);
+  border-color: rgba(99, 224, 138, 0.55);
+}
+
+.screen-button.primary:hover,
+.screen-button.primary:focus-visible {
+  background: rgba(99, 224, 138, 0.24);
+  border-color: rgba(99, 224, 138, 0.85);
+}
+
+.screen-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+  pointer-events: none;
+  transform: none;
+}
+
+.button-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.66rem;
+  color: #b9c2d0;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+
+/* --- Briefing --- */
+
+.briefing-stats {
+  display: flex;
+  justify-content: center;
+  gap: clamp(0.8rem, 4vw, 1.6rem);
+}
+
+.stat-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 72px;
+}
+
+.stat-value {
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #93a0b4;
+}
+
+.briefing-controls {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 0.7rem 0.9rem;
+}
+
+.controls-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.3rem 0.8rem;
+  align-items: center;
+  text-align: left;
+  font-size: 0.78rem;
+  color: #c3ccd9;
+}
+
+.controls-grid .key {
+  justify-self: end;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  color: #e8edf4;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+
+.launch-button {
+  font-size: 1.1rem;
+  letter-spacing: 0.18em;
+  text-indent: 0.18em;
+}
+
+/* --- Debrief --- */
+
+.debrief-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.debrief-grade {
+  font-size: clamp(1.3rem, 5vw, 1.8rem);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.grade-perfect {
+  color: #63e08a;
+  text-shadow: 0 0 18px rgba(99, 224, 138, 0.45);
+}
+
+.grade-good {
+  color: #a9d98f;
+}
+
+.grade-hard {
+  color: #ffc94d;
+}
+
+.grade-crash {
+  color: #ff5f56;
+}
+
+.debrief-stars {
+  font-size: 1.6rem;
+  line-height: 1;
+  letter-spacing: 0.25em;
+  text-indent: 0.25em;
+}
+
+.stars-filled {
+  color: #ffd75e;
+  text-shadow: 0 0 12px rgba(255, 215, 94, 0.5);
+}
+
+.stars-empty {
+  color: rgba(255, 255, 255, 0.22);
+}
+
+.new-best-badge {
+  align-self: center;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  color: #0c0f14;
+  background: #ffd75e;
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.debrief-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+}
+
+.debrief-table td {
+  padding: 0.32rem 0.2rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.debrief-table tr:first-child td {
+  border-top: none;
+}
+
+.td-factor {
+  text-align: left;
+  color: #c3ccd9;
+}
+
+.td-value {
+  text-align: right;
+  color: #e8edf4;
+  font-variant-numeric: tabular-nums;
+}
+
+.td-points {
+  width: 3.6em;
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.td-points.ok {
+  color: #63e08a;
+}
+
+.td-points.bad {
+  color: #ff5f56;
+}
+
+.debrief-totals {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.88rem;
+}
+
+.debrief-total-row {
+  display: flex;
+  justify-content: space-between;
+  color: #c3ccd9;
+  font-variant-numeric: tabular-nums;
+}
+
+.debrief-total-row.debrief-total {
+  margin-top: 0.2rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #fff;
+}
+
+.debrief-best {
+  font-size: 0.78rem;
+  color: #93a0b4;
+}
+
+/* Side-by-side debrief buttons when there is room */
+@media (min-width: 480px) {
+  .debrief-buttons {
+    flex-direction: row;
+  }
+
+  .debrief-buttons .screen-button {
+    flex: 1;
+  }
+}

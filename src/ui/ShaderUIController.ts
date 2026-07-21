@@ -261,6 +261,18 @@ export class ShaderUIController {
   }
 
   /**
+   * Show or hide the GUI panel (hidden outside Explore mode).
+   */
+  setVisible(visible: boolean): void {
+    if (!this.gui) return;
+    if (visible) {
+      this.gui.show();
+    } else {
+      this.gui.hide();
+    }
+  }
+
+  /**
    * Dispose of the GUI
    */
   dispose(): void {
