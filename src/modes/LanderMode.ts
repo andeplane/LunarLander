@@ -105,6 +105,9 @@ export class LanderMode implements GameMode {
   private worstDrift = 0;
   private worstTilt = 0;
   private crashReason: string | null = null;
+  // Cockpit camera feel: engine vibration clock and touchdown jolt envelope
+  private shakeTime = 0;
+  private jolt = 0;
   private restTime = 0;
   private aftermathTime = 0;
 
@@ -113,6 +116,7 @@ export class LanderMode implements GameMode {
   private readonly vec2 = new THREE.Vector3();
   private readonly quat = new THREE.Quaternion();
   private readonly eyeQuatOffset = new THREE.Quaternion();
+  private readonly shakeEuler = new THREE.Euler(0, 0, 0, 'YXZ');
   private readonly hudData: LanderHudData = {
     phase: 'briefing',
     altitudeAGL: null,
@@ -346,6 +350,11 @@ export class LanderMode implements GameMode {
       this.setCameraMode(next);
     }
 
+    // Camera feel clocks: vibration phase advances only while flying; the
+    // touchdown jolt decays over ~0.4 s
+    if (this.phase === 'flying') this.shakeTime += deltaTime;
+    this.jolt = Math.max(0, this.jolt - deltaTime * 2.5);
+
     // Glance (V): ease extra down-pitch in and out
     const glanceTarget =
       this.inputManager.isKeyPressed('v') || this.controls.isGlanceHeld() ? 1 : 0;
@@ -453,6 +462,7 @@ export class LanderMode implements GameMode {
     this.worstDrift = 0;
     this.worstTilt = 0;
     this.crashReason = null;
+    this.jolt = 0;
     this.restTime = 0;
     this.aftermathTime = 0;
     this.elapsed = 0;
@@ -613,6 +623,9 @@ export class LanderMode implements GameMode {
     const legsDown = sample.legContactCount > 0;
     if (legsDown && !this.legsWereDown) {
       this.audio.touchdown(sample.impactVerticalSpeed);
+      // Camera jolt scaled by impact speed (a perfect 1 m/s touchdown is a
+      // nudge, a 3 m/s 'good' limit landing is a proper thump)
+      this.jolt = Math.min(1, Math.max(0, sample.impactVerticalSpeed) / 3);
     }
     this.legsWereDown = legsDown;
 
@@ -804,6 +817,41 @@ export class LanderMode implements GameMode {
       const pitch = -LANDER_CONFIG.cockpitViewPitchRad - this.glanceBlend * 0.85;
       this.eyeQuatOffset.setFromAxisAngle(AXIS_X, pitch);
       this.camera.quaternion.copy(rig.quaternion).multiply(this.eyeQuatOffset);
+      this.applyCockpitFeel();
+    }
+  }
+
+  /**
+   * Sell the engine from inside the cockpit: a small high-frequency
+   * rotational vibration proportional to effective throttle (~0.2° at full
+   * thrust), a short vertical thump on touchdown, and a 1.5° FOV widening at
+   * full throttle. Applied after the rig transform so physics is untouched.
+   */
+  private applyCockpitFeel(): void {
+    if (!this.body) return;
+    const throttle = this.phase === 'flying' ? this.body.getEffectiveThrottle() : 0;
+    const t = this.shakeTime;
+
+    // Two incommensurate sines per axis read as noise, without allocations
+    const nx = Math.sin(t * 31.0) * 0.6 + Math.sin(t * 17.3) * 0.4;
+    const ny = Math.sin(t * 27.1) * 0.6 + Math.sin(t * 13.7) * 0.4;
+    const amp = 0.0035 * throttle + 0.012 * this.jolt;
+    if (amp > 0) {
+      this.shakeEuler.set(nx * amp, ny * amp, 0);
+      this.quat.setFromEuler(this.shakeEuler);
+      this.camera.quaternion.multiply(this.quat);
+    }
+    if (this.jolt > 0) {
+      // Seat drops then settles: damped half-sine on the up axis
+      this.vec.set(0, -0.06 * this.jolt * Math.sin(this.jolt * Math.PI), 0)
+        .applyQuaternion(this.body.rig.quaternion);
+      this.camera.position.add(this.vec);
+    }
+
+    const fov = LANDER_CONFIG.cockpitFov + 1.5 * throttle;
+    if (Math.abs(this.camera.fov - fov) > 0.02) {
+      this.camera.fov = fov;
+      this.camera.updateProjectionMatrix();
     }
   }
 
