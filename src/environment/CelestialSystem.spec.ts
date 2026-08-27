@@ -185,8 +185,42 @@ describe(CelestialSystem.name, () => {
   });
 
   describe('camera-attached lights', () => {
-    it('moves the spaceship light and flashlight with the camera', () => {
+    it('are hidden by default so they add no per-fragment lighting cost', () => {
       const system = makeSystem();
+
+      const spaceshipLight = scene.getObjectByName('SpaceshipLight') as THREE.PointLight;
+      const flashlight = scene.getObjectByName('Flashlight') as THREE.SpotLight;
+
+      expect(spaceshipLight.intensity).toBe(0);
+      expect(spaceshipLight.visible).toBe(false);
+      expect(flashlight.intensity).toBe(0);
+      expect(flashlight.visible).toBe(false);
+
+      system.dispose();
+    });
+
+    it('become visible when given a positive intensity and hidden again at zero', () => {
+      const system = makeSystem();
+      const spaceshipLight = scene.getObjectByName('SpaceshipLight') as THREE.PointLight;
+      const flashlight = scene.getObjectByName('Flashlight') as THREE.SpotLight;
+
+      system.spaceshipLightIntensity = 5;
+      system.flashlightIntensity = 10;
+      expect(spaceshipLight.visible).toBe(true);
+      expect(flashlight.visible).toBe(true);
+
+      system.spaceshipLightIntensity = 0;
+      system.flashlightIntensity = 0;
+      expect(spaceshipLight.visible).toBe(false);
+      expect(flashlight.visible).toBe(false);
+
+      system.dispose();
+    });
+
+    it('moves the spaceship light and flashlight with the camera while switched on', () => {
+      const system = makeSystem();
+      system.spaceshipLightIntensity = 5;
+      system.flashlightIntensity = 10;
       const camera = new THREE.PerspectiveCamera();
       camera.position.set(10, 20, 30); // default orientation looks down -Z
       system.setCamera(camera);

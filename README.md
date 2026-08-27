@@ -57,8 +57,8 @@ The development server will start at `http://localhost:3000` (or the next availa
 - **Four Light Sources**:
   - Sun directional light (main illumination)
   - Earthshine directional light (weak bluish reflected light from Earth)
-  - Spaceship point light (local illumination attached to camera)
-  - Flashlight spot light (directional cone pointing where camera looks)
+  - Spaceship point light (local illumination attached to camera; off by default, enable via the debug GUI)
+  - Flashlight spot light (directional cone pointing where camera looks; off by default, enable via the debug GUI)
 - **Sky Curvature Rotation**: Entire celestial container rotates to simulate travel on a curved planetary surface
 
 ### Terrain Generation
