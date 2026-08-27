@@ -188,6 +188,11 @@ export class MoonMaterial extends MeshStandardMaterial {
       shader.uniforms.uMicroDetailStrength = { value: this.params.microDetailStrength ?? 0.3 };
       shader.uniforms.uMicroDetailFrequency = { value: this.params.microDetailFrequency ?? 2.0 };
       shader.uniforms.uMicroDetailOctaves = { value: this.params.microDetailOctaves ?? 4 };
+      // Octave count is baked in as a define so the FBM loop unrolls (a
+      // uniform loop bound cannot). Changing it requires a recompile - see
+      // setParam().
+      shader.defines = shader.defines ?? {};
+      shader.defines.MICRO_DETAIL_OCTAVES = Math.max(1, Math.round(this.params.microDetailOctaves ?? 4));
       shader.uniforms.uMicroDetailFadeStart = { value: this.params.microDetailFadeStart ?? 5.0 };
       shader.uniforms.uMicroDetailFadeEnd = { value: this.params.microDetailFadeEnd ?? 100.0 };
 
@@ -393,12 +398,11 @@ export class MoonMaterial extends MeshStandardMaterial {
           if (detailFade > 0.01) {
             // Compute micro-normal using derivative-based FBM
             // Use integer octaves (convert from float uniform)
-            int octaves = int(uMicroDetailOctaves);
             microNormal = computeMicroNormal(
               terrainPos, 
               uMicroDetailFrequency, 
               uMicroDetailStrength * detailFade,
-              octaves
+              MICRO_DETAIL_OCTAVES
             );
             
             // Blend micro-normal with mesh normal
@@ -432,12 +436,21 @@ export class MoonMaterial extends MeshStandardMaterial {
           vec2 uvNonHex = terrainPos * uNonHexUvScale;
           vec2 uvHex = terrainPos * uHexUvScale;
           
-          // Sample non-hex texture (regular sampling)
-          vec3 nonHexColor = texture2D(uTextureHighDetail, uvNonHex).rgb;
+          // hexFactor depends only on a uniform (camera height), so these
+          // branches are coherent across the whole draw: below 5 m only the
+          // single plain tap runs, above 10 m only the hex path (up to 4 taps).
+          // Previously both always ran and were mixed, i.e. 5 anisotropic
+          // taps per fragment even when one side had zero weight.
+          vec3 nonHexColor = vec3(0.0);
+          if (hexFactor < 1.0) {
+            nonHexColor = texture2D(uTextureHighDetail, uvNonHex).rgb;
+          }
           
-          // Sample hex texture (always use hex tiling when hexFactor > 0)
-          bool useContrastCorrect = uHexContrastCorrection > 0.5;
-          vec3 hexColor = textureNoTileHex(uTextureHighDetail, uvHex, uHexPatchScale, useContrastCorrect);
+          vec3 hexColor = vec3(0.0);
+          if (hexFactor > 0.0) {
+            bool useContrastCorrect = uHexContrastCorrection > 0.5;
+            hexColor = textureNoTileHex(uTextureHighDetail, uvHex, uHexPatchScale, useContrastCorrect);
+          }
           
           // Interpolate between non-hex and hex based on height.
           // The texture fully replaces the procedural color when texturing is on.
@@ -601,6 +614,10 @@ export class MoonMaterial extends MeshStandardMaterial {
     if (Object.is(this.params[key], value)) return;
     this.params[key] = value;
     this.updateUniforms();
+    if (key === 'microDetailOctaves') {
+      // Baked into a shader define (see onBeforeCompile); needs a recompile.
+      this.needsUpdate = true;
+    }
   }
 
   /**
