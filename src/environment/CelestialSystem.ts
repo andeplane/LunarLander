@@ -74,9 +74,14 @@ const DEFAULT_CONFIG: CelestialConfig = {
   earthDistance: 40000,
   earthSize: 1500,       // Earth appears ~4x larger than sun from Moon
   earthshineMultiplier: 0.15,
-  spaceshipLightIntensity: 5,     // Default intensity
+  // Camera-attached lights default to OFF. A light glued to the eye flattens
+  // all relief (no shading gradient on surfaces facing the camera), and each
+  // extra light adds a full BRDF evaluation per fragment on every terrain and
+  // rock pixel. With intensity 0 the lights are hidden, so the shader is
+  // compiled without point/spot light code at all. Raise via the debug GUI.
+  spaceshipLightIntensity: 0,
   spaceshipLightRange: 200,        // 200m range
-  flashlightIntensity: 10,         // Default intensity
+  flashlightIntensity: 0,
   flashlightRange: 500,            // 500m range
   flashlightAngle: Math.PI / 8,    // ~22.5 degree cone
   flashlightPenumbra: 0.3,         // Soft edges
@@ -351,6 +356,7 @@ export class CelestialSystem {
       2 // Quadratic decay for realistic falloff
     );
     this.spaceshipLight.name = 'SpaceshipLight';
+    this.spaceshipLight.visible = this.config.spaceshipLightIntensity > 0;
     // Position will be updated each frame to match camera
     this.scene.add(this.spaceshipLight);
     
@@ -364,6 +370,7 @@ export class CelestialSystem {
       2 // Quadratic decay
     );
     this.flashlight.name = 'Flashlight';
+    this.flashlight.visible = this.config.flashlightIntensity > 0;
     this.flashlight.target = this.flashlightTarget;
     // Position and target will be updated each frame based on camera
     this.scene.add(this.flashlight);
@@ -510,17 +517,21 @@ export class CelestialSystem {
       this.sunLight.intensity = 0.0;
     }
     
-    // Update spaceship light to follow camera
+    // Update camera-attached lights (only while they are switched on)
     if (this.camera) {
-      this.spaceshipLight.position.copy(this.camera.position);
-      
-      // Update flashlight position and direction
-      this.flashlight.position.copy(this.camera.position);
-      // Get camera forward direction and place target 100m ahead
-      this.flashlightForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
-      this.flashlightTarget.position
-        .copy(this.camera.position)
-        .add(this.flashlightForward.multiplyScalar(100));
+      if (this.spaceshipLight.visible) {
+        this.spaceshipLight.position.copy(this.camera.position);
+      }
+
+      if (this.flashlight.visible) {
+        // Update flashlight position and direction
+        this.flashlight.position.copy(this.camera.position);
+        // Get camera forward direction and place target 100m ahead
+        this.flashlightForward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+        this.flashlightTarget.position
+          .copy(this.camera.position)
+          .add(this.flashlightForward.multiplyScalar(100));
+      }
     }
 
     // Slowly rotate Earth (one rotation per ~24 hours scaled down)
@@ -609,6 +620,9 @@ export class CelestialSystem {
    */
   set spaceshipLightIntensity(value: number) {
     this.spaceshipLight.intensity = value;
+    // An invisible light is excluded from the scene's light count, so the
+    // materials recompile without point-light code when it is switched off.
+    this.spaceshipLight.visible = value > 0;
     this.requestRender();
   }
   
@@ -639,6 +653,8 @@ export class CelestialSystem {
    */
   set flashlightIntensity(value: number) {
     this.flashlight.intensity = value;
+    // See spaceshipLightIntensity: hidden lights cost nothing in the shader.
+    this.flashlight.visible = value > 0;
     this.requestRender();
   }
   
