@@ -134,8 +134,8 @@ export class MoonMaterial extends MeshStandardMaterial {
       
       // Micro-detail defaults (Elevated-inspired)
       enableMicroDetail: true,
-      microDetailStrength: 0.3,
-      microDetailFrequency: 2.0,
+      microDetailStrength: 0.18,
+      microDetailFrequency: 3.0,
       microDetailOctaves: 4,
       microDetailFadeStart: 5.0,
       microDetailFadeEnd: 100.0,
@@ -486,11 +486,25 @@ export class MoonMaterial extends MeshStandardMaterial {
       );
 
       // ==========================================
-      // NOTE: We do NOT override normal_fragment_begin
-      // Three.js's vNormal is in VIEW SPACE, our worldNorm is in WORLD SPACE
-      // Mixing them causes camera-angle-dependent lighting bugs
-      // Our custom fresnel/specular use worldNorm directly for micro-detail effects
+      // FEED THE MICRO-DETAIL NORMAL INTO THREE'S LIGHTING
+      // Three.js's `normal` is in VIEW SPACE while worldNorm is in WORLD
+      // SPACE, so it must be rotated by viewMatrix (a rigid transform, so
+      // the plain 3x3 is fine) - assigning worldNorm directly produced the
+      // camera-angle-dependent lighting bugs that used to be noted here.
+      // Without this the derivative-FBM regolith detail only affected the
+      // custom rim/specular terms and the diffuse lighting stayed
+      // vertex-normal smooth.
       // ==========================================
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <normal_fragment_begin>',
+        `
+        #include <normal_fragment_begin>
+        if (uEnableMicroDetail > 0.5 && detailFade > 0.01) {
+          normal = normalize(mat3(viewMatrix) * worldNorm);
+          nonPerturbedNormal = normal;
+        }
+        `
+      );
       
       // ==========================================
       // ADD FRESNEL RIM LIGHTING AND SPECULAR
