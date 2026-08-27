@@ -160,20 +160,31 @@ export class Chunk {
   }
 
   /**
-   * Set the active LOD level and update mesh visibility
-   * Note: Rock visibility is controlled separately based on bounding sphere screen space size.
+   * Set the active LOD level and update mesh visibility.
+   *
+   * Terrain meshes of every other level are hidden, and so are their rock
+   * meshes. Rock placement is LOD-stable (the same rock exists at the same
+   * position on every built level), so leaving inactive levels visible drew
+   * each rock once per retained level — up to 5x the triangles and draw calls.
+   * Rocks on the active level may additionally be hidden by
+   * ChunkManager.updateRockVisibility() based on screen-space size.
    */
   setLodLevel(lodLevel: number): void {
     this.currentLodLevel = lodLevel;
 
-    // Set visibility: only the active LOD level terrain meshes are visible
-    // Rock visibility is controlled by ChunkManager.updateRockVisibility() based on screen space size
     for (let i = 0; i < this.lodLevelCount; i++) {
       const isActive = i === lodLevel;
 
       const terrainMesh = this.terrainMeshes[i];
       if (terrainMesh) {
         terrainMesh.visible = isActive;
+      }
+
+      const rockMeshes = this.rockMeshes[i];
+      if (rockMeshes) {
+        for (const rockMesh of rockMeshes) {
+          rockMesh.visible = isActive;
+        }
       }
     }
   }

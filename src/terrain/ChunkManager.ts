@@ -676,40 +676,37 @@ export class ChunkManager {
     const minScreenSize = this.config.lodDetailLevel; // LodDetailLevel.Balanced = 4 pixels
 
     for (const chunk of this.chunks.values()) {
-      // Iterate through all LOD levels
-      for (let lodLevel = 0; lodLevel < chunk.getLodLevelCount(); lodLevel++) {
-        const rockMeshes = chunk.getRockMeshes(lodLevel);
-        
-        for (const rockMesh of rockMeshes) {
-          // Ensure bounding sphere is computed
-          if (!rockMesh.boundingSphere) {
-            rockMesh.computeBoundingSphere();
-          }
-
-          if (!rockMesh.boundingSphere) {
-            // No bounding sphere available, hide the mesh
-            rockMesh.visible = false;
-            continue;
-          }
-
-          // Transform bounding sphere center to world space (reusable vector)
-          const worldCenter = this.rockWorldCenter
-            .copy(rockMesh.boundingSphere.center)
-            .applyMatrix4(rockMesh.matrixWorld);
-          
-          // Calculate distance from camera to bounding sphere center in world space
-          const dx = cameraPosition.x - worldCenter.x;
-          const dy = cameraPosition.y - worldCenter.y;
-          const dz = cameraPosition.z - worldCenter.z;
-          const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-          // Calculate screen space size of bounding sphere diameter
-          const diameter = rockMesh.boundingSphere.radius * 2;
-          const screenSize = projectToScreenSpace(diameter, distance, fovRadians, screenHeight);
-
-          // Show rock if bounding sphere diameter is >= threshold
-          rockMesh.visible = screenSize >= minScreenSize;
+      // Only the active LOD level's rocks can be visible; Chunk.setLodLevel()
+      // has already hidden every other level's rock meshes.
+      for (const rockMesh of chunk.getRockMeshes(chunk.currentLodLevel)) {
+        // Ensure bounding sphere is computed
+        if (!rockMesh.boundingSphere) {
+          rockMesh.computeBoundingSphere();
         }
+
+        if (!rockMesh.boundingSphere) {
+          // No bounding sphere available, hide the mesh
+          rockMesh.visible = false;
+          continue;
+        }
+
+        // Transform bounding sphere center to world space (reusable vector)
+        const worldCenter = this.rockWorldCenter
+          .copy(rockMesh.boundingSphere.center)
+          .applyMatrix4(rockMesh.matrixWorld);
+
+        // Calculate distance from camera to bounding sphere center in world space
+        const dx = cameraPosition.x - worldCenter.x;
+        const dy = cameraPosition.y - worldCenter.y;
+        const dz = cameraPosition.z - worldCenter.z;
+        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+        // Calculate screen space size of bounding sphere diameter
+        const diameter = rockMesh.boundingSphere.radius * 2;
+        const screenSize = projectToScreenSpace(diameter, distance, fovRadians, screenHeight);
+
+        // Show rock if bounding sphere diameter is >= threshold
+        rockMesh.visible = screenSize >= minScreenSize;
       }
     }
   }
