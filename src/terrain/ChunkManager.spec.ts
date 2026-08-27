@@ -113,6 +113,7 @@ describe(ChunkManager.name, () => {
         return mesh;
       }),
       storeOriginalIndices: vi.fn(),
+      updateCullingBounds: vi.fn(),
       applyEdgeStitching: vi.fn(),
       clearStitchingData: vi.fn(),
       raycastHeight,

@@ -633,9 +633,16 @@ export class ChunkManager {
     rockMaterial.setParam('enableCurvature', enableCurvature);
     rockMaterial.setParam('planetRadius', planetRadius);
 
-    // Tighten per-mesh rock culling bounds from the actual camera distance
-    // (the curvature drop the shader applies depends on it)
+    // Tighten per-mesh culling bounds from the actual camera distance
+    // (the curvature drop the shader applies depends on it). Only the active
+    // terrain mesh of each chunk is drawn, so only it needs a tight sphere.
     this.rockManager.updateCullingBounds(cameraPosition);
+    for (const chunk of this.chunks.values()) {
+      const terrainMesh = chunk.getTerrainMesh(chunk.currentLodLevel);
+      if (terrainMesh) {
+        this.terrainGenerator.updateCullingBounds(terrainMesh, cameraPosition);
+      }
+    }
   }
 
   /**
