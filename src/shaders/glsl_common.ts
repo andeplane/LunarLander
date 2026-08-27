@@ -156,6 +156,9 @@ export const glslCommon = `
   // FBM with derivatives for normal computation (Elevated-inspired)
   // Uses derivative accumulation for erosion-like dampening effect
   // Returns vec3(height, dHeight/dx, dHeight/dy)
+  // octaves should be a compile-time constant (MoonMaterial passes the
+  // MICRO_DETAIL_OCTAVES define) so the loop unrolls; the previous
+  // "for (i < 8) { if (i >= octaves) break; }" form never could.
   vec3 fbmDerivatives(vec2 p, int octaves, float frequency, float amplitude) {
     float value = 0.0;
     vec2 derivatives = vec2(0.0);
@@ -164,9 +167,7 @@ export const glslCommon = `
     float amp = amplitude;
     float freq = frequency;
     
-    for (int i = 0; i < 8; i++) {
-      if (i >= octaves) break;
-      
+    for (int i = 0; i < octaves; i++) {
       vec3 n = noised2D(p * freq);
       
       // Erosion-inspired dampening: ridges become sharper as derivatives accumulate
@@ -233,8 +234,9 @@ export const glslCommon = `
       return texture2D(samp, uv).rgb;
     }
     
-    mat2 M0 = mat2(1.0, 0.0, 0.5, sqrt(3.0) / 2.0);
-    mat2 M = inverse(M0);
+    // Inverse of the hex basis M0 = mat2(1.0, 0.0, 0.5, sqrt(3.0)/2.0),
+    // precomputed: calling inverse() here ran a matrix inversion per fragment.
+    const mat2 M = mat2(1.0, 0.0, -1.0 / sqrt(3.0), 2.0 / sqrt(3.0));
     
     // Hex grid at patchScale density - only affects which cell we're in
     vec2 hexCoord = uv * patchScale;
