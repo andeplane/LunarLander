@@ -24,7 +24,7 @@ import { findLandingPad, siteQualityAt, type PadSearchResult } from '../lander/p
 import { rocksInArea } from '../lander/rockQuery';
 import { missionParamsForIndex, fuelCapacityForMission } from '../lander/mission';
 import { gradeLanding, scoreLanding } from '../lander/scoring';
-import { getMissionBest, recordMissionResult, highestCompletedMission } from '../lander/highscores';
+import { getMissionBest, recordMissionResult } from '../lander/highscores';
 import { LANDER_CONFIG } from '../lander/config';
 import type { LanderHudData, LanderPhase, MissionParams, TouchdownStats } from '../lander/types';
 import { isTouchDevice } from '../utils/mobile';
@@ -41,6 +41,7 @@ const CAMERA_CYCLE: readonly CameraMode[] = ['cockpit', 'belly', 'orbit'];
 const ORBIT_MIN_DIST = 6;
 const ORBIT_MAX_DIST = 60;
 const ORBIT_DEFAULT_DIST = 16;
+const ORBIT_DEFAULT_PITCH = 0.35;
 const ORBIT_MIN_PITCH = -0.35; // rad, slightly below the lander's horizon
 const ORBIT_MAX_PITCH = 1.45;
 const ORBIT_DRAG_SENS = 0.005; // rad per pixel
@@ -86,7 +87,7 @@ export class LanderMode implements GameMode {
   private glanceBlend = 0; // 0..1, V key eases toward 1
   // Orbit camera (mouse-driven, lander-centred); also the crash aftermath shot
   private orbitYaw = 0;
-  private orbitPitch = 0.35;
+  private orbitPitch = ORBIT_DEFAULT_PITCH;
   private orbitDist = ORBIT_DEFAULT_DIST;
   private orbitDragging = false;
   private lastPointerX = 0;
@@ -150,7 +151,14 @@ export class LanderMode implements GameMode {
 
   private readonly onPointerDown = (e: PointerEvent): void => {
     if (e.button !== 0 || !this.orbitCameraActive()) return;
-    if ((e.target as HTMLElement | null)?.closest('button, .lander-screen')) return;
+    // Buttons, overlays and the touch flight controls own their pointers
+    if (
+      (e.target as HTMLElement | null)?.closest(
+        'button, .lander-screen, .lander-touch-controls'
+      )
+    ) {
+      return;
+    }
     this.orbitDragging = true;
     this.lastPointerX = e.clientX;
     this.lastPointerY = e.clientY;
@@ -158,6 +166,11 @@ export class LanderMode implements GameMode {
 
   private readonly onPointerMove = (e: PointerEvent): void => {
     if (!this.orbitDragging) return;
+    if (e.pointerType === 'mouse' && (e.buttons & 1) === 0) {
+      // pointerup was lost (released off-window): end the drag
+      this.orbitDragging = false;
+      return;
+    }
     const dx = e.clientX - this.lastPointerX;
     const dy = e.clientY - this.lastPointerY;
     this.lastPointerX = e.clientX;
@@ -235,9 +248,6 @@ export class LanderMode implements GameMode {
     window.addEventListener('pointercancel', this.onPointerUp);
     window.addEventListener('wheel', this.onWheel, { passive: true });
 
-    // Default to the next unplayed mission; the selector lets the player
-    // replay anything already unlocked
-    this.missionIndex = highestCompletedMission() + 1;
     this.showMissionSelect();
   }
 
@@ -387,6 +397,12 @@ export class LanderMode implements GameMode {
     this.phase = 'select';
     this.hudData.phase = 'select';
     this.controls.reset();
+    this.orbitDragging = false;
+    this.cameraMode = 'cockpit';
+    // Remove the (possibly wrecked) craft so it doesn't keep simulating
+    // behind the selector; startMission() re-spawns it
+    this.body?.despawn();
+    this.visuals?.setExteriorVisible(false);
     this.hud?.hide();
     this.touchControls?.setVisible(false);
     this.markers?.hidePad();
@@ -633,11 +649,7 @@ export class LanderMode implements GameMode {
     // Detach the camera: the aftermath is the orbit view, seeded from
     // behind the craft so the wreck sits centre-frame. The orbit camera is
     // terrain-clamped, so a belly/cockpit view never ends up underground.
-    if (this.cameraMode !== 'orbit' && this.body) {
-      this.orbitYaw = this.body.getHeading() + Math.PI;
-      this.orbitPitch = 0.35;
-      this.orbitDist = ORBIT_DEFAULT_DIST;
-    }
+    if (this.cameraMode !== 'orbit') this.seedOrbitBehindCraft();
   }
 
   private finishCrash(): void {
@@ -671,12 +683,15 @@ export class LanderMode implements GameMode {
     if (mode === this.cameraMode) return;
     this.cameraMode = mode;
     if (mode !== 'cockpit') this.usedExternalCam = true;
-    if (mode === 'orbit' && this.body) {
-      // Start behind the craft, looking along its heading
-      this.orbitYaw = this.body.getHeading() + Math.PI;
-      this.orbitPitch = 0.35;
-      this.orbitDist = ORBIT_DEFAULT_DIST;
-    }
+    if (mode === 'orbit') this.seedOrbitBehindCraft();
+  }
+
+  /** Default orbit framing: behind the craft, looking along its heading. */
+  private seedOrbitBehindCraft(): void {
+    if (!this.body) return;
+    this.orbitYaw = this.body.getHeading() + Math.PI;
+    this.orbitPitch = ORBIT_DEFAULT_PITCH;
+    this.orbitDist = ORBIT_DEFAULT_DIST;
   }
 
   /** Lander-centred orbit camera: mouse drag orbits, wheel zooms. */

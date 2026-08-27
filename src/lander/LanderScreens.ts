@@ -156,10 +156,7 @@ export class LanderScreens {
       span('action', grid, action);
     }
     this.launchButton = button('screen-button primary launch-button', briefingPanel, 'LAUNCH', () => {
-      if (!this.terrainReady) return;
-      // Drop button focus so Space (full thrust) can't re-click LAUNCH
-      this.launchButton.blur();
-      this.callbacks.onLaunch();
+      if (this.terrainReady) this.callbacks.onLaunch();
     });
     div('screen-hint', briefingPanel, 'Enter to launch · Esc for missions');
 
@@ -247,9 +244,11 @@ export class LanderScreens {
   showDebrief(data: DebriefData): void {
     this.populateDebrief(data);
     // After a crash the natural action is Retry; after a landing, advance
+    // A crash doesn't unlock the next mission (same gate as the selector)
     const crashed = data.score.grade === 'crash';
     this.retryButton.classList.toggle('primary', crashed);
     this.nextButton.classList.toggle('primary', !crashed);
+    this.nextButton.disabled = crashed;
     this.setActive('debrief');
   }
 
@@ -279,6 +278,9 @@ export class LanderScreens {
 
   private setActive(name: ScreenName | null): void {
     this.active = name;
+    // Drop focus from whichever button was clicked/keyed: a focused button
+    // would otherwise be re-activated by Space (full thrust) or Enter
+    (document.activeElement as HTMLElement | null)?.blur?.();
     this.selectScreen.classList.toggle('hidden', name !== 'select');
     this.briefingScreen.classList.toggle('hidden', name !== 'briefing');
     this.pauseScreen.classList.toggle('hidden', name !== 'pause');
@@ -295,12 +297,10 @@ export class LanderScreens {
     if (this.active === 'briefing') {
       if (e.key === 'Enter' && this.terrainReady) {
         e.preventDefault();
-        // Drop button focus so Space (full thrust) can't re-click LAUNCH
-        (document.activeElement as HTMLElement | null)?.blur?.();
         this.callbacks.onLaunch();
       }
     } else if (this.active === 'debrief') {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !this.nextButton.disabled) {
         e.preventDefault();
         this.callbacks.onNextMission();
       } else if (e.key === 'r' || e.key === 'R') {

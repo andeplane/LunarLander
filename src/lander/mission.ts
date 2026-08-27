@@ -39,13 +39,6 @@ const RAMPS = {
   /** Initial velocities grow modestly */
   spawnHorizontalSpeed: { start: 12, end: 20, k: 12 },
   /**
-   * Mission 0 arrives in a steady ~15 m/s descent; later missions draw
-   * the descent rate uniformly from [LATER_DESCENT_MIN, LATER_DESCENT_MAX]
-   * (see missionParamsForIndex) so the approach varies from a gentle sink
-   * to a hot dive. This ramp only sets the mission-0 value.
-   */
-  spawnDescentRate: { start: 15, end: 15, k: 12 },
-  /**
    * Initial velocity stops pointing straight at the pad (max |error|, rad).
    * Exactly 0 on mission 0; ≈0.2 rad by mission 1, ≈0.7 rad by mission 5.
    */
@@ -66,7 +59,12 @@ const JITTER = {
   spawnDescentRate: 0.1,
 } as const;
 
-/** Descent-rate range (m/s, positive down) drawn for missions ≥ 1. */
+/**
+ * Descent rate (m/s, positive down). Mission 0 arrives in a steady ~15 m/s
+ * descent (± jitter); later missions draw uniformly from [LATER_DESCENT_MIN,
+ * LATER_DESCENT_MAX] so the approach varies from a gentle sink to a hot dive.
+ */
+const MISSION0_DESCENT_RATE = 15;
 const LATER_DESCENT_MIN = 3;
 const LATER_DESCENT_MAX = 18;
 
@@ -91,7 +89,7 @@ export function missionParamsForIndex(index: number): MissionParams {
   // arrival state varies so every mission needs its own plan.
   const spawnDescentRate =
     index === 0
-      ? ramp(index, RAMPS.spawnDescentRate) * jitter(JITTER.spawnDescentRate)
+      ? MISSION0_DESCENT_RATE * jitter(JITTER.spawnDescentRate)
       : LATER_DESCENT_MIN + (LATER_DESCENT_MAX - LATER_DESCENT_MIN) * rng();
 
   // Bearing error: magnitude between 50% and 100% of the ramped maximum,

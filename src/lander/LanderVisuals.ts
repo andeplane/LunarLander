@@ -19,6 +19,9 @@ import { LANDER_CONFIG } from './config';
 const MODEL_FOOT_Y = 0.1;
 const MODEL_HEIGHT = 5.0;
 /** Real LM: ~7 m tall on a ~9.4 m footprint. Scaled to the collider rig. */
+/** Tone the glossy studio materials down so sunlit panels stay under bloom. */
+const MODEL_MIN_ROUGHNESS = 0.9;
+const MODEL_ALBEDO_SCALE = 0.62;
 const MODEL_SCALE = (LANDER_CONFIG.gearHeight + LANDER_CONFIG.bodyHalfExtents.y + 0.3) / MODEL_HEIGHT;
 
 export class LanderVisuals {
@@ -56,19 +59,30 @@ export class LanderVisuals {
         if (this.disposed) return;
         // Swap the glTF materials for curvature-aware ones so the craft
         // follows the same planet curvature as the terrain (ADR-0003 §3)
+        // (12 materials shared by ~150 primitives — memoise per source)
+        const converted = new Map<THREE.Material, CurvedStandardMaterial>();
         gltf.scene.traverse((obj) => {
           const mesh = obj as THREE.Mesh;
           if (!mesh.isMesh) return;
           const source = mesh.material as THREE.MeshStandardMaterial;
-          const curved = this.track(
-            new CurvedStandardMaterial({
-              color: source.color,
-              map: source.map,
-              roughness: Math.max(source.roughness, 0.55),
-              metalness: source.metalness,
-              side: THREE.FrontSide,
-            })
-          );
+          let curved = converted.get(source);
+          if (!curved) {
+            // Matte + slightly darkened: the source is a glossy studio
+            // material (roughness 0.41) and in direct sunlight its
+            // highlights/white panels blow past the bloom threshold
+            curved = this.track(
+              new CurvedStandardMaterial({
+                color: source.color.clone().multiplyScalar(MODEL_ALBEDO_SCALE),
+                map: source.map,
+                roughness: Math.max(source.roughness, MODEL_MIN_ROUGHNESS),
+                metalness: 0,
+                side: source.side,
+              })
+            );
+            if (source.map) this.track(source.map);
+            this.track(source);
+            converted.set(source, curved);
+          }
           mesh.material = curved;
           this.track(mesh.geometry);
         });
