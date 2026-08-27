@@ -1,4 +1,5 @@
 import { LANDER_CONFIG } from './config';
+import { getMissionBest, highestCompletedMission } from './highscores';
 import type { DebriefData, LandingGrade } from './types';
 import './LanderScreens.css';
 
@@ -9,16 +10,23 @@ import './LanderScreens.css';
  * listened for while a screen is visible.
  */
 export interface LanderScreenCallbacks {
+  onSelectMission(index: number): void; // mission select → briefing
+  onSelectMenu(): void; // mission select → main menu
   onLaunch(): void; // briefing → flying
   onResume(): void;
   onRestart(): void;
   onBackToMenu(): void; // pause
   onRetry(): void;
   onNextMission(): void;
-  onDebriefMenu(): void; // debrief
+  onDebriefMenu(): void; // debrief → mission select
 }
 
-type ScreenName = 'briefing' | 'pause' | 'debrief';
+type ScreenName = 'select' | 'briefing' | 'pause' | 'debrief';
+
+/** Missions shown on the selector beyond the first locked one. */
+const SELECT_LOCKED_PREVIEW = 3;
+/** Minimum number of cards on the selector. */
+const SELECT_MIN_CARDS = 8;
 
 const GRADE_LABEL: Record<LandingGrade, string> = {
   perfect: 'PERFECT LANDING!',
@@ -35,7 +43,8 @@ const KEYBOARD_CONTROLS: ReadonlyArray<readonly [string, string]> = [
   ['Space', 'Full thrust'],
   ['X', 'Cut throttle'],
   ['H', 'Hover-hold assist'],
-  ['C', 'Cycle camera'],
+  ['C', 'Camera: cockpit / belly / orbit'],
+  ['Mouse', 'Orbit view: drag to orbit, wheel to zoom'],
 ];
 
 const TOUCH_CONTROLS: ReadonlyArray<readonly [string, string]> = [
@@ -91,6 +100,8 @@ function isTouchDevice(): boolean {
 export class LanderScreens {
   private readonly callbacks: LanderScreenCallbacks;
   private readonly root: HTMLDivElement;
+  private readonly selectScreen: HTMLDivElement;
+  private readonly selectGrid: HTMLDivElement;
   private readonly briefingScreen: HTMLDivElement;
   private readonly pauseScreen: HTMLDivElement;
   private readonly debriefScreen: HTMLDivElement;
@@ -112,6 +123,17 @@ export class LanderScreens {
     this.callbacks = callbacks;
     this.root = document.createElement('div');
     this.root.className = 'lander-screens';
+
+    // --- Mission select ---
+    this.selectScreen = div('lander-screen screen-select hidden', this.root);
+    const selectPanel = div('screen-panel select-panel', this.selectScreen);
+    div('screen-kicker', selectPanel, 'Lunar descent');
+    div('screen-title', selectPanel, 'MISSIONS');
+    div('screen-objective', selectPanel, 'Pick a mission. Land to unlock the next one.');
+    this.selectGrid = div('select-grid', selectPanel);
+    const selectButtons = div('screen-buttons', selectPanel);
+    button('screen-button', selectButtons, 'Menu', () => this.callbacks.onSelectMenu());
+    div('screen-hint', selectPanel, 'Esc for menu');
 
     // --- Briefing ---
     this.briefingScreen = div('lander-screen screen-briefing hidden', this.root);
@@ -136,7 +158,7 @@ export class LanderScreens {
     this.launchButton = button('screen-button primary launch-button', briefingPanel, 'LAUNCH', () => {
       if (this.terrainReady) this.callbacks.onLaunch();
     });
-    div('screen-hint', briefingPanel, 'Enter to launch');
+    div('screen-hint', briefingPanel, 'Enter to launch · Esc for missions');
 
     // --- Pause ---
     this.pauseScreen = div('lander-screen screen-pause hidden', this.root);
@@ -161,9 +183,42 @@ export class LanderScreens {
       this.callbacks.onNextMission()
     );
     span('button-key', this.nextButton, 'Enter');
-    button('screen-button', debriefButtons, 'Menu', () => this.callbacks.onDebriefMenu());
+    button('screen-button', debriefButtons, 'Missions', () => this.callbacks.onDebriefMenu());
 
     document.body.appendChild(this.root);
+  }
+
+  /** Rebuild the mission grid from persisted progress and show it. */
+  showMissionSelect(): void {
+    const unlockedThrough = highestCompletedMission() + 1;
+    const count = Math.max(SELECT_MIN_CARDS, unlockedThrough + 1 + SELECT_LOCKED_PREVIEW);
+    this.selectGrid.textContent = '';
+    for (let i = 0; i < count; i++) {
+      const locked = i > unlockedThrough;
+      const best = locked ? null : getMissionBest(i);
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = locked ? 'select-card locked' : 'select-card';
+      card.disabled = locked;
+      span('select-card-index', card, String(i + 1));
+      const stars = span('select-card-stars', card);
+      if (locked) {
+        stars.textContent = '🔒';
+      } else if (best) {
+        span('stars-filled', stars, '★'.repeat(best.stars));
+        span('stars-empty', stars, '★'.repeat(3 - best.stars));
+      } else {
+        span('stars-empty', stars, '★★★');
+      }
+      if (best) {
+        span('select-card-score', card, String(best.score));
+      }
+      if (!locked) {
+        card.addEventListener('click', () => this.callbacks.onSelectMission(i));
+      }
+      this.selectGrid.appendChild(card);
+    }
+    this.setActive('select');
   }
 
   showBriefing(
@@ -189,9 +244,11 @@ export class LanderScreens {
   showDebrief(data: DebriefData): void {
     this.populateDebrief(data);
     // After a crash the natural action is Retry; after a landing, advance
+    // A crash doesn't unlock the next mission (same gate as the selector)
     const crashed = data.score.grade === 'crash';
     this.retryButton.classList.toggle('primary', crashed);
     this.nextButton.classList.toggle('primary', !crashed);
+    this.nextButton.disabled = crashed;
     this.setActive('debrief');
   }
 
@@ -221,6 +278,10 @@ export class LanderScreens {
 
   private setActive(name: ScreenName | null): void {
     this.active = name;
+    // Drop focus from whichever button was clicked/keyed: a focused button
+    // would otherwise be re-activated by Space (full thrust) or Enter
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    this.selectScreen.classList.toggle('hidden', name !== 'select');
     this.briefingScreen.classList.toggle('hidden', name !== 'briefing');
     this.pauseScreen.classList.toggle('hidden', name !== 'pause');
     this.debriefScreen.classList.toggle('hidden', name !== 'debrief');
@@ -239,7 +300,7 @@ export class LanderScreens {
         this.callbacks.onLaunch();
       }
     } else if (this.active === 'debrief') {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !this.nextButton.disabled) {
         e.preventDefault();
         this.callbacks.onNextMission();
       } else if (e.key === 'r' || e.key === 'R') {

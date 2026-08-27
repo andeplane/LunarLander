@@ -26,8 +26,13 @@ A **mission** = spawn state + designated pad, derived deterministically from
 a mission seed (`alea`, same PRNG family as terrain):
 
 - **Spawn**: ~300 m AGL, 400–800 m horizontal offset from the pad, modest
-  initial velocity roughly toward it (10–20 m/s horizontal, ~15 m/s descent).
-  The player starts *in* the problem; descent-to-touchdown ≈ 60–120 s.
+  initial velocity roughly toward it (10–20 m/s horizontal). Mission 1 is
+  the tutorial approach: aimed straight at the pad in a steady ~15 m/s
+  descent. From mission 2 on the descent rate is drawn per mission from
+  3–18 m/s and the velocity is skewed off the pad bearing (up to ~0.2 rad
+  on mission 2, approaching 1 rad later) so every mission needs its own
+  plan rather than "hold the line and brake". The player starts *in* the
+  problem; descent-to-touchdown ≈ 60–120 s.
 - **Designated pad**: flattest 20 m disc found by grid-sampling terrain
   heights around a candidate point (slope + height-spread thresholds),
   marked by a terrain-conformed ring + vertical light beacon (ADR-0003).
@@ -77,8 +82,14 @@ advances the seed and the difficulty parameters (§4).
   tumble out. (Feeds a future replay system.)
 - **Debrief**: per-factor report card (v-speed, drift, tilt, accuracy/site
   quality, fuel, assists used), score, best-score comparison, then
-  [Retry same mission] [Next mission] [Menu]. R restarts instantly at any
-  time — quick restart is an anti-frustration feature, not a debrief option.
+  [Retry same mission] [Next mission] [Missions]. R restarts instantly at
+  any time — quick restart is an anti-frustration feature, not a debrief
+  option.
+- **Mission select** (added 2026-08): entering the mode opens a grid of
+  missions with the best stars/score per mission from local storage;
+  everything up to (highest completed + 1) is unlocked, so earlier missions
+  can be replayed for a better score. Esc from a briefing/debrief returns
+  here; Esc here returns to the main menu.
 
 ### 3. Scoring (per landing)
 

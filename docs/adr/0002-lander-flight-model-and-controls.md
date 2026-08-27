@@ -97,7 +97,7 @@ dialog, and Ctrl+R collides with restart.
 | Space | Full thrust while held |
 | X | Cut throttle |
 | H | Toggle hover-hold |
-| C | Cycle camera: cockpit → belly cam (ADR-0003) |
+| C | Cycle camera: cockpit → belly cam → orbit (ADR-0003) |
 | R | Restart mission |
 | Esc | Pause menu |
 

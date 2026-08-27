@@ -38,9 +38,11 @@ const RAMPS = {
   spawnAltitudeAGL: { start: 300, end: 400, k: 12 },
   /** Initial velocities grow modestly */
   spawnHorizontalSpeed: { start: 12, end: 20, k: 12 },
-  spawnDescentRate: { start: 15, end: 18, k: 12 },
-  /** Initial velocity stops pointing straight at the pad (max |error|, rad) */
-  spawnBearingError: { start: 0, end: 0.4, k: 10 },
+  /**
+   * Initial velocity stops pointing straight at the pad (max |error|, rad).
+   * Exactly 0 on mission 0; ≈0.2 rad by mission 1, ≈0.7 rad by mission 5.
+   */
+  spawnBearingError: { start: 0, end: 1.0, k: 4 },
   /** Pad diameter 20 m → 10 m, i.e. radius 10 m → 5 m */
   padRadius: { start: 10, end: 5, k: 10 },
   /** Smaller pads pay more (shown on the beacon, Atari-style) */
@@ -56,6 +58,15 @@ const JITTER = {
   spawnHorizontalSpeed: 0.1,
   spawnDescentRate: 0.1,
 } as const;
+
+/**
+ * Descent rate (m/s, positive down). Mission 0 arrives in a steady ~15 m/s
+ * descent (± jitter); later missions draw uniformly from [LATER_DESCENT_MIN,
+ * LATER_DESCENT_MAX] so the approach varies from a gentle sink to a hot dive.
+ */
+const MISSION0_DESCENT_RATE = 15;
+const LATER_DESCENT_MIN = 3;
+const LATER_DESCENT_MAX = 18;
 
 /**
  * Deterministic per-mission parameters. Same index → same params, always
@@ -74,8 +85,12 @@ export function missionParamsForIndex(index: number): MissionParams {
   const spawnHorizontalSpeed =
     ramp(index, RAMPS.spawnHorizontalSpeed) *
     jitter(JITTER.spawnHorizontalSpeed);
+  // Mission 0 keeps the tutorial-friendly steady descent; afterwards the
+  // arrival state varies so every mission needs its own plan.
   const spawnDescentRate =
-    ramp(index, RAMPS.spawnDescentRate) * jitter(JITTER.spawnDescentRate);
+    index === 0
+      ? MISSION0_DESCENT_RATE * jitter(JITTER.spawnDescentRate)
+      : LATER_DESCENT_MIN + (LATER_DESCENT_MAX - LATER_DESCENT_MIN) * rng();
 
   // Bearing error: magnitude between 50% and 100% of the ramped maximum,
   // random sign. Exactly 0 at index 0 (the ramp starts at 0).

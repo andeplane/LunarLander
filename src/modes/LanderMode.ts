@@ -24,7 +24,7 @@ import { findLandingPad, siteQualityAt, type PadSearchResult } from '../lander/p
 import { rocksInArea } from '../lander/rockQuery';
 import { missionParamsForIndex, fuelCapacityForMission } from '../lander/mission';
 import { gradeLanding, scoreLanding } from '../lander/scoring';
-import { getMissionBest, recordMissionResult, highestCompletedMission } from '../lander/highscores';
+import { getMissionBest, recordMissionResult } from '../lander/highscores';
 import { LANDER_CONFIG } from '../lander/config';
 import type { LanderHudData, LanderPhase, MissionParams, TouchdownStats } from '../lander/types';
 import { isTouchDevice } from '../utils/mobile';
@@ -33,6 +33,20 @@ import alea from 'alea';
 const TIP_OVER_DEG = 60;
 const AFTERMATH_SECONDS = 3.5;
 const EXPLORE_FOV = 70;
+
+type CameraMode = 'cockpit' | 'belly' | 'orbit';
+const CAMERA_CYCLE: readonly CameraMode[] = ['cockpit', 'belly', 'orbit'];
+
+/** Orbit camera limits (external chase view + crash aftermath). */
+const ORBIT_MIN_DIST = 6;
+const ORBIT_MAX_DIST = 60;
+const ORBIT_DEFAULT_DIST = 16;
+const ORBIT_DEFAULT_PITCH = 0.35;
+const ORBIT_MIN_PITCH = -0.35; // rad, slightly below the lander's horizon
+const ORBIT_MAX_PITCH = 1.45;
+const ORBIT_DRAG_SENS = 0.005; // rad per pixel
+/** The orbit camera never dips closer than this to the terrain. */
+const ORBIT_TERRAIN_CLEARANCE = 2.5;
 
 export class LanderMode implements GameMode {
   private camera: THREE.PerspectiveCamera;
@@ -67,9 +81,17 @@ export class LanderMode implements GameMode {
   private terrainReady = false;
 
   // Camera state
-  private bellyCam = false;
-  private usedBellyCam = false;
+  private cameraMode: CameraMode = 'cockpit';
+  /** Any external view (belly/orbit) was used — blocks the instruments bonus */
+  private usedExternalCam = false;
   private glanceBlend = 0; // 0..1, V key eases toward 1
+  // Orbit camera (mouse-driven, lander-centred); also the crash aftermath shot
+  private orbitYaw = 0;
+  private orbitPitch = ORBIT_DEFAULT_PITCH;
+  private orbitDist = ORBIT_DEFAULT_DIST;
+  private orbitDragging = false;
+  private lastPointerX = 0;
+  private lastPointerY = 0;
 
   // Touchdown grading window (ADR-0004 §2)
   private ignoreEscapeOnce = false;
@@ -79,7 +101,6 @@ export class LanderMode implements GameMode {
   private worstTilt = 0;
   private restTime = 0;
   private aftermathTime = 0;
-  private aftermathCamPos = new THREE.Vector3();
 
   // Scratch
   private readonly vec = new THREE.Vector3();
@@ -111,6 +132,68 @@ export class LanderMode implements GameMode {
     if (e.key === 'Escape') {
       this.resumeFromPause();
     }
+  };
+
+  /** Space is full thrust while flying — never page scroll / button click. */
+  private readonly onFlightKeydown = (e: KeyboardEvent): void => {
+    if (e.key === ' ' && this.phase === 'flying') {
+      e.preventDefault();
+    }
+  };
+
+  private orbitCameraActive(): boolean {
+    return (
+      this.cameraMode === 'orbit' ||
+      this.phase === 'crashed' ||
+      (this.phase === 'debrief' && this.aftermathTime > 0)
+    );
+  }
+
+  private readonly onPointerDown = (e: PointerEvent): void => {
+    if (e.button !== 0 || !this.orbitCameraActive()) return;
+    // Buttons, overlays and the touch flight controls own their pointers
+    if (
+      (e.target as HTMLElement | null)?.closest(
+        'button, .lander-screen, .lander-touch-controls'
+      )
+    ) {
+      return;
+    }
+    this.orbitDragging = true;
+    this.lastPointerX = e.clientX;
+    this.lastPointerY = e.clientY;
+  };
+
+  private readonly onPointerMove = (e: PointerEvent): void => {
+    if (!this.orbitDragging) return;
+    if (e.pointerType === 'mouse' && (e.buttons & 1) === 0) {
+      // pointerup was lost (released off-window): end the drag
+      this.orbitDragging = false;
+      return;
+    }
+    const dx = e.clientX - this.lastPointerX;
+    const dy = e.clientY - this.lastPointerY;
+    this.lastPointerX = e.clientX;
+    this.lastPointerY = e.clientY;
+    this.orbitYaw -= dx * ORBIT_DRAG_SENS;
+    this.orbitPitch = Math.min(
+      Math.max(this.orbitPitch + dy * ORBIT_DRAG_SENS, ORBIT_MIN_PITCH),
+      ORBIT_MAX_PITCH
+    );
+    this.requestRender();
+  };
+
+  private readonly onPointerUp = (): void => {
+    this.orbitDragging = false;
+  };
+
+  private readonly onWheel = (e: WheelEvent): void => {
+    if (!this.orbitCameraActive()) return;
+    this.orbitDist = Math.min(
+      Math.max(this.orbitDist * Math.exp(e.deltaY * 0.0015), ORBIT_MIN_DIST),
+      ORBIT_MAX_DIST
+    );
+    this.requestRender();
   };
 
   constructor(args: {
@@ -158,18 +241,27 @@ export class LanderMode implements GameMode {
       this.physicsWorld.addPhysicsStepListener(this.body);
     }
 
-    this.hud?.show();
-    this.touchControls?.setVisible(true);
+    window.addEventListener('keydown', this.onFlightKeydown);
+    window.addEventListener('pointerdown', this.onPointerDown);
+    window.addEventListener('pointermove', this.onPointerMove);
+    window.addEventListener('pointerup', this.onPointerUp);
+    window.addEventListener('pointercancel', this.onPointerUp);
+    window.addEventListener('wheel', this.onWheel, { passive: true });
 
-    // Continue from the player's progression
-    this.missionIndex = highestCompletedMission() + 1;
-    this.startMission(this.missionIndex);
+    this.showMissionSelect();
   }
 
   exit(): void {
     this.active = false;
     this.setPaused(false);
     window.removeEventListener('keydown', this.onPauseKeydown);
+    window.removeEventListener('keydown', this.onFlightKeydown);
+    window.removeEventListener('pointerdown', this.onPointerDown);
+    window.removeEventListener('pointermove', this.onPointerMove);
+    window.removeEventListener('pointerup', this.onPointerUp);
+    window.removeEventListener('pointercancel', this.onPointerUp);
+    window.removeEventListener('wheel', this.onWheel);
+    this.orbitDragging = false;
 
     if (this.body && this.physicsWorld) {
       this.physicsWorld.removePhysicsStepListener(this.body);
@@ -208,7 +300,21 @@ export class LanderMode implements GameMode {
         this.pauseGame();
         return;
       }
-      this.onExitToMenu();
+      if (this.phase === 'select') {
+        this.onExitToMenu();
+        return;
+      }
+      if (this.phase === 'crashed') {
+        this.finishCrash();
+      }
+      this.showMissionSelect();
+      return;
+    }
+
+    if (this.phase === 'select') {
+      // Nothing to fly yet; the selector owns the screen
+      this.controls.consumeRestart();
+      this.controls.consumeCameraCycle();
       return;
     }
 
@@ -217,8 +323,8 @@ export class LanderMode implements GameMode {
       return;
     }
     if (this.controls.consumeCameraCycle() && this.phase === 'flying') {
-      this.bellyCam = !this.bellyCam;
-      if (this.bellyCam) this.usedBellyCam = true;
+      const next = CAMERA_CYCLE[(CAMERA_CYCLE.indexOf(this.cameraMode) + 1) % CAMERA_CYCLE.length];
+      this.setCameraMode(next);
     }
 
     // Glance (V): ease extra down-pitch in and out
@@ -259,6 +365,8 @@ export class LanderMode implements GameMode {
     }
     if (!this.screens) {
       this.screens = new LanderScreens({
+        onSelectMission: (index) => this.startMission(index),
+        onSelectMenu: () => this.onExitToMenu(),
         onLaunch: () => this.launch(),
         onResume: () => this.resumeFromPause(),
         onRestart: () => {
@@ -268,7 +376,7 @@ export class LanderMode implements GameMode {
         onBackToMenu: () => this.onExitToMenu(),
         onRetry: () => this.startMission(this.missionIndex),
         onNextMission: () => this.startMission(this.missionIndex + 1),
-        onDebriefMenu: () => this.onExitToMenu(),
+        onDebriefMenu: () => this.showMissionSelect(),
       });
     }
     if (!this.touchControls && isTouchDevice()) {
@@ -283,6 +391,25 @@ export class LanderMode implements GameMode {
     }
   }
 
+  /** Mission selector: no craft in play, HUD hidden, world stays visible. */
+  private showMissionSelect(): void {
+    if (!this.screens) return;
+    this.phase = 'select';
+    this.hudData.phase = 'select';
+    this.controls.reset();
+    this.orbitDragging = false;
+    this.cameraMode = 'cockpit';
+    // Remove the (possibly wrecked) craft so it doesn't keep simulating
+    // behind the selector; startMission() re-spawns it
+    this.body?.despawn();
+    this.visuals?.setExteriorVisible(false);
+    this.hud?.hide();
+    this.touchControls?.setVisible(false);
+    this.markers?.hidePad();
+    this.markers?.hideImpactReticle();
+    this.screens.showMissionSelect();
+  }
+
   private startMission(index: number): void {
     if (!this.sampler || !this.markers || !this.screens) return;
     // Physics not ready yet: stay in a briefing-like limbo; enter() retries
@@ -293,8 +420,9 @@ export class LanderMode implements GameMode {
     this.mission = missionParamsForIndex(index);
     this.phase = 'briefing';
     this.terrainReady = false;
-    this.bellyCam = false;
-    this.usedBellyCam = false;
+    this.cameraMode = 'cockpit';
+    this.usedExternalCam = false;
+    this.orbitDragging = false;
     this.glanceBlend = 0;
     this.windowOpen = false;
     this.worstVSpeed = 0;
@@ -306,6 +434,8 @@ export class LanderMode implements GameMode {
     this.controls.reset();
     this.screens.hideAll();
     this.markers.hideImpactReticle();
+    this.hud?.show();
+    this.touchControls?.setVisible(true);
 
     // Mission area: deterministic location per index, away from the origin
     const rng = alea('lander-area', this.mission.seed);
@@ -492,7 +622,7 @@ export class LanderMode implements GameMode {
       siteQuality: sampler ? siteQualityAt(sampler, x, z) : 0,
       fuelFraction: body ? body.getEngine().getFuelFraction() : 0,
       usedHoverHold: body ? body.getEngine().wasHoverHoldUsed() : false,
-      usedBellyCam: this.usedBellyCam,
+      usedBellyCam: this.usedExternalCam,
       bodyContact,
       tippedOver,
     };
@@ -516,14 +646,10 @@ export class LanderMode implements GameMode {
     console.log(`[Lander] Crash: ${reason}`);
     this.phase = 'crashed';
     this.aftermathTime = 0;
-    // Detach the camera: aftermath shot from slightly above/behind the
-    // current cockpit position, watching the physics play out
-    this.aftermathCamPos.copy(this.camera.position);
-    this.aftermathCamPos.y += 6;
-    if (this.body) {
-      this.vec.copy(this.body.rig.position).sub(this.camera.position).normalize();
-      this.aftermathCamPos.addScaledVector(this.vec, -10);
-    }
+    // Detach the camera: the aftermath is the orbit view, seeded from
+    // behind the craft so the wreck sits centre-frame. The orbit camera is
+    // terrain-clamped, so a belly/cockpit view never ends up underground.
+    if (this.cameraMode !== 'orbit') this.seedOrbitBehindCraft();
   }
 
   private finishCrash(): void {
@@ -553,19 +679,58 @@ export class LanderMode implements GameMode {
 
   // ---- Camera & HUD ----
 
+  private setCameraMode(mode: CameraMode): void {
+    if (mode === this.cameraMode) return;
+    this.cameraMode = mode;
+    if (mode !== 'cockpit') this.usedExternalCam = true;
+    if (mode === 'orbit') this.seedOrbitBehindCraft();
+  }
+
+  /** Default orbit framing: behind the craft, looking along its heading. */
+  private seedOrbitBehindCraft(): void {
+    if (!this.body) return;
+    this.orbitYaw = this.body.getHeading() + Math.PI;
+    this.orbitPitch = ORBIT_DEFAULT_PITCH;
+    this.orbitDist = ORBIT_DEFAULT_DIST;
+  }
+
+  /** Lander-centred orbit camera: mouse drag orbits, wheel zooms. */
+  private syncOrbitCamera(): void {
+    if (!this.body) return;
+    const target = this.body.rig.position;
+    const cosP = Math.cos(this.orbitPitch);
+    // Yaw 0 looks along -Z (the heading-0 forward); yaw = heading + π
+    // therefore places the camera behind the craft
+    this.vec.set(
+      -Math.sin(this.orbitYaw) * cosP,
+      Math.sin(this.orbitPitch),
+      -Math.cos(this.orbitYaw) * cosP
+    );
+    this.camera.position.copy(target).addScaledVector(this.vec, this.orbitDist);
+    if (this.sampler) {
+      const floor =
+        this.sampler.heightAt(this.camera.position.x, this.camera.position.z) +
+        ORBIT_TERRAIN_CLEARANCE;
+      if (this.camera.position.y < floor) this.camera.position.y = floor;
+    }
+    this.camera.lookAt(target);
+  }
+
   /** Copy the interpolated rig transform into the scene-root camera. */
   private syncCamera(): void {
-    if (!this.active || !this.body) return;
+    if (!this.active || !this.body || this.phase === 'select') return;
 
-    if (this.phase === 'crashed' || (this.phase === 'debrief' && this.aftermathTime > 0)) {
-      // Aftermath: fixed external shot watching the wreck
-      this.camera.position.copy(this.aftermathCamPos);
-      this.camera.lookAt(this.body.rig.position);
+    // Cockpit and belly cameras sit inside the model's hull/descent stage
+    // (bloomed white walls otherwise) — only the orbit camera shows it
+    this.visuals?.setExteriorVisible(this.orbitCameraActive());
+
+    if (this.orbitCameraActive()) {
+      this.syncOrbitCamera();
       return;
     }
 
     const rig = this.body.rig;
-    if (this.bellyCam) {
+    if (this.cameraMode === 'belly') {
       // Under the hull, looking straight down, heading-aligned
       this.vec.set(0, -LANDER_CONFIG.bodyHalfExtents.y - 0.25, 0).applyQuaternion(rig.quaternion);
       this.camera.position.copy(rig.position).add(this.vec);
@@ -582,7 +747,7 @@ export class LanderMode implements GameMode {
   }
 
   private updateMarkersAndHud(): void {
-    if (!this.body || !this.hud || !this.mission || !this.pad) return;
+    if (!this.body || !this.hud || !this.mission || !this.pad || this.phase === 'select') return;
 
     const body = this.body;
     const engine = body.getEngine();
@@ -615,7 +780,9 @@ export class LanderMode implements GameMode {
     const worldDriftDir = Math.atan2(velocity.x, -velocity.z);
     data.driftDirection = normalizeAngle(worldDriftDir - heading);
 
-    data.throttle = engine.getLever();
+    // Show what the engine is actually doing (full-thrust punch and
+    // hover-hold included), not just the lever position
+    data.throttle = this.phase === 'flying' ? body.getEffectiveThrottle() : engine.getLever();
     data.hoverThrottle = body.getHoverThrottle();
     data.hoverHold = engine.isHoverHold();
     data.fuelFraction = engine.getFuelFraction();

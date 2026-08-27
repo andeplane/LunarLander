@@ -366,6 +366,12 @@ export class LanderBody implements PhysicsStepListener {
     return this.engine;
   }
 
+  /** Throttle actually applied on the last step (lever, hover-hold, or
+   * full-thrust punch), 0..1. */
+  getEffectiveThrottle(): number {
+    return this.lastEffectiveThrottle;
+  }
+
   /** Total current mass (kg), or full-spec mass before spawn. */
   getMass(): number {
     return this.body ? this.body.mass() : LANDER_CONFIG.dryMass + LANDER_CONFIG.fuelMass;
