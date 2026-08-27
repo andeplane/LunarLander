@@ -44,6 +44,19 @@ const HP_WORKER_TARGET_CHUNKS = 9;
 const NEAREST_CHUNKS_HIGH_PRIORITY = 25;
 
 /**
+ * Number of nearest chunks for which one LOD level *finer* than currently
+ * needed is prefetched, so the swap is instant when the camera moves closer.
+ *
+ * Each finer level has ~4x the vertices of the one below, so prefetching
+ * desired-1 for every loaded chunk (the previous behaviour) cost the workers
+ * roughly four times the essential build work - and at speed most of those
+ * builds were evicted before they were ever displayed. The camera can only
+ * move closer to a handful of chunks at a time, so the 3x3 block around it is
+ * where the prefetch actually pays off.
+ */
+const FINER_LOD_PREFETCH_CHUNKS = 9;
+
+/**
  * State for a single chunk worker
  */
 interface WorkerState {
@@ -554,6 +567,10 @@ export class ChunkManager {
     const fovRadians = (fov * Math.PI) / 180;
     const screenHeight = window.innerHeight;
 
+    // nearbyKeys is sorted by distance, so the first entries are the chunks
+    // the camera is most likely to approach next.
+    const finerPrefetchKeys = new Set(nearbyKeys.slice(0, FINER_LOD_PREFETCH_CHUNKS));
+
     for (const gridKey of nearbyKeys) {
       const desiredLod = this.getLodLevelForChunkOptimized(
         gridKey,
@@ -585,7 +602,11 @@ export class ChunkManager {
         this.requestChunkLod(gridKey, coarsestLod);
       }
 
-      if (desiredLod > 0 && !chunk.hasLodLevel(desiredLod - 1)) {
+      if (
+        desiredLod > 0 &&
+        finerPrefetchKeys.has(gridKey) &&
+        !chunk.hasLodLevel(desiredLod - 1)
+      ) {
         this.requestChunkLod(gridKey, desiredLod - 1);
       }
       if (desiredLod < this.config.lodLevels.length - 1 && !chunk.hasLodLevel(desiredLod + 1)) {
