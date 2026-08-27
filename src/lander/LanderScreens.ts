@@ -44,6 +44,7 @@ const KEYBOARD_CONTROLS: ReadonlyArray<readonly [string, string]> = [
   ['X', 'Cut throttle'],
   ['H', 'Hover-hold assist'],
   ['C', 'Camera: cockpit / belly / orbit'],
+  ['M', 'Mute / unmute sound'],
   ['Mouse', 'Orbit view: drag to orbit, wheel to zoom'],
 ];
 

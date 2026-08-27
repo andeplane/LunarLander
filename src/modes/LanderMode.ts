@@ -16,6 +16,7 @@ import { createHeightSampler, type TerrainHeightSampler } from '../terrain/heigh
 import { LanderBody, type LanderStepSample } from '../lander/LanderBody';
 import { LanderControls } from '../lander/LanderControls';
 import { LanderVisuals } from '../lander/LanderVisuals';
+import { LanderAudio } from '../lander/LanderAudio';
 import { MissionMarkers } from '../lander/MissionMarkers';
 import { LanderHUD } from '../lander/LanderHUD';
 import { LanderScreens } from '../lander/LanderScreens';
@@ -26,6 +27,7 @@ import { missionParamsForIndex, fuelCapacityForMission } from '../lander/mission
 import { gradeLanding, scoreLanding } from '../lander/scoring';
 import { getMissionBest, recordMissionResult } from '../lander/highscores';
 import { LANDER_CONFIG } from '../lander/config';
+import { bearingRelativeToHeading } from '../lander/bearing';
 import type { LanderHudData, LanderPhase, MissionParams, TouchdownStats } from '../lander/types';
 import { isTouchDevice } from '../utils/mobile';
 import alea from 'alea';
@@ -66,6 +68,9 @@ export class LanderMode implements GameMode {
   private controls: LanderControls;
   private body: LanderBody | null = null;
   private visuals: LanderVisuals | null = null;
+  private readonly audio = new LanderAudio();
+  /** Leg contact seen on the previous physics step (touchdown thud edge). */
+  private legsWereDown = false;
   private markers: MissionMarkers | null = null;
   private hud: LanderHUD | null = null;
   private screens: LanderScreens | null = null;
@@ -140,6 +145,11 @@ export class LanderMode implements GameMode {
   private readonly onFlightKeydown = (e: KeyboardEvent): void => {
     if (e.key === ' ' && this.phase === 'flying') {
       e.preventDefault();
+    }
+    if (e.key === 'm' || e.key === 'M') {
+      // A key press is a user gesture, so this also unlocks audio
+      this.audio.unlock();
+      this.audio.toggleMuted();
     }
   };
 
@@ -272,6 +282,7 @@ export class LanderMode implements GameMode {
     if (this.body) {
       this.scene.remove(this.body.rig);
     }
+    this.audio.silence();
     this.markers?.hidePad();
     this.markers?.hideImpactReticle();
     this.hud?.hide();
@@ -354,6 +365,7 @@ export class LanderMode implements GameMode {
     // Markers + HUD track the live state every frame
     this.markers?.updateBeacon(this.elapsed);
     this.updateMarkersAndHud();
+    this.updateAudio();
 
     // Physics may be idle (frozen body) — camera still needs syncing when
     // something else (glance/camera cycle) changed
@@ -412,6 +424,7 @@ export class LanderMode implements GameMode {
     // behind the selector; startMission() re-spawns it
     this.body?.despawn();
     this.visuals?.setExteriorVisible(false);
+    this.audio.silence();
     this.hud?.hide();
     this.touchControls?.setVisible(false);
     this.markers?.hidePad();
@@ -432,6 +445,8 @@ export class LanderMode implements GameMode {
     this.cameraMode = 'cockpit';
     this.usedExternalCam = false;
     this.orbitDragging = false;
+    this.legsWereDown = false;
+    this.audio.silence();
     this.glanceBlend = 0;
     this.windowOpen = false;
     this.worstVSpeed = 0;
@@ -560,11 +575,14 @@ export class LanderMode implements GameMode {
     if (!this.terrainReady || !this.body || this.phase !== 'briefing') return;
     this.screens?.hideAll();
     this.phase = 'flying';
+    // LAUNCH is a click/Enter: the gesture browsers need to start audio
+    this.audio.unlock();
     this.body.launch();
   }
 
   private pauseGame(): void {
     this.setPaused(true);
+    this.audio.setPaused(true);
     this.screens?.showPause();
     window.addEventListener('keydown', this.onPauseKeydown);
   }
@@ -574,6 +592,7 @@ export class LanderMode implements GameMode {
     this.screens?.hideAll();
     this.ignoreEscapeOnce = true;
     this.setPaused(false);
+    this.audio.setPaused(false);
   }
 
   // ---- Touchdown grading (runs on the fixed physics step) ----
@@ -591,7 +610,13 @@ export class LanderMode implements GameMode {
       return;
     }
 
-    if (sample.legContactCount > 0) {
+    const legsDown = sample.legContactCount > 0;
+    if (legsDown && !this.legsWereDown) {
+      this.audio.touchdown(sample.impactVerticalSpeed);
+    }
+    this.legsWereDown = legsDown;
+
+    if (legsDown) {
       this.windowOpen = true;
       this.worstVSpeed = Math.max(this.worstVSpeed, sample.impactVerticalSpeed);
       this.worstDrift = Math.max(this.worstDrift, sample.impactDriftSpeed);
@@ -667,6 +692,7 @@ export class LanderMode implements GameMode {
     this.crashReason = reason;
     this.phase = 'crashed';
     this.aftermathTime = 0;
+    this.audio.crash();
     // Detach the camera: the aftermath is the orbit view, seeded from
     // behind the craft so the wreck sits centre-frame. The orbit camera is
     // terrain-clamped, so a belly/cockpit view never ends up underground.
@@ -697,6 +723,19 @@ export class LanderMode implements GameMode {
       isNewBest,
       crashReason: score.grade === 'crash' ? this.crashReason : null,
     });
+  }
+
+  // ---- Audio ----
+
+  /** Engine rumble follows effective throttle; RCS hiss follows attitude input. */
+  private updateAudio(): void {
+    if (this.phase !== 'flying' || !this.body) {
+      this.audio.update(0, 0);
+      return;
+    }
+    const cmd = this.controls.getAttitudeCommand();
+    const rcs = Math.min(1, Math.hypot(cmd.tiltX, cmd.tiltY) + Math.abs(cmd.yaw));
+    this.audio.update(this.body.getEffectiveThrottle(), rcs);
   }
 
   // ---- Camera & HUD ----
@@ -798,9 +837,8 @@ export class LanderMode implements GameMode {
     data.driftSpeed = Math.hypot(velocity.x, velocity.z);
 
     const heading = body.getHeading();
-    // Drift direction relative to heading: 0 = toward lander-forward
-    const worldDriftDir = Math.atan2(velocity.x, -velocity.z);
-    data.driftDirection = normalizeAngle(worldDriftDir - heading);
+    // Drift direction relative to the nose: 0 = toward lander-forward
+    data.driftDirection = bearingRelativeToHeading(velocity.x, velocity.z, heading);
 
     // Show what the engine is actually doing (full-thrust punch and
     // hover-hold included), not just the lever position
@@ -839,7 +877,7 @@ export class LanderMode implements GameMode {
     } else {
       data.padScreen = null;
     }
-    data.padBearing = normalizeAngle(Math.atan2(dx, -dz) - heading);
+    data.padBearing = bearingRelativeToHeading(dx, dz, heading);
 
     // Readiness pips below the reveal altitude
     const cfg = LANDER_CONFIG.touchdown;
@@ -865,6 +903,7 @@ export class LanderMode implements GameMode {
   }
 
   dispose(): void {
+    this.audio.dispose();
     this.body?.dispose();
     this.visuals?.dispose();
     this.markers?.dispose();
@@ -876,10 +915,3 @@ export class LanderMode implements GameMode {
 
 const AXIS_X = new THREE.Vector3(1, 0, 0);
 
-/** Wrap an angle to (-π, π]. */
-function normalizeAngle(a: number): number {
-  let angle = a % (2 * Math.PI);
-  if (angle > Math.PI) angle -= 2 * Math.PI;
-  if (angle <= -Math.PI) angle += 2 * Math.PI;
-  return angle;
-}
