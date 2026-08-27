@@ -786,9 +786,12 @@ export class LanderMode implements GameMode {
     data.hoverThrottle = body.getHoverThrottle();
     data.hoverHold = engine.isHoverHold();
     data.fuelFraction = engine.getFuelFraction();
+    // Burn time from the throttle actually burning fuel (data.throttle is the
+    // effective throttle while flying), not the lever - under hover-hold or a
+    // full-thrust punch the lever can read 0% while the tank is draining.
     data.fuelBurnTimeS =
-      engine.getLever() > 0.01
-        ? engine.getFuelKg() / (engine.getLever() * LANDER_CONFIG.maxBurnRate)
+      data.throttle > 0.01
+        ? engine.getFuelKg() / (data.throttle * LANDER_CONFIG.maxBurnRate)
         : null;
 
     body.getPitchRollDeg(this.pitchRoll);
