@@ -20,6 +20,7 @@ export class LanderControls implements LanderInputSink {
   private touchTiltY = 0;
   private touchYaw = 0;
   private touchFullThrust = false;
+  private touchGlance = false;
   /** Absolute lever position from the touch slider; consumed when applied */
   private pendingThrottleAbsolute: number | null = null;
 
@@ -28,6 +29,7 @@ export class LanderControls implements LanderInputSink {
   private pendingHoverToggle = false;
   private pendingCameraCycle = false;
   private pendingRestart = false;
+  private pendingPause = false;
 
   constructor(inputManager: InputManager) {
     this.inputManager = inputManager;
@@ -66,6 +68,14 @@ export class LanderControls implements LanderInputSink {
 
   restart(): void {
     this.pendingRestart = true;
+  }
+
+  pause(): void {
+    this.pendingPause = true;
+  }
+
+  setGlance(active: boolean): void {
+    this.touchGlance = active;
   }
 
   // ---- Frame-level capture (called once per frame by LanderMode) ----
@@ -144,12 +154,25 @@ export class LanderControls implements LanderInputSink {
     return pending;
   }
 
+  consumePause(): boolean {
+    const pending = this.pendingPause;
+    this.pendingPause = false;
+    return pending;
+  }
+
+  /** Touch glance button held (composes with the V key in LanderMode). */
+  isGlanceHeld(): boolean {
+    return this.touchGlance;
+  }
+
   /** Drop all latched/level state (mission restart, mode exit). */
   reset(): void {
     this.touchTiltX = 0;
     this.touchTiltY = 0;
     this.touchYaw = 0;
     this.touchFullThrust = false;
+    this.touchGlance = false;
+    this.pendingPause = false;
     this.pendingThrottleAbsolute = null;
     this.pendingCut = false;
     this.pendingHoverToggle = false;

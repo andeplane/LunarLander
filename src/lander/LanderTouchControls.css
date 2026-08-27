@@ -168,10 +168,22 @@
 
 /* --- Hover-hold toggle: large, thumb-reachable, above the joystick --- */
 
-.lander-hover-button {
+/*
+ * Stacked in the strip between the joystick and the right edge, aligned to
+ * the joystick's bottom edge (joystick centre is at bottom 30%, size 130),
+ * so neither button overlaps the instrument HUD on wide/short screens.
+ */
+.lander-right-cluster {
   position: absolute;
   right: 20px;
-  bottom: calc(45vh + 20px);
+  bottom: calc(30% - 65px);
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.lander-hover-button {
   min-width: 110px;
   height: 56px;
   padding: 0 18px;
@@ -200,7 +212,58 @@
   box-shadow: 0 0 12px rgba(255, 190, 80, 0.6);
 }
 
-/* --- Small top-corner buttons: restart (left), camera (right) --- */
+/* --- BURN: momentary full thrust (= Space), beside hover-hold --- */
+
+.lander-burn-button {
+  width: 110px;
+  height: 48px;
+  border-radius: 28px;
+  border: 2px solid rgba(255, 110, 90, 0.6);
+  background: rgba(0, 0, 0, 0.5);
+  color: rgba(255, 170, 150, 0.95);
+  font-size: 13px;
+  font-weight: bold;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+  pointer-events: auto;
+}
+
+.lander-burn-button:active {
+  background: rgba(255, 110, 90, 0.4);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(255, 110, 90, 0.6);
+}
+
+/* --- Glance: hold to look down past the sill (= V), left of the stick --- */
+
+.lander-glance-button {
+  position: absolute;
+  right: calc(18% + 110px);
+  bottom: calc(30% - 26px);
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 2px solid rgba(140, 190, 255, 0.5);
+  background: rgba(0, 0, 0, 0.5);
+  color: white;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  touch-action: none;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lander-glance-button:active {
+  background: rgba(140, 190, 255, 0.35);
+}
+
+/* --- Small top-corner buttons: restart (left), camera + pause (right) --- */
 
 .lander-corner-button {
   position: absolute;
@@ -233,6 +296,10 @@
 
 .lander-camera-button {
   right: 20px;
+}
+
+.lander-pause-button {
+  right: 80px;
 }
 
 /* Hide on non-touch devices (same convention as the Explore controls) */
