@@ -16,6 +16,10 @@ export class MissionMarkers {
   private readonly beacon: THREE.Mesh;
   private readonly beaconMat: CurvedStandardMaterial;
   private readonly ring: THREE.Mesh;
+  private readonly label: THREE.Mesh;
+  private readonly labelMat: CurvedStandardMaterial;
+  private labelTexture: THREE.CanvasTexture | null = null;
+  private labelText = '';
   private readonly disposables: Array<{ dispose(): void }> = [];
 
   constructor(scene: THREE.Scene) {
@@ -61,6 +65,27 @@ export class MissionMarkers {
     this.beacon.position.y = 65;
     this.padGroup.add(this.beacon);
 
+    // Pad multiplier label (ADR-0004 §3: "shown on the pad beacon"). A
+    // camera-facing plane with a canvas texture; a Sprite cannot be used
+    // because its material is not curvature-aware and would float ~64 m
+    // above the pad at spawn distance.
+    this.labelMat = this.track(
+      new CurvedStandardMaterial({
+        color: 0x000000,
+        emissive: 0xffffff,
+        emissiveIntensity: 1.4,
+        roughness: 1,
+        metalness: 0,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      })
+    );
+    this.label = new THREE.Mesh(this.track(new THREE.PlaneGeometry(1, 1)), this.labelMat);
+    this.label.position.y = 8; // re-placed per frame in updateBeacon()
+    this.label.visible = false;
+    this.padGroup.add(this.label);
+
     this.padGroup.visible = false;
     scene.add(this.padGroup);
 
@@ -86,11 +111,43 @@ export class MissionMarkers {
     scene.add(this.impactReticle);
   }
 
-  /** Place and show the pad marker (y = terrain height at the pad center). */
-  setPad(x: number, y: number, z: number, radius: number): void {
+  /**
+   * Place and show the pad marker (y = terrain height at the pad center).
+   * `multiplier` is drawn on the beacon label; omit (or pass 1) to hide it.
+   */
+  setPad(x: number, y: number, z: number, radius: number, multiplier = 1): void {
     this.padGroup.position.set(x, y + 0.15, z);
     this.ring.scale.setScalar(radius);
     this.padGroup.visible = true;
+    this.setLabel(multiplier > 1 ? `×${Number.isInteger(multiplier) ? multiplier : multiplier.toFixed(1)}` : '');
+  }
+
+  private setLabel(text: string): void {
+    if (text === this.labelText) return;
+    this.labelText = text;
+    if (!text) {
+      this.label.visible = false;
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.font = 'bold 84px Inter, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 4);
+
+    this.labelTexture?.dispose();
+    this.labelTexture = new THREE.CanvasTexture(canvas);
+    this.labelTexture.colorSpace = THREE.SRGBColorSpace;
+    this.labelMat.map = this.labelTexture;
+    this.labelMat.emissiveMap = this.labelTexture;
+    this.labelMat.needsUpdate = true;
+    this.label.visible = true;
   }
 
   hidePad(): void {
@@ -101,9 +158,26 @@ export class MissionMarkers {
     return out.copy(this.padGroup.position);
   }
 
-  /** Pulse the beacon (call per frame with elapsed seconds). */
-  updateBeacon(timeS: number): void {
+  /**
+   * Pulse the beacon and turn the multiplier label toward the camera (call
+   * per frame with elapsed seconds and the camera's world position).
+   */
+  updateBeacon(timeS: number, cameraPosition?: THREE.Vector3): void {
     this.beaconMat.emissiveIntensity = 1.6 + 0.9 * Math.sin(timeS * 3.5);
+    if (cameraPosition && this.label.visible) {
+      // Yaw-only billboard: rotate about the pad's up axis to face the camera
+      const dx = cameraPosition.x - this.padGroup.position.x;
+      const dz = cameraPosition.z - this.padGroup.position.z;
+      this.label.rotation.y = Math.atan2(dx, dz);
+      // Scale with distance (~10% of the range → roughly constant on-screen
+      // size on the 500-800 m approach) but never below 8 m so it does not
+      // loom up close. Sits 30 m up the beacon column, clear of the HUD's
+      // pad designator which is drawn at the pad point itself.
+      const dist = Math.hypot(dx, cameraPosition.y - this.padGroup.position.y, dz);
+      const width = Math.max(8, dist * 0.1);
+      this.label.scale.set(width, width / 2, 1);
+      this.label.position.y = 30 + width / 4;
+    }
   }
 
   /**
@@ -165,6 +239,7 @@ export class MissionMarkers {
   }
 
   dispose(): void {
+    this.labelTexture?.dispose();
     this.scene.remove(this.padGroup);
     this.scene.remove(this.impactReticle);
     for (const d of this.disposables) {
