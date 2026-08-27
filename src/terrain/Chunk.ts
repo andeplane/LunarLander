@@ -46,6 +46,24 @@ export class Chunk {
 
     // Disable Three.js LOD auto-update - we manually control mesh visibility
     this.lod.autoUpdate = false;
+
+    // Chunks never move once placed. With matrixAutoUpdate on, every
+    // scene.updateMatrixWorld() (once per render) recomposed the local matrix
+    // of every chunk object and every terrain/rock mesh in it - thousands of
+    // compose() calls per frame for objects that are static. Compose once now;
+    // updateMatrix() also flags matrixWorldNeedsUpdate so the world matrix is
+    // built on the next scene update.
+    this.lod.matrixAutoUpdate = false;
+    this.lod.updateMatrix();
+  }
+
+  /**
+   * Meshes inside a chunk sit at the chunk origin and never move: bake their
+   * (identity) local matrix once instead of recomposing it every frame.
+   */
+  private static markStatic(mesh: Mesh): void {
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
   }
 
   /**
@@ -91,6 +109,8 @@ export class Chunk {
     this.terrainMeshes[lodLevel] = mesh;
     this.builtLevels.add(lodLevel);
 
+    Chunk.markStatic(mesh);
+
     // Add to LOD object with distance threshold
     this.lod.addLevel(mesh, distance);
   }
@@ -108,6 +128,8 @@ export class Chunk {
   addRockMesh(mesh: InstancedMesh, lodLevel: number): void {
     // Add to array of rock meshes for this LOD level
     this.rockMeshes[lodLevel].push(mesh);
+
+    Chunk.markStatic(mesh);
 
     // Add rocks directly to LOD object
     this.lod.add(mesh);
