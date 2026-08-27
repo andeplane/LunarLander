@@ -86,6 +86,8 @@ export class LanderHUD {
   private lastFuelPct = -1;
   private lastFuelBand: string | null = null;
   private lastBurnKey = NaN;
+  private lastHoldUsed = false;
+  private assistTag!: HTMLDivElement;
   private padMode: 'marker' | 'arrow' | null = null;
   private lastPadXKey = NaN;
   private lastPadYKey = NaN;
@@ -137,6 +139,7 @@ export class LanderHUD {
     const right = div('hud-cluster hud-right', this.root);
     const throttle = div('hud-tape hud-throttle', right);
     this.holdBadge = div('hud-hold-badge', throttle, 'HOLD');
+    this.assistTag = div('hud-assist-tag', throttle, 'ASSIST ×0.8');
     const throttleTrack = div('hud-tape-track', throttle);
     this.throttleFill = div('hud-tape-fill hud-throttle-fill', throttleTrack);
     this.hoverTick = div('hud-hover-tick', throttleTrack);
@@ -184,6 +187,7 @@ export class LanderHUD {
     this.updateAttitude(data.pitchDeg, data.rollDeg);
     this.updateThrottle(data.throttle, data.hoverThrottle, data.hoverHold);
     this.updateFuel(data.fuelFraction, data.fuelBurnTimeS);
+    this.updateAssistTag(data.hoverHoldUsed);
     this.updatePadDesignator(data);
     this.updateReadiness(data.readiness);
     this.updateSlopeWarning(data.slopeWarning);
@@ -307,6 +311,14 @@ export class LanderHUD {
     if (hoverHold !== this.lastHold) {
       this.lastHold = hoverHold;
       this.holdBadge.classList.toggle('active', hoverHold);
+    }
+  }
+
+  /** One accidental H tap costs ×0.8 for the whole mission - say so, live. */
+  private updateAssistTag(hoverHoldUsed: boolean): void {
+    if (hoverHoldUsed !== this.lastHoldUsed) {
+      this.lastHoldUsed = hoverHoldUsed;
+      this.assistTag.classList.toggle('active', hoverHoldUsed);
     }
   }
 

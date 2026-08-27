@@ -317,6 +317,9 @@ export class LanderScreens {
     c.textContent = ''; // rebuild (infrequent — once per landing)
 
     div(`debrief-grade grade-${score.grade}`, c, GRADE_LABEL[score.grade]);
+    if (score.grade === 'crash' && data.crashReason) {
+      div('debrief-reason', c, data.crashReason);
+    }
     const starsRow = div('debrief-stars', c);
     span('stars-filled', starsRow, '★'.repeat(score.stars));
     span('stars-empty', starsRow, '★'.repeat(3 - score.stars));

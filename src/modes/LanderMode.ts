@@ -99,6 +99,7 @@ export class LanderMode implements GameMode {
   private worstVSpeed = 0;
   private worstDrift = 0;
   private worstTilt = 0;
+  private crashReason: string | null = null;
   private restTime = 0;
   private aftermathTime = 0;
 
@@ -116,6 +117,7 @@ export class LanderMode implements GameMode {
     throttle: 0,
     hoverThrottle: 0.45,
     hoverHold: false,
+    hoverHoldUsed: false,
     fuelFraction: 1,
     fuelBurnTimeS: null,
     pitchDeg: 0,
@@ -428,6 +430,7 @@ export class LanderMode implements GameMode {
     this.worstVSpeed = 0;
     this.worstDrift = 0;
     this.worstTilt = 0;
+    this.crashReason = null;
     this.restTime = 0;
     this.aftermathTime = 0;
     this.elapsed = 0;
@@ -575,8 +578,8 @@ export class LanderMode implements GameMode {
     if (sample.bodyContact || sample.tiltDeg > TIP_OVER_DEG) {
       this.beginCrash(
         sample.bodyContact
-          ? `hull contact (impact v↓ ${sample.impactVerticalSpeed.toFixed(1)} m/s)`
-          : `tipped over (${sample.tiltDeg.toFixed(0)}°)`
+          ? `Hull struck the surface at ${sample.impactVerticalSpeed.toFixed(1)} m/s`
+          : `Tipped over — ${sample.tiltDeg.toFixed(0)}° from upright`
       );
       return;
     }
@@ -633,9 +636,19 @@ export class LanderMode implements GameMode {
     const stats = this.buildStats(false, false);
     const grade = gradeLanding(stats);
     if (grade === 'crash') {
-      this.beginCrash(
-        `impact beyond limits (v↓ ${stats.maxVerticalSpeed.toFixed(1)}, drift ${stats.maxDriftSpeed.toFixed(1)}, tilt ${stats.maxTiltDeg.toFixed(0)}°)`
-      );
+      const limits = LANDER_CONFIG.touchdown;
+      const causes: string[] = [];
+      if (stats.maxVerticalSpeed > limits.hardFactor * limits.goodVSpeed) {
+        causes.push(`came down at ${stats.maxVerticalSpeed.toFixed(1)} m/s`);
+      }
+      if (stats.maxDriftSpeed > limits.hardFactor * limits.goodDrift) {
+        causes.push(`drifting ${stats.maxDriftSpeed.toFixed(1)} m/s sideways`);
+      }
+      if (stats.maxTiltDeg > limits.hardFactor * limits.goodTiltDeg) {
+        causes.push(`tilted ${stats.maxTiltDeg.toFixed(0)}°`);
+      }
+      const detail = causes.length > 0 ? causes.join(', ') : 'impact beyond limits';
+      this.beginCrash(`Landing gear collapsed — ${detail}`);
       return;
     }
     this.phase = 'landed';
@@ -644,6 +657,7 @@ export class LanderMode implements GameMode {
 
   private beginCrash(reason: string): void {
     console.log(`[Lander] Crash: ${reason}`);
+    this.crashReason = reason;
     this.phase = 'crashed';
     this.aftermathTime = 0;
     // Detach the camera: the aftermath is the orbit view, seeded from
@@ -674,6 +688,7 @@ export class LanderMode implements GameMode {
       bestScore: best?.score ?? null,
       bestStars: best?.stars ?? null,
       isNewBest,
+      crashReason: score.grade === 'crash' ? this.crashReason : null,
     });
   }
 
@@ -785,6 +800,7 @@ export class LanderMode implements GameMode {
     data.throttle = this.phase === 'flying' ? body.getEffectiveThrottle() : engine.getLever();
     data.hoverThrottle = body.getHoverThrottle();
     data.hoverHold = engine.isHoverHold();
+    data.hoverHoldUsed = engine.wasHoverHoldUsed();
     data.fuelFraction = engine.getFuelFraction();
     data.fuelBurnTimeS =
       engine.getLever() > 0.01

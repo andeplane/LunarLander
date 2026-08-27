@@ -101,6 +101,8 @@ export interface LanderHudData {
   hoverThrottle: number;
   /** Hover-hold assist engaged */
   hoverHold: boolean;
+  /** Hover-hold was used at any point this mission (score ×0.8 applies) */
+  hoverHoldUsed: boolean;
   /** Fuel remaining 0..1 */
   fuelFraction: number;
   /** Burn time remaining at current throttle (s); null when throttle is 0 */
@@ -154,4 +156,6 @@ export interface DebriefData {
   bestScore: number | null;
   bestStars: 0 | 1 | 2 | 3 | null;
   isNewBest: boolean;
+  /** Plain-language cause when the grade is 'crash' */
+  crashReason?: string | null;
 }
