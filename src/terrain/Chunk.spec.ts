@@ -75,6 +75,31 @@ describe(Chunk.name, () => {
     });
   });
 
+  describe('setLodLevel', () => {
+    it('hides rock meshes of every inactive LOD level and leaves the active level to screen-size culling', () => {
+      const chunk = new Chunk('0,0', 0, 0, 3);
+      const geometry = new BoxGeometry(1, 1, 1);
+      const material = new MeshStandardMaterial();
+      const rock0 = new InstancedMesh(geometry, material, 1);
+      const rock1 = new InstancedMesh(geometry, material, 1);
+      const rock2 = new InstancedMesh(geometry, material, 1);
+      chunk.addRockMesh(rock0, 0);
+      chunk.addRockMesh(rock1, 1);
+      chunk.addRockMesh(rock2, 2);
+
+      chunk.setLodLevel(1);
+
+      expect(rock0.visible).toBe(false);
+      expect(rock2.visible).toBe(false);
+      // Active level is shown; ChunkManager.updateRockVisibility may still cull it by screen size.
+      expect(rock1.visible).toBe(true);
+
+      chunk.setLodLevel(2);
+      expect(rock1.visible).toBe(false);
+      expect(rock2.visible).toBe(true);
+    });
+  });
+
   describe('dispose', () => {
     it('disposes rock instance buffers but never the shared prototype geometry', () => {
       const chunk = new Chunk('0,0', 0, 0, 2);
