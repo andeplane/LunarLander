@@ -9,7 +9,7 @@ import type { CelestialSystem } from '../environment/CelestialSystem';
 import type { InputManager } from './InputManager';
 import type { PhysicsWorld } from '../physics/PhysicsWorld';
 import type { TerrainColliderManager } from '../physics/TerrainColliderManager';
-import { DEFAULT_PLANET_RADIUS } from './EngineSettings';
+import { DEFAULT_PLANET_RADIUS, MAX_PIXEL_RATIO, COMPOSER_MSAA_SAMPLES } from './EngineSettings';
 import type { CameraConfig } from '../types';
 
 /**
@@ -73,9 +73,13 @@ export class Engine {
 
   constructor(canvas: HTMLCanvasElement, cameraOptions?: Pick<CameraConfig, 'fov' | 'near' | 'far'>) {
     // Initialize renderer
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    // antialias is intentionally off: the scene renders into the composer's
+    // offscreen target, so canvas MSAA would only cost memory and a resolve
+    // without touching geometry edges. The composer target is multisampled
+    // instead (see below).
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
 
@@ -92,8 +96,14 @@ export class Engine {
     );
     this.camera.position.set(0, 100, 200);
 
-    // Initialize post-processing
-    this.composer = new EffectComposer(this.renderer);
+    // Initialize post-processing with a multisampled HalfFloat target so
+    // geometry edges are anti-aliased before bloom/tone mapping.
+    const composerTarget = new THREE.WebGLRenderTarget(
+      this.renderer.domElement.width,
+      this.renderer.domElement.height,
+      { type: THREE.HalfFloatType, samples: COMPOSER_MSAA_SAMPLES }
+    );
+    this.composer = new EffectComposer(this.renderer, composerTarget);
     
     // Render pass - renders the scene
     const renderPass = new RenderPass(this.scene, this.camera);
