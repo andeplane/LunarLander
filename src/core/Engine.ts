@@ -9,7 +9,7 @@ import type { CelestialSystem } from '../environment/CelestialSystem';
 import type { InputManager } from './InputManager';
 import type { PhysicsWorld } from '../physics/PhysicsWorld';
 import type { TerrainColliderManager } from '../physics/TerrainColliderManager';
-import { DEFAULT_PLANET_RADIUS, MAX_PIXEL_RATIO, COMPOSER_MSAA_SAMPLES } from './EngineSettings';
+import { DEFAULT_PLANET_RADIUS, MAX_PIXEL_RATIO, COMPOSER_MSAA_SAMPLES, MAX_FPS } from './EngineSettings';
 import type { CameraConfig } from '../types';
 
 /**
@@ -17,6 +17,14 @@ import type { CameraConfig } from '../types';
  * tab-backgrounding) so controllers and physics never see huge time jumps.
  */
 const MAX_DELTA_TIME = 0.1;
+
+/**
+ * Minimum time between ticks, with a small tolerance so that a 60 Hz display
+ * whose rAF arrives at 16.6 ms (slightly early due to jitter) is never
+ * skipped, while a 120 Hz display's 8.3 ms ticks are skipped every other
+ * frame.
+ */
+const MIN_FRAME_INTERVAL_S = 1 / MAX_FPS - 0.002;
 
 /**
  * Main engine class responsible for:
@@ -361,8 +369,15 @@ export class Engine {
     const animate = () => {
       this.animationId = requestAnimationFrame(animate);
       
-      // Calculate delta time, clamped to avoid huge jumps after tab-backgrounding
+      // Frame cap: on high-refresh displays rAF fires faster than MAX_FPS;
+      // skip the tick entirely (lastTime is untouched, so the elapsed time
+      // carries over into the next accepted tick).
       const currentTime = this.clock.getElapsedTime();
+      if (currentTime - this.lastTime < MIN_FRAME_INTERVAL_S) {
+        return;
+      }
+
+      // Calculate delta time, clamped to avoid huge jumps after tab-backgrounding
       const deltaTime = Math.min(currentTime - this.lastTime, MAX_DELTA_TIME);
       this.lastTime = currentTime;
       
