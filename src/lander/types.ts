@@ -146,6 +146,10 @@ export interface LanderInputSink {
   cycleCamera(): void;
   /** One-shot: restart mission */
   restart(): void;
+  /** One-shot: open the pause overlay (touch has no Esc) */
+  pause(): void;
+  /** Momentary glance down (V / touch hold button) */
+  setGlance(active: boolean): void;
 }
 
 /** Result summary shown on the debrief screen. */

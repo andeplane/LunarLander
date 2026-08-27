@@ -10,9 +10,10 @@ import './LanderTouchControls.css';
  * - Left side: custom sticky vertical throttle slider (persistent lever —
  *   deliberately NOT a nipplejs stick, which springs back on release), with
  *   a hover tick mark, fill level and % readout.
- * - Yaw paddles (⟲ ⟳) above the throttle, large hover-hold toggle above the
- *   joystick, camera / restart buttons in the top corners, and an X cut
- *   button next to the throttle.
+ * - Yaw paddles (⟲ ⟳) above the throttle, large hover-hold toggle and a
+ *   press-and-hold BURN (full thrust) button above the joystick, a glance
+ *   (look down) hold button beside the joystick, camera / restart / pause
+ *   buttons along the top, and an X cut button next to the throttle.
  *
  * Separate from the Explore `TouchControls` on purpose — that component is
  * hardwired to Explore semantics (look zone, speed presets) and is never
@@ -192,8 +193,16 @@ export class LanderTouchControls {
     return button;
   }
 
-  /** Large thumb-reachable hover-hold toggle above the joystick. */
+  /**
+   * Large thumb-reachable hover-hold toggle above the joystick, with the
+   * momentary BURN (full thrust, = Space) button beside it and a glance
+   * (look down, = V) hold button below-left of the stick.
+   */
   private setupHoverHoldButton(): void {
+    const cluster = document.createElement('div');
+    cluster.className = 'lander-right-cluster';
+    this.container.appendChild(cluster);
+
     this.hoverHoldButton = document.createElement('button');
     this.hoverHoldButton.className = 'lander-hover-button';
     this.hoverHoldButton.textContent = 'HOVER HOLD';
@@ -202,7 +211,19 @@ export class LanderTouchControls {
       e.preventDefault();
     });
     this.hoverHoldButton.addEventListener('touchend', (e) => e.preventDefault());
-    this.container.appendChild(this.hoverHoldButton);
+    cluster.appendChild(this.hoverHoldButton);
+
+    const burn = this.createHoldButton('lander-burn-button', 'BURN', (active) => {
+      this.sink.setFullThrust(active);
+    });
+    burn.setAttribute('aria-label', 'Full thrust (hold)');
+    cluster.appendChild(burn);
+
+    const glance = this.createHoldButton('lander-glance-button', '👁', (active) => {
+      this.sink.setGlance(active);
+    });
+    glance.setAttribute('aria-label', 'Glance down (hold)');
+    this.container.appendChild(glance);
   }
 
   /** Small top-corner buttons: restart (top-left) and camera cycle (top-right). */
@@ -228,6 +249,17 @@ export class LanderTouchControls {
     });
     camera.addEventListener('touchend', (e) => e.preventDefault());
     this.container.appendChild(camera);
+
+    const pause = document.createElement('button');
+    pause.className = 'lander-corner-button lander-pause-button';
+    pause.textContent = '⏸';
+    pause.setAttribute('aria-label', 'Pause');
+    pause.addEventListener('touchstart', (e) => {
+      this.sink.pause();
+      e.preventDefault();
+    });
+    pause.addEventListener('touchend', (e) => e.preventDefault());
+    this.container.appendChild(pause);
   }
 
   /** Momentary press-and-hold button: active on touchstart, off on end/cancel. */
@@ -288,6 +320,8 @@ export class LanderTouchControls {
     if (!visible) {
       this.sink.setTiltInput(0, 0);
       this.sink.setYawInput(0);
+      this.sink.setFullThrust(false);
+      this.sink.setGlance(false);
       this.throttleTouchId = null;
     }
   }

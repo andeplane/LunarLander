@@ -51,7 +51,11 @@ const TOUCH_CONTROLS: ReadonlyArray<readonly [string, string]> = [
   ['Right stick', 'Tilt — release to auto-level'],
   ['Left slider', 'Throttle (sticky lever)'],
   ['⟲ ⟳', 'Yaw'],
+  ['✕', 'Cut throttle'],
+  ['BURN', 'Full thrust (hold)'],
   ['HOLD', 'Hover-hold assist'],
+  ['👁', 'Glance down (hold)'],
+  ['⏸', 'Pause'],
 ];
 
 function div(className: string, parent: HTMLElement, text = ''): HTMLDivElement {
@@ -168,7 +172,7 @@ export class LanderScreens {
     button('screen-button primary', pauseButtons, 'Resume', () => this.callbacks.onResume());
     button('screen-button', pauseButtons, 'Restart Mission', () => this.callbacks.onRestart());
     button('screen-button', pauseButtons, 'Back to Menu', () => this.callbacks.onBackToMenu());
-    div('screen-hint', pausePanel, 'Esc to resume');
+    div('screen-hint', pausePanel, isTouchDevice() ? 'Tap Resume to continue' : 'Esc to resume');
 
     // --- Debrief ---
     this.debriefScreen = div('lander-screen screen-debrief hidden', this.root);

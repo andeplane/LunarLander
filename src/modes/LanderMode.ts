@@ -313,6 +313,12 @@ export class LanderMode implements GameMode {
       return;
     }
 
+    // Touch pause button (no Esc on phones): only meaningful while flying
+    if (this.controls.consumePause() && this.phase === 'flying') {
+      this.pauseGame();
+      return;
+    }
+
     if (this.phase === 'select') {
       // Nothing to fly yet; the selector owns the screen
       this.controls.consumeRestart();
@@ -330,7 +336,8 @@ export class LanderMode implements GameMode {
     }
 
     // Glance (V): ease extra down-pitch in and out
-    const glanceTarget = this.inputManager.isKeyPressed('v') ? 1 : 0;
+    const glanceTarget =
+      this.inputManager.isKeyPressed('v') || this.controls.isGlanceHeld() ? 1 : 0;
     const glanceRate = 4 * deltaTime;
     this.glanceBlend += Math.sign(glanceTarget - this.glanceBlend) *
       Math.min(Math.abs(glanceTarget - this.glanceBlend), glanceRate);
