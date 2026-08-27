@@ -47,8 +47,9 @@ describe('missionParamsForIndex', () => {
       expect(m.spawnDistance).toBeLessThan(800 * 1.08); // asymptote + jitter
       expect(m.spawnAltitudeAGL).toBeLessThan(400 * 1.06);
       expect(m.spawnHorizontalSpeed).toBeLessThan(20 * 1.1);
-      expect(m.spawnDescentRate).toBeLessThan(18 * 1.1);
-      expect(Math.abs(m.spawnBearingError)).toBeLessThan(0.4);
+      expect(m.spawnDescentRate).toBeLessThanOrEqual(18);
+      expect(m.spawnDescentRate).toBeGreaterThanOrEqual(3);
+      expect(Math.abs(m.spawnBearingError)).toBeLessThan(1.0);
       expect(m.padRadius).toBeGreaterThan(5); // never reaches the limit
       expect(m.padRadius).toBeLessThanOrEqual(10);
       expect(m.padMultiplier).toBeGreaterThanOrEqual(1);
@@ -56,6 +57,16 @@ describe('missionParamsForIndex', () => {
       expect(m.fuelMarginFactor).toBeGreaterThan(1.4);
       expect(m.fuelMarginFactor).toBeLessThanOrEqual(2.2);
     }
+  });
+
+  it('varies the approach on later missions (bearing error + descent rate)', () => {
+    // Mission 1+ must not always arrive aimed dead at the pad in a fixed dive
+    const later = INDICES.slice(1).map(missionParamsForIndex);
+    for (const m of later) {
+      expect(Math.abs(m.spawnBearingError)).toBeGreaterThan(0.05);
+    }
+    const rates = later.map((m) => m.spawnDescentRate);
+    expect(Math.max(...rates) - Math.min(...rates)).toBeGreaterThan(8);
   });
 
   it('ramps difficulty monotonically over indices 0..30', () => {

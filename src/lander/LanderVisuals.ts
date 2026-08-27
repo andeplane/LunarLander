@@ -1,101 +1,82 @@
 /**
- * Placeholder lander geometry (ADR-0003 §2): exterior hull + legs (curved
- * materials, matching collider dimensions) and the interior cockpit shell —
- * dark panels + window struts that give the fixed reference frame that
- * makes tilt readable against a barren surface. Swappable for a GLTF model
- * later: everything is a child of the physics-synced rig.
+ * Lander visuals (ADR-0003 §2): the NASA Apollo Lunar Module glTF model
+ * (public/models/apollo-lm.glb, from nasa/NASA-3D-Resources) for the
+ * exterior, plus a procedural interior cockpit shell — dark panels + window
+ * struts that give the fixed reference frame that makes tilt readable
+ * against a barren surface. Everything is a child of the physics-synced rig.
+ *
+ * The exterior is scaled so the foot pads sit at the collider gear height
+ * and is only shown to external (orbit/aftermath) cameras: the cockpit eye
+ * sits inside the ascent stage and the belly camera inside the descent
+ * stage, where the model's own geometry would fill the frame.
  */
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CurvedStandardMaterial } from '../shaders/CurvedStandardMaterial';
 import { LANDER_CONFIG } from './config';
+
+/** Model-space extents of apollo-lm.glb (feet at y≈0.1, top at y≈5.1). */
+const MODEL_FOOT_Y = 0.1;
+const MODEL_HEIGHT = 5.0;
+/** Real LM: ~7 m tall on a ~9.4 m footprint. Scaled to the collider rig. */
+const MODEL_SCALE = (LANDER_CONFIG.gearHeight + LANDER_CONFIG.bodyHalfExtents.y + 0.3) / MODEL_HEIGHT;
 
 export class LanderVisuals {
   /** Attach this to the LanderBody rig. */
   readonly group = new THREE.Group();
 
+  /** Exterior model root (hidden in cockpit view). */
+  private readonly exterior = new THREE.Group();
   private readonly disposables: Array<{ dispose(): void }> = [];
+  private disposed = false;
 
-  constructor() {
+  constructor(modelUrl = `${import.meta.env.BASE_URL}models/apollo-lm.glb`) {
     const cfg = LANDER_CONFIG;
 
-    // --- Exterior (visible when glancing down / in aftermath shots) ---
-    const hullMat = this.track(
-      new CurvedStandardMaterial({ color: 0xb8b0a4, roughness: 0.7, metalness: 0.5 })
-    );
-    const legMat = this.track(
-      new CurvedStandardMaterial({ color: 0x8a8478, roughness: 0.8, metalness: 0.6 })
-    );
+    // Feet at the collider gear height; model +Z faces the hatch, our
+    // forward is -Z, so spin it round.
+    this.exterior.scale.setScalar(MODEL_SCALE);
+    this.exterior.position.y = -cfg.gearHeight - MODEL_FOOT_Y * MODEL_SCALE;
+    this.exterior.rotation.y = Math.PI;
+    this.group.add(this.exterior);
+    this.loadModel(modelUrl);
 
-    const hull = new THREE.Mesh(
-      this.track(
-        new THREE.BoxGeometry(
-          cfg.bodyHalfExtents.x * 2,
-          cfg.bodyHalfExtents.y * 2,
-          cfg.bodyHalfExtents.z * 2
-        )
-      ),
-      hullMat
-    );
-    this.group.add(hull);
-
-    // Descent-stage skirt (octagonal cylinder, purely cosmetic)
-    const skirt = new THREE.Mesh(
-      this.track(new THREE.CylinderGeometry(1.9, 2.1, 0.8, 8)),
-      legMat
-    );
-    skirt.position.y = -cfg.bodyHalfExtents.y - 0.3;
-    this.group.add(skirt);
-
-    // Legs: angled struts to the four diagonal feet + foot pads
-    const legGeom = this.track(new THREE.CylinderGeometry(0.07, 0.09, 1, 6));
-    const footGeom = this.track(new THREE.SphereGeometry(cfg.legFootRadius, 10, 8));
-    const footY = -cfg.gearHeight + cfg.legFootRadius;
-    for (const angle of [Math.PI / 4, (3 * Math.PI) / 4, (5 * Math.PI) / 4, (7 * Math.PI) / 4]) {
-      const foot = new THREE.Vector3(
-        Math.cos(angle) * cfg.legRadialOffset,
-        footY,
-        Math.sin(angle) * cfg.legRadialOffset
-      );
-      const hip = new THREE.Vector3(
-        Math.cos(angle) * cfg.bodyHalfExtents.x * 1.05,
-        -cfg.bodyHalfExtents.y * 0.6,
-        Math.sin(angle) * cfg.bodyHalfExtents.z * 1.05
-      );
-      const mid = foot.clone().add(hip).multiplyScalar(0.5);
-      const strut = new THREE.Mesh(legGeom, legMat);
-      strut.position.copy(mid);
-      strut.scale.y = hip.distanceTo(foot);
-      strut.quaternion.setFromUnitVectors(
-        new THREE.Vector3(0, 1, 0),
-        foot.clone().sub(hip).normalize()
-      );
-      this.group.add(strut);
-
-      const footMesh = new THREE.Mesh(footGeom, legMat);
-      footMesh.position.copy(foot);
-      this.group.add(footMesh);
-    }
-
-    // Engine bell
-    const bell = new THREE.Mesh(
-      this.track(new THREE.CylinderGeometry(0.35, 0.7, 0.7, 12, 1, true)),
-      this.track(
-        new CurvedStandardMaterial({
-          color: 0x5c5650,
-          roughness: 0.4,
-          metalness: 0.9,
-          side: THREE.DoubleSide,
-        })
-      )
-    );
-    bell.position.y = -cfg.bodyHalfExtents.y - 0.9;
-    this.group.add(bell);
-
-    // --- Interior cockpit shell (dark panels + window frame) ---
-    // Built around the eye position; plain (non-curved) materials are fine
-    // at centimeter range. Panels use BasicMaterial so they stay readable
-    // black regardless of lighting; a faint emissive panel provides glow.
     this.buildCockpit();
+  }
+
+  /** Only external (orbit/aftermath) cameras show the exterior model. */
+  setExteriorVisible(visible: boolean): void {
+    this.exterior.visible = visible;
+  }
+
+  private loadModel(url: string): void {
+    new GLTFLoader().load(
+      url,
+      (gltf) => {
+        if (this.disposed) return;
+        // Swap the glTF materials for curvature-aware ones so the craft
+        // follows the same planet curvature as the terrain (ADR-0003 §3)
+        gltf.scene.traverse((obj) => {
+          const mesh = obj as THREE.Mesh;
+          if (!mesh.isMesh) return;
+          const source = mesh.material as THREE.MeshStandardMaterial;
+          const curved = this.track(
+            new CurvedStandardMaterial({
+              color: source.color,
+              map: source.map,
+              roughness: Math.max(source.roughness, 0.55),
+              metalness: source.metalness,
+              side: THREE.FrontSide,
+            })
+          );
+          mesh.material = curved;
+          this.track(mesh.geometry);
+        });
+        this.exterior.add(gltf.scene);
+      },
+      undefined,
+      (err) => console.warn('[Lander] Could not load lander model', err)
+    );
   }
 
   private buildCockpit(): void {
@@ -179,6 +160,7 @@ export class LanderVisuals {
   }
 
   dispose(): void {
+    this.disposed = true;
     for (const d of this.disposables) {
       d.dispose();
     }

@@ -328,3 +328,67 @@
     flex: 1;
   }
 }
+
+/* --- Mission select --- */
+
+.select-panel {
+  width: min(560px, 94vw);
+}
+
+.select-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 0.6rem;
+}
+
+.select-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  min-height: 84px;
+  padding: 0.6rem 0.4rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  color: #f0f0f0;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.select-card:hover:not(:disabled),
+.select-card:focus-visible {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.5);
+  outline: none;
+}
+
+.select-card.locked {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.select-card-index {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.select-card-stars {
+  font-size: 0.85rem;
+  letter-spacing: 0.05em;
+}
+
+.select-card-stars .stars-filled {
+  color: #ffd166;
+}
+
+.select-card-stars .stars-empty {
+  color: rgba(255, 255, 255, 0.25);
+}
+
+.select-card-score {
+  font-size: 0.68rem;
+  color: #93a0b4;
+}

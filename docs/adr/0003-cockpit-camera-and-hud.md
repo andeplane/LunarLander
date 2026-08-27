@@ -38,27 +38,35 @@ load-bearing game design, not decoration.
   lander-mode LOD baseline, not just cosmetics.
 - The camera inherits the body's full rotation — tilt is *felt*. Max
   commanded tilt is 25° (ADR-0002), so the view never disorients.
-- **C cycles cameras: cockpit → belly cam.** The belly cam is the *same*
-  camera moved under the hull looking straight down with the drift vector
-  and pad overlay — a transform swap, **not** a second render pass (no perf
-  cost, mobile-safe). Landing "instruments only" (never leaving the cockpit)
-  earns a small score bonus (ADR-0004).
+- **C cycles cameras: cockpit → belly cam → orbit.** The belly cam is the
+  *same* camera moved under the hull looking straight down with the drift
+  vector and pad overlay — a transform swap, **not** a second render pass
+  (no perf cost, mobile-safe). The orbit view (added 2026-08) is a
+  lander-centred external camera: mouse drag orbits, wheel zooms, and it is
+  clamped above the terrain height sampler. It doubles as the crash
+  aftermath shot, so the aftermath can never start underground (the old
+  fixed shot derived from the belly camera did). Landing "instruments only"
+  (never leaving the cockpit) earns a small score bonus (ADR-0004); belly
+  and orbit both count as leaving it.
 - **Glance control**: hold V to smoothly pitch the view further down toward
   the landing area; eases back on release. No free mouse-look in v1 — every
   input channel competes with flying during terminal descent.
 
-### 2. Cockpit geometry (placeholder, but load-bearing)
+### 2. Cockpit geometry (load-bearing) and exterior model
 
-Simple primitives forming:
-
-- A **window frame**: struts around the screen edges + a horizontal sill —
-  the fixed reference frame that makes tilt readable. Near-black interior
-  with subtle panel glow so it reads in shadow (kept below bloom threshold).
-- Exterior **legs visible in the lower corners** when glancing down — they
-  double as touchdown depth cues.
-- Exterior surfaces use `CurvedStandardMaterial` (same as balls) so the hull
-  matches world curvature. A proper GLTF model swaps in later without
-  touching the rig (model is a child of the physics-synced group).
+- A **window frame** (simple primitives): struts around the screen edges +
+  a horizontal sill — the fixed reference frame that makes tilt readable.
+  Near-black interior with subtle panel glow so it reads in shadow (kept
+  below bloom threshold).
+- The **exterior is NASA's Apollo Lunar Module glTF**
+  (`public/models/apollo-lm.glb`, from nasa/NASA-3D-Resources, Draco
+  decoded offline so no runtime decoder is shipped), scaled so the foot pads
+  sit at the collider gear height; its materials are swapped for
+  `CurvedStandardMaterial` so the hull matches world curvature. It is a
+  child of the physics-synced rig and is **only rendered for external
+  (orbit/aftermath) cameras** — the cockpit eye sits inside the ascent
+  stage and the belly camera inside the descent stage, where the model's
+  own geometry would fill the frame with bloomed hull.
 
 ### 3. In-world markers (the LPD, gamified)
 
@@ -121,9 +129,10 @@ follow-up (throttle-scaled engine rumble; the Moon's silence otherwise).
 
 ## Alternatives considered
 
-- **Chase/external camera as a gameplay view**: the brief demands cockpit
-  play; belly cam covers the visibility problem. A free external camera
-  appears only in the crash/landed aftermath (ADR-0004) and future replays.
+- **Chase/external camera as a gameplay view**: originally rejected (the
+  brief demands cockpit play). Revised 2026-08: an orbit view is now the
+  third camera mode — playtesting wanted to *see* the craft — at the cost of
+  the instruments-only bonus, which keeps cockpit play the rewarded path.
 - **Picture-in-picture belly camera inset**: a second render pass per frame —
   real cost on mobile. Full-frame camera swap gives the same information.
 - **Full free mouse-look**: rejected for v1; glance key covers the need with
@@ -136,7 +145,7 @@ follow-up (throttle-scaled engine rumble; the Moon's silence otherwise).
 ## Consequences
 
 - Camera modes are a small state machine inside LanderMode (cockpit / belly /
-  glance blend / aftermath); Engine stays camera-agnostic.
+  orbit / glance blend / aftermath); Engine stays camera-agnostic.
 - In-world markers need terrain height sampling per frame (Rapier ray for
   the impact reticle; `getHeightAt` acceptable for the distant pad ring)
   and must update before the render, after physics sync.

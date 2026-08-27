@@ -3,7 +3,7 @@
  */
 
 /** Mission phase state machine (ADR-0004 §2). */
-export type LanderPhase = 'briefing' | 'flying' | 'landed' | 'crashed' | 'debrief';
+export type LanderPhase = 'select' | 'briefing' | 'flying' | 'landed' | 'crashed' | 'debrief';
 
 /** Landing grade tiers (ADR-0004 §2, Apollo-derived thresholds). */
 export type LandingGrade = 'perfect' | 'good' | 'hard' | 'crash';
@@ -140,7 +140,7 @@ export interface LanderInputSink {
   cutThrottle(): void;
   /** One-shot: toggle hover-hold assist */
   toggleHoverHold(): void;
-  /** One-shot: cycle camera cockpit → belly */
+  /** One-shot: cycle camera cockpit → belly → orbit */
   cycleCamera(): void;
   /** One-shot: restart mission */
   restart(): void;
