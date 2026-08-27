@@ -5,6 +5,8 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
+  Scene,
+  Vector3,
 } from 'three';
 import { Chunk } from './Chunk';
 
@@ -97,6 +99,32 @@ describe(Chunk.name, () => {
       chunk.setLodLevel(2);
       expect(rock1.visible).toBe(false);
       expect(rock2.visible).toBe(true);
+    });
+  });
+
+  describe('static matrices', () => {
+    it('bakes chunk and mesh matrices once and still yields correct world transforms', () => {
+      const chunk = new Chunk('2,-1', 800, -400, 2);
+      const terrain = new Mesh(new BoxGeometry(1, 1, 1), new MeshStandardMaterial());
+      const rock = new InstancedMesh(new BoxGeometry(1, 1, 1), new MeshStandardMaterial(), 1);
+      chunk.addTerrainMesh(terrain, 0, 0);
+      chunk.addRockMesh(rock, 0);
+
+      expect(chunk.lod.matrixAutoUpdate).toBe(false);
+      expect(terrain.matrixAutoUpdate).toBe(false);
+      expect(rock.matrixAutoUpdate).toBe(false);
+
+      const scene = new Scene();
+      chunk.addToScene(scene);
+      scene.updateMatrixWorld();
+
+      const p = new Vector3();
+      terrain.getWorldPosition(p);
+      expect(p.x).toBe(800);
+      expect(p.z).toBe(-400);
+      rock.getWorldPosition(p);
+      expect(p.x).toBe(800);
+      expect(p.z).toBe(-400);
     });
   });
 
