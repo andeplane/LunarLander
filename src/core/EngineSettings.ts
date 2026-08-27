@@ -33,3 +33,16 @@ export const MAX_PIXEL_RATIO = 1.25;
  * a higher pixel ratio.
  */
 export const COMPOSER_MSAA_SAMPLES = 4;
+
+/**
+ * Upper bound on simulation + render ticks per second.
+ *
+ * requestAnimationFrame fires at the display refresh rate — 120 Hz on
+ * ProMotion Macs and many phones. Nothing in the game benefits from more
+ * than 60 updates per second (physics is a fixed 60 Hz step with
+ * interpolation), but every extra tick re-runs chunk streaming, LOD
+ * selection, collider updates and — whenever the camera moves or a mode
+ * requests it — a full render. Capping at 60 halves all of that on
+ * high-refresh displays.
+ */
+export const MAX_FPS = 60;
