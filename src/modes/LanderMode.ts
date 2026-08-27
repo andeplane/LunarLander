@@ -363,7 +363,7 @@ export class LanderMode implements GameMode {
     }
 
     // Markers + HUD track the live state every frame
-    this.markers?.updateBeacon(this.elapsed);
+    this.markers?.updateBeacon(this.elapsed, this.camera.position);
     this.updateMarkersAndHud();
     this.updateAudio();
 
@@ -507,7 +507,7 @@ export class LanderMode implements GameMode {
       };
     }
     this.pad = pad;
-    this.markers.setPad(pad.x, pad.y, pad.z, this.mission.padRadius);
+    this.markers.setPad(pad.x, pad.y, pad.z, this.mission.padRadius, this.mission.padMultiplier);
 
     // Spawn upwind of the pad with the mission's approach state
     const approach = rng() * Math.PI * 2;
