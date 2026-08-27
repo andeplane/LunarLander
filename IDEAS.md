@@ -15,6 +15,34 @@ Sections:
 5. [Platform, UX & infrastructure](#5-platform-ux--infrastructure)
 6. [Suggested order of attack](#6-suggested-order-of-attack)
 
+## Status (2026-08-27)
+
+Shipped from this backlog, one PR each (all merged to `main`):
+
+| Item | PR |
+|---|---|
+| P1 + P2 (+ V5) pixel ratio 1.25, MSAA on the composer target | #62 |
+| P3 rocks drawn only from the active LOD level | #64 |
+| P5 / V3 camera point light + flashlight off by default | #65 |
+| P4 (frame cap half) 60 tick/s loop cap | #66 |
+| P6 per-frame tight terrain bounding spheres | #67 |
+| V1 micro-detail normals into the lighting (+ retuned strength/frequency) | #68 |
+| P12 + P13 single texture path, const hex inverse, unrolled FBM | #69 |
+| P8 finer-LOD prefetch limited to the 9 nearest chunks | #70 |
+| P17 static chunk matrices | #71 |
+| G4 fuel burn-time from effective throttle | #72 |
+| G2 crash cause on debrief + live ASSIST ×0.8 tag | #73 |
+| G1 touch parity: BURN, pause, glance | #75 |
+| G3 pad multiplier on the beacon | #76 |
+| V19 cockpit vibration / touchdown jolt / FOV kick | #77 |
+| G7 mission select, orbit camera, LM model (parallel work) | #63 |
+| G11 lander audio (parallel work) | #74 |
+
+Still open from the P0/P1 tiers: P7 (sub-tile LOD0/1), P9 (rock draw
+calls / `BatchedMesh`), P10–P11, P14–P16, P18–P23, V2, V4, V6–V11.
+
+---
+
 ---
 
 ## 1. Performance
