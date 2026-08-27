@@ -122,10 +122,22 @@ five are non-negotiable):
 HUD text updates are throttled to ~10 Hz except vertical speed/altitude
 (every frame). Engine's stats/debug overlay is hidden in Lander mode.
 
-### 5. Audio: out of scope for v1
+### 5. Audio (revised 2026-08)
 
-No audio infrastructure exists in the repo. Noted as the highest-value polish
-follow-up (throttle-scaled engine rumble; the Moon's silence otherwise).
+Originally out of scope. Added as `src/lander/LanderAudio.ts`: everything is
+synthesised with Web Audio (no sample files). Engine = looped noise through a
+low-pass filter plus a sub-bass rumble; gain **and** cutoff follow the
+*effective* throttle, so more throttle is louder and brighter. RCS = band-pass
+hiss following the attitude-command magnitude. Touchdown = low thud scaled by
+impact speed on the first leg contact; crash = noise bang + thump. The context
+is created lazily on LAUNCH (a user gesture, as browsers require), suspended
+on pause, and `M` mutes (persisted in `lander.audio.muted`).
+
+Drift-scope / pad-bearing convention lives in `src/lander/bearing.ts`: a
+three.js Y rotation by `heading` points the nose at bearing `-heading`, so a
+world bearing relative to the nose is `atan2(x, -z) + heading` (it was
+subtracted before, mirroring the drift dot on every mission with a non-zero
+spawn heading).
 
 ## Alternatives considered
 
