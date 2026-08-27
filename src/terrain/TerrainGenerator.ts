@@ -1,9 +1,14 @@
-import { BufferAttribute, BufferGeometry, Mesh, MeshBasicMaterial, Color, Vector3, Raycaster } from 'three';
+import { BufferAttribute, BufferGeometry, Mesh, MeshBasicMaterial, Color, Vector3, Raycaster, type Sphere } from 'three';
 import { MoonMaterial } from '../shaders/MoonMaterial';
 import type { ChunkWorkerResult } from './ChunkWorker';
 import { computeStitchedIndices } from './EdgeStitcher';
 import type { NeighborLods } from './LodUtils';
-import { applyCurvatureDropToSphere, curvatureDrop, maxLoadedChunkDistance } from './curvatureBounds';
+import {
+  applyCurvatureDropToSphere,
+  curvatureDrop,
+  curvatureDropRange,
+  maxLoadedChunkDistance,
+} from './curvatureBounds';
 
 /**
  * Configuration for terrain generation
@@ -57,7 +62,13 @@ export class TerrainGenerator {
     // Compute bounding sphere for correct frustum culling
     geometry.computeBoundingSphere();
 
-    // Expand bounding sphere to account for vertex shader curvature transformation
+    // Remember the un-inflated sphere so updateCullingBounds() can re-derive a
+    // tight, camera-relative bound every frame.
+    const baseSphere = geometry.boundingSphere ? geometry.boundingSphere.clone() : null;
+
+    // Expand bounding sphere to account for vertex shader curvature transformation.
+    // This is the conservative chunk-lifetime bound, used until the first
+    // per-frame updateCullingBounds() call tightens it.
     if (!debugMode && this.material.getParam('enableCurvature') && geometry.boundingSphere) {
       const planetRadius = this.config.planetRadius;
 
@@ -86,7 +97,52 @@ export class TerrainGenerator {
       ? this.createDebugMaterial(gridKey)
       : this.material;
 
-    return new Mesh(geometry, material);
+    const mesh = new Mesh(geometry, material);
+    if (baseSphere) {
+      mesh.userData.baseBoundingSphere = baseSphere;
+    }
+    return mesh;
+  }
+
+  /**
+   * Tighten a terrain mesh's bounding sphere from the camera's current
+   * horizontal distance so frustum culling stays effective under the
+   * curvature shader.
+   *
+   * createTerrainMesh() inflates the sphere for the worst case over the
+   * chunk's whole lifetime (~2 km of drop at render distance 10), which makes
+   * every near chunk's sphere ~1.3 km in radius - large enough that the
+   * 2M-triangle LOD0 chunk directly behind the camera was never culled. The
+   * actual drop only depends on where the camera is right now, so recompute
+   * the sphere from the real distance, exactly as RockManager does for rocks.
+   *
+   * Cheap (a sqrt and a few adds); call once per frame for each *visible*
+   * terrain mesh. Meshes only ever carry the translation of their parent
+   * chunk object, so world position = parent position + local center.
+   */
+  updateCullingBounds(mesh: Mesh, cameraPosition: Vector3): void {
+    const base = mesh.userData.baseBoundingSphere as Sphere | undefined;
+    const sphere = mesh.geometry.boundingSphere;
+    if (!base || !sphere) {
+      return;
+    }
+
+    if (!this.material.getParam('enableCurvature')) {
+      sphere.center.copy(base.center);
+      sphere.radius = base.radius;
+      return;
+    }
+
+    const parent = mesh.parent;
+    const worldX = base.center.x + mesh.position.x + (parent ? parent.position.x : 0);
+    const worldZ = base.center.z + mesh.position.z + (parent ? parent.position.z : 0);
+    const dx = cameraPosition.x - worldX;
+    const dz = cameraPosition.z - worldZ;
+    const horizontalDistance = Math.sqrt(dx * dx + dz * dz);
+
+    const planetRadius = this.material.getParam('planetRadius') || this.config.planetRadius;
+    const range = curvatureDropRange(horizontalDistance, base.radius, planetRadius);
+    applyCurvatureDropToSphere(sphere, base.center, base.radius, range);
   }
 
   /**
