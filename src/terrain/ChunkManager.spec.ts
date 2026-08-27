@@ -238,6 +238,58 @@ describe(ChunkManager.name, () => {
       const keys = allPostedKeys();
       expect(new Set(keys).size).toBe(keys.length);
     });
+
+    it('prefetches one finer LOD level only for the nearest chunks', () => {
+      const manager = createManager({ renderDistance: 3, lodLevels: [64, 32, 16, 8] });
+      const origin = new Vector3(0, 50, 0);
+
+      manager.update(origin);
+      drainWorkers();
+      manager.update(origin);
+      drainWorkers();
+
+      const posted = new Set(allPostedKeys());
+      const desiredFor = (
+        manager as unknown as {
+          getLodLevelForChunkOptimized(
+            key: string,
+            cam: Vector3,
+            fov: number,
+            h: number
+          ): number;
+        }
+      ).getLodLevelForChunkOptimized.bind(manager);
+      const fovRadians = (70 * Math.PI) / 180;
+
+      // Rank loaded chunks by distance from the camera, as update() does
+      const chunks = (manager as unknown as { chunks: Map<string, unknown> }).chunks;
+      const ranked = [...chunks.keys()]
+        .map((key) => {
+          const [gx, gz] = key.split(',').map(Number);
+          return { key, d: Math.hypot(gx, gz) };
+        })
+        .sort((a, b) => a.d - b.d);
+      const nearest = new Set(ranked.slice(0, 9).map((r) => r.key));
+
+      let nearCandidates = 0;
+      let nearPrefetched = 0;
+      let farPrefetched = 0;
+      for (const { key } of ranked) {
+        const desired = desiredFor(key, origin, fovRadians, window.innerHeight);
+        if (desired === 0) continue;
+        const finer = `${key}:${desired - 1}`;
+        if (nearest.has(key)) {
+          nearCandidates++;
+          if (posted.has(finer)) nearPrefetched++;
+        } else if (posted.has(finer)) {
+          farPrefetched++;
+        }
+      }
+
+      expect(ranked.length).toBeGreaterThan(9);
+      expect(farPrefetched).toBe(0);
+      expect(nearPrefetched).toBe(nearCandidates);
+    });
   });
 
   describe('zombie chunks', () => {
