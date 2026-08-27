@@ -222,6 +222,12 @@
   color: #ff5f56;
 }
 
+.debrief-reason {
+  margin-top: 0.35rem;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.72);
+}
+
 .debrief-stars {
   font-size: 1.6rem;
   line-height: 1;
