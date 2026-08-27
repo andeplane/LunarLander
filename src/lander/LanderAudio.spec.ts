@@ -41,6 +41,13 @@ class FakeOsc extends FakeNode {
   type = 'sine';
   frequency = new FakeParam();
 }
+class FakeCompressor extends FakeNode {
+  threshold = new FakeParam();
+  knee = new FakeParam();
+  ratio = new FakeParam();
+  attack = new FakeParam();
+  release = new FakeParam();
+}
 class FakeSource extends FakeNode {
   buffer: unknown = null;
   loop = false;
@@ -69,6 +76,8 @@ class FakeContext {
     return g;
   });
   createBiquadFilter = vi.fn(() => new FakeFilter());
+  compressor = new FakeCompressor();
+  createDynamicsCompressor = vi.fn(() => this.compressor);
   createOscillator = vi.fn(() => {
     const o = new FakeOsc();
     this.oscillators.push(o);
@@ -122,7 +131,8 @@ describe('LanderAudio', () => {
     // Engine + RCS loops are running; rumble oscillator started
     expect(ctx.sources.filter((s) => s.loop).length).toBe(2);
     expect(ctx.oscillators[0].start).toHaveBeenCalled();
-    expect(ctx.gains[MASTER].connected[0]).toBe(ctx.destination);
+    expect(ctx.gains[MASTER].connected[0]).toBe(ctx.compressor);
+    expect(ctx.compressor.connected[0]).toBe(ctx.destination);
   });
 
   it('more throttle → louder and brighter engine', () => {
@@ -160,8 +170,14 @@ describe('LanderAudio', () => {
     expect(hard).toBeGreaterThan(soft);
 
     const oscBefore = ctx.oscillators.length;
+    const srcBefore = ctx.sources.length;
     audio.crash();
-    expect(ctx.oscillators.length).toBe(oscBefore + 1);
+    // thump + 3 ring partials; crack, bang, body + debris rattles
+    expect(ctx.oscillators.length).toBe(oscBefore + 4);
+    expect(ctx.sources.length).toBeGreaterThanOrEqual(srcBefore + 3 + 7);
+    // crash is far louder than the hardest touchdown
+    const crashPeak = Math.max(...ctx.gains.slice(-11).map((g) => g.gain.targets[0] ?? 0));
+    expect(crashPeak).toBeGreaterThan(hard * 2);
     // crash silences the continuous engine first
     expect(ctx.gains[ENGINE].gain.last()).toBe(0);
   });

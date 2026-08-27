@@ -9,7 +9,8 @@
  * - **RCS**: band-passed hiss whose level follows the attitude command
  *   magnitude — the thrusters "chatter" while you tilt or yaw.
  * - **Touchdown**: a low thud on first leg contact, scaled by impact speed.
- * - **Crash**: a noise-burst bang with a low-frequency thump.
+ * - **Crash**: layered crack + long bang + sub thump + metallic ring + debris,
+ *   pushed through a compressor on the master so it hits hard, not clipped.
  *
  * Browsers only start an AudioContext after a user gesture, so the context
  * is created lazily by `unlock()` (called from LAUNCH, which is always a
@@ -39,6 +40,11 @@ const RCS_SMOOTHING = 0.04;
 /** Touchdown thud: impact speed (m/s, positive down) that maps to full level. */
 const TOUCHDOWN_FULL_SPEED = 3;
 const TOUCHDOWN_MIN_GAIN = 0.25;
+/** Crash: peak level of the layered bang (>1 — the master compressor tames it). */
+const CRASH_GAIN = 3.0;
+const CRASH_DURATION = 2.6;
+/** Number of debris rattles scattered over the tail of the crash. */
+const CRASH_DEBRIS_HITS = 7;
 
 /** Minimal subset of AudioContext that the module uses (mockable). */
 export type AudioContextLike = Pick<
@@ -52,6 +58,7 @@ export type AudioContextLike = Pick<
   | 'createBuffer'
   | 'createBiquadFilter'
   | 'createOscillator'
+  | 'createDynamicsCompressor'
   | 'resume'
   | 'suspend'
   | 'close'
@@ -225,27 +232,58 @@ export class LanderAudio {
     this.noiseBurst(now, 0.12, 0.35 * strength, 400, 'lowpass');
   }
 
-  /** Hull impact / tip-over: bang + thump. */
+  /**
+   * Hull impact / tip-over. Layered so it reads as a real wreck, not a
+   * bump: a sharp crack, a long low bang that darkens as it decays, a
+   * heavy sub thump, a metallic ring of the structure, and debris
+   * rattling down over the tail. Levels sum well above 1 on purpose —
+   * the compressor on the master turns that into loudness, not clipping.
+   */
   crash(): void {
     const ctx = this.ctx;
     if (!ctx || !this.master) return;
     const now = ctx.currentTime;
     this.silence();
 
-    // Bang: noise burst with the cutoff sweeping down as it decays
-    this.noiseBurst(now, 1.6, 1.0, 3000, 'lowpass', 120);
+    // Crack: bright, instantaneous
+    this.noiseBurst(now, 0.08, CRASH_GAIN, 6000, 'highpass');
+    // Bang: full-band noise sweeping dark over the whole crash
+    this.noiseBurst(now, CRASH_DURATION, CRASH_GAIN, 4000, 'lowpass', 60);
+    // Body: mid-band boom that lingers under the bang
+    this.noiseBurst(now + 0.02, 1.2, CRASH_GAIN * 0.7, 250, 'lowpass');
 
-    // Thump: 60 → 20 Hz
-    const osc = ctx.createOscillator();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(60, now);
-    osc.frequency.exponentialRampToValueAtTime(20, now + 1.0);
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(1.0, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
-    osc.connect(gain).connect(this.master);
-    osc.start(now);
-    osc.stop(now + 1.3);
+    // Sub thump: 90 → 18 Hz
+    const thump = ctx.createOscillator();
+    thump.type = 'triangle';
+    thump.frequency.setValueAtTime(90, now);
+    thump.frequency.exponentialRampToValueAtTime(18, now + 1.4);
+    const thumpGain = ctx.createGain();
+    thumpGain.gain.setValueAtTime(CRASH_GAIN, now);
+    thumpGain.gain.exponentialRampToValueAtTime(0.001, now + 1.8);
+    thump.connect(thumpGain).connect(this.master);
+    thump.start(now);
+    thump.stop(now + 1.9);
+
+    // Metallic ring: slightly inharmonic partials of the buckling structure
+    for (const hz of [180, 470, 1130]) {
+      const ring = ctx.createOscillator();
+      ring.type = 'square';
+      ring.frequency.setValueAtTime(hz * 1.03, now);
+      ring.frequency.exponentialRampToValueAtTime(hz, now + 0.6);
+      const ringGain = ctx.createGain();
+      ringGain.gain.setValueAtTime(0.25 * CRASH_GAIN, now + 0.01);
+      ringGain.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+      ring.connect(ringGain).connect(this.master);
+      ring.start(now);
+      ring.stop(now + 1.0);
+    }
+
+    // Debris: short rattles scattered over the tail, decaying in level
+    for (let i = 0; i < CRASH_DEBRIS_HITS; i++) {
+      const at = now + 0.25 + i * 0.22 + (i % 2) * 0.07;
+      const level = CRASH_GAIN * 0.5 * (1 - i / CRASH_DEBRIS_HITS);
+      this.noiseBurst(at, 0.09, level, 1500 + (i % 3) * 600, 'bandpass');
+    }
   }
 
   dispose(): void {
@@ -270,8 +308,16 @@ export class LanderAudio {
   // ---- internals ----
 
   private buildGraph(ctx: AudioContextLike): void {
+    // master → compressor → out: the crash stacks several sources above
+    // unity gain; the compressor turns that into impact instead of clipping
     this.master = ctx.createGain();
-    this.master.connect(ctx.destination);
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -12;
+    limiter.knee.value = 6;
+    limiter.ratio.value = 12;
+    limiter.attack.value = 0.002;
+    limiter.release.value = 0.25;
+    this.master.connect(limiter).connect(ctx.destination);
     this.applyMaster();
 
     this.noiseBuffer = this.makeNoiseBuffer(ctx);
