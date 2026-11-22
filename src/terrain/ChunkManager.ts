@@ -107,7 +107,6 @@ export class ChunkManager {
   private pebbleGroundRevision = 0;
   private minPebbleGround = Infinity;
   private maxPebbleGround = -Infinity;
-  private readonly pebbleGroundAtCamera = new Float32Array(4);
   /** Coarse terrain from the edge of the chunk disc out to the horizon */
   private farTerrain: FarTerrain;
 
@@ -678,24 +677,18 @@ export class ChunkManager {
     this.dispatchNext();
 
     const focal = viewportHeight / (2 * Math.tan(fovRadians / 2));
-    const corner = view?.isPerspectiveCamera
-      ? Math.hypot(1, 1 / view.projectionMatrix.elements[0], 1 / view.projectionMatrix.elements[5]) : 1;
-    const reach = this.pebbleSurface?.groundReach(focal, corner) ?? 0;
+    const reach = this.pebbleSurface?.groundReach(focal) ?? 0;
     const chunkLodLevels = this.updateChunkVisibility(cameraPosition, fovRadians, screenHeight, reach);
     if (this.streamBoulders) {
-      this.rockManager.getMaterial().setRockCamera(cameraPosition, this.cameraForward, focal);
-      this.prepareRockBand(cameraPosition, focal, corner);
+      this.rockManager.getMaterial().setRockCamera(cameraPosition, focal);
+      this.prepareRockBand(cameraPosition, focal);
       this.dispatchNext();
     }
     this.updateRockVisibility(cameraPosition, fovRadians, viewportHeight);
     this.updateEdgeStitching(chunkLodLevels);
     if (this.pebbleSurface) {
-      // Use the displayed surface at the camera rather than the lower-resolution collision mesh.
-      const corner = this.pebbleGroundAtCamera;
-      const ready = this.samplePebbleGround(cameraPosition.x, cameraPosition.z, corner, 0);
       const changed = this.pebbleSurface.update(
         cameraPosition,
-        cameraPosition.y - (ready ? corner[3] : this.cameraTerrainY),
         this.pebbleGroundRevision,
         !this.debugMode,
         this.camera,
@@ -802,9 +795,8 @@ export class ChunkManager {
 
   /**
    * Extend the nearest incomplete catalogue before its missing rocks become visible.
-   * The corner ray bounds magnification everywhere in the viewport.
    */
-  private prepareRockBand(eye: Vector3, focal: number, corner: number) {
+  private prepareRockBand(eye: Vector3, focal: number) {
     if (this.nextRockBand || this.workers.some(w => w.rockRequest)) return;
     const { minDiameter, maxDiameter, lodMinDiameterScale } = this.rockGenerationConfig;
     let closest = Infinity;
@@ -822,7 +814,7 @@ export class ChunkManager {
       if (distance >= closest) continue;
       // Placement can stretch the footprint by up to 12% and a boulder can
       // straddle its chunk boundary. Both corrections favour early streaming.
-      const cutoff = (distance - maxDiameter) * ROCK_PREFETCH_PX / (corner * focal * 1.12);
+      const cutoff = (distance - maxDiameter) * ROCK_PREFETCH_PX / (focal * 1.12);
       if (cutoff >= Math.min(chunk.rockFloor, maxDiameter)) continue;
       let floor = minDiameter;
       for (const scale of lodMinDiameterScale) {
@@ -849,11 +841,12 @@ export class ChunkManager {
 
     for (const chunk of this.chunks.values()) {
       for (const mesh of chunk.boulders) {
-        const sphere = mesh.boundingSphere;
+        // LOD uses placement coordinates; the frustum sphere includes the camera-relative curvature drop.
+        const sphere = mesh.userData.placementBounds ?? mesh.boundingSphere;
         if (!sphere) continue;
         this.rockWorldCenter.copy(sphere.center).add(chunk.lod.position).sub(cameraPosition);
-        const depth = this.rockWorldCenter.dot(this.cameraForward) - sphere.radius;
-        mesh.visible = mesh.userData.maxRockDiameter * focal >= ROCK_HIDDEN_PX * depth;
+        const reach = mesh.userData.maxRockDiameter * focal / ROCK_HIDDEN_PX + sphere.radius;
+        mesh.visible = this.rockWorldCenter.lengthSq() <= reach * reach;
       }
       // Only the active LOD level's rocks can be visible; Chunk.setLodLevel()
       // has already hidden every other level's rock meshes.

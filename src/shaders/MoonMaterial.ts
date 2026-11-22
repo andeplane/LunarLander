@@ -5,6 +5,7 @@ import { SUN_SHADOW_FRAGMENT_PARS, type SunShadowUniforms } from '../rendering/S
 import {
   createRegolithDetailTexture,
   generateRegolithDetail,
+  generateStoneDetail,
   type PebbleStamp,
   REGOLITH_SLOPE_RANGE,
 } from './regolithDetail';
@@ -88,13 +89,20 @@ const DETAIL_MAP_SIZE = 1024;
 const DETAIL_MAP_SEED = 1969;
 
 let sharedMaps: { detail: DataTexture; pebbles: PebbleStamp[] } | undefined;
+let stoneDetail: DataTexture | undefined;
 
 /**
- * The regolith detail map shared by every MoonMaterial. Generated on first
+ * The regolith detail map shared by terrain materials. Generated on first
  * use (a few hundred milliseconds) and kept for the lifetime of the page.
  */
 export function getSharedRegolithDetailMap(): DataTexture {
   return getSharedMaps().detail;
+}
+
+/** Fractures and mineral grains shared by boulders and loose stone. */
+export function getSharedStoneDetailMap(): DataTexture {
+  stoneDetail ??= createRegolithDetailTexture(generateStoneDetail());
+  return stoneDetail;
 }
 
 export function getSharedPebbleStamps(): readonly PebbleStamp[] {
@@ -410,7 +418,7 @@ const TERRAIN_SURFACE = /* glsl */ `
 const ROCK_SURFACE = /* glsl */ `
   vec3 weights = pow(abs(meshNormal), vec3(4.0));
   weights /= weights.x + weights.y + weights.z;
-  vec3 rockPos = vWorldPosition * 0.61;
+  vec3 rockPos = vWorldPosition * 2.4;
   vec4 sideX = texture2D(uDetailMap, rockPos.zy);
   vec4 top = texture2D(uDetailMap, rockPos.xz + vec2(0.31, 0.67));
   vec4 sideZ = texture2D(uDetailMap, rockPos.xy + vec2(0.59, 0.23));
@@ -422,11 +430,12 @@ const ROCK_SURFACE = /* glsl */ `
     vec3(0.0, slopeX.y, slopeX.x) * weights.x +
     vec3(slopeY.x, 0.0, slopeY.y) * weights.y +
     vec3(slopeZ.x, slopeZ.y, 0.0) * weights.z;
-  moonNormal = normalize(meshNormal - bump * (MOON_SLOPE_RANGE * uDetailStrength * 0.9));
+  bump -= meshNormal * dot(bump, meshNormal);
+  moonNormal = normalize(meshNormal - bump * (MOON_SLOPE_RANGE * uDetailStrength * 0.7));
 
   float tone = dot(weights, vec3(sideX.b, top.b, sideZ.b)) - 0.5;
-  float cavity = dot(weights, vec3(sideX.a, top.a, sideZ.a)) - 0.45;
-  vec3 bareRock = MOON_ROCK_COLOR * max(1.0 + (tone * 1.1 + cavity * 0.5) * uDetailContrast, 0.15);
+  float cavity = 1.0 - dot(weights, vec3(sideX.a, top.a, sideZ.a));
+  vec3 bareRock = MOON_ROCK_COLOR * max(1.0 + (tone * 1.1 - cavity * 0.24) * uDetailContrast, 0.15);
   // Dust settles on faces that point up
   vec3 dusted = MOON_SOIL_COLOR * max(1.0 + tone * 0.5 * uDetailContrast, 0.15);
   moonAlbedo = mix(bareRock, dusted, smoothstep(0.6, 0.97, meshNormal.y) * 0.6);
@@ -497,7 +506,10 @@ export class MoonMaterial extends MeshStandardMaterial {
       uEnableCurvature: { value: 1.0 },
       uPlanetRadius: { value: DEFAULT_PLANET_RADIUS },
       uSunDirection: { value: new Vector3(0, 1, 0) },
-      uDetailMap: { value: options.detailMap ?? getSharedRegolithDetailMap() },
+      uDetailMap: {
+        value: options.detailMap ??
+          (this.variant === 'rock' ? getSharedStoneDetailMap() : getSharedRegolithDetailMap()),
+      },
       uDetailStrength: { value: 1.0 },
       uDetailContrast: { value: 1.0 },
       uCraterletStrength: { value: 1.0 },
@@ -542,11 +554,11 @@ export class MoonMaterial extends MeshStandardMaterial {
         #include <worldpos_vertex>
         #ifdef USE_INSTANCING
           vWorldPosition = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;
-          vWorldNormal = normalize((modelMatrix * instanceMatrix * vec4(objectNormal, 0.0)).xyz);
         #else
           vWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
-          vWorldNormal = normalize((modelMatrix * vec4(objectNormal, 0.0)).xyz);
         #endif
+        // Three has already applied the inverse-transpose for nonuniform instance scale.
+        vWorldNormal = inverseTransformDirection(transformedNormal, viewMatrix);
         `
       );
 
@@ -613,6 +625,9 @@ export class MoonMaterial extends MeshStandardMaterial {
           }
         #endif
         vec3 moonSunDirectionView = normalize(mat3(viewMatrix) * uSunDirection);
+        #if defined(MOON_ROCK) || defined(MOON_PEBBLE_STONE)
+          vec3 moonBaseNormalView = mat3(viewMatrix) * meshNormal;
+        #endif
 
         diffuseColor.rgb *= moonAlbedo;
         `
@@ -637,6 +652,10 @@ export class MoonMaterial extends MeshStandardMaterial {
         DIRECTIONAL_LIGHT_ANCHOR,
         `
         ${DIRECTIONAL_LIGHT_ANCHOR}
+        #if defined(MOON_ROCK) || defined(MOON_PEBBLE_STONE)
+          // A fracture can catch light only on the exposed side of its parent surface.
+          directLight.color *= smoothstep(0.0, 0.12, dot(moonBaseNormalView, directLight.direction));
+        #endif
         directLight.color *= moonRegolithResponse(geometryNormal, geometryViewDir, directLight.direction);
         directLight.color *= mix(1.0, moonSunVisibility, step(0.9999, dot(directLight.direction, moonSunDirectionView)));
         `
@@ -685,10 +704,10 @@ export class MoonMaterial extends MeshStandardMaterial {
     };
   }
 
-  setRockCamera(eye: Vector3, forward: Vector3, focal: number) {
+  setRockCamera(eye: Vector3, focal: number) {
     const uniforms = this.sunShadowUniforms ?? this.rockView;
     uniforms.uRockEye.value.copy(eye);
-    uniforms.uRockView.value.set(forward.x, forward.y, forward.z, focal);
+    uniforms.uRockFocal.value = focal;
   }
 
   /**

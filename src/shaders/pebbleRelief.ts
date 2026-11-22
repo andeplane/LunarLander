@@ -7,7 +7,6 @@ export const pebbleReliefVertex = /* glsl */ `
   attribute vec4 chipBed;    // local terrain slope, albedo, buried fraction
   attribute vec3 chipProfile; // horizontal half-extents and mineral exposure
   uniform vec3 uPebbleEye;
-  uniform vec3 uPebbleForward;
   uniform float uPebbleProjection;
   uniform float uPebbleTime;
   uniform float uPebbleStrength;
@@ -17,16 +16,15 @@ export const pebbleReliefVertex = /* glsl */ `
     mat2 turn = mat2(chipForm.y, chipForm.z, -chipForm.z, chipForm.y);
     vec2 axes = chipGround.w * chipProfile.xy;
     vec2 delta = turn * (position.xz * axes);
-    vec3 offset = chipGround.xyz - uPebbleEye;
-    float depth = dot(offset, uPebbleForward);
-    float pixels = max(axes.x, axes.y) * uPebbleProjection / max(0.001, depth > 0.0 ? depth : length(offset));
-    float relief = smoothstep(${PEBBLE_TEXTURE_PX.toFixed(1)}, ${PEBBLE_FULL_PX.toFixed(1)}, pixels)
-      * smoothstep(0.0, ${PEBBLE_ARRIVAL_SECONDS.toFixed(2)}, uPebbleTime - chipForm.w);
-    delta *= smoothstep(0.0, 0.5, relief);
-    float yScale = chipForm.x * uPebbleStrength * relief;
-    float exposed = position.y * yScale - chipForm.x * (chipBed.w * relief + (1.0 - relief) * 0.04);
+    float range = distance(chipGround.xyz, uPebbleEye);
+    float pixels = max(axes.x, axes.y) * uPebbleProjection / max(0.001, range);
+    // Scale lengths by the square root so projected area follows the coverage fade.
+    float relief = sqrt(smoothstep(${PEBBLE_TEXTURE_PX}, ${PEBBLE_FULL_PX.toFixed(1)}, pixels)
+      * smoothstep(0.0, ${PEBBLE_ARRIVAL_SECONDS.toFixed(2)}, uPebbleTime - chipForm.w));
+    delta *= relief;
+    float exposed = (position.y * uPebbleStrength - chipBed.w) * chipForm.x * relief;
     // Inverse-transpose of the nonuniform scale, bearing and terrain shear.
-    float ny = normal.y / max(yScale, chipGround.w*0.015);
+    float ny = normal.y / max(chipForm.x * uPebbleStrength, chipGround.w*0.015);
     vec2 nxz = turn * (normal.xz / axes) - chipBed.xy*ny;
     surfaceNormal = normalize(vec3(nxz.x, ny, nxz.y));
     vChipSurface = vec3(chipBed.z, clamp(exposed/chipForm.x, 0.0, 1.0), chipProfile.z);

@@ -4,6 +4,7 @@ import { type ShadowPassRenderer, SunShadows } from '../rendering/SunShadows';
 import {
   DIRECTIONAL_LIGHT_ANCHOR,
   getSharedRegolithDetailMap,
+  getSharedStoneDetailMap,
   MoonMaterial,
   type MoonMaterialOptions,
 } from './MoonMaterial';
@@ -212,6 +213,9 @@ describe('MoonMaterial shader injection', () => {
   it('defaults to the shared generated detail map', () => {
     const shader = compile(new MoonMaterial());
     expect(shader.uniforms.uDetailMap.value).toBe(getSharedRegolithDetailMap());
+    const rock = compile(new MoonMaterial({ variant: 'rock' }));
+    expect(rock.uniforms.uDetailMap.value).toBe(getSharedStoneDetailMap());
+    expect(rock.uniforms.uDetailMap.value).not.toBe(shader.uniforms.uDetailMap.value);
   });
 });
 

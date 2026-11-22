@@ -1,6 +1,6 @@
 import { RockBuilder } from '../environment/RockBuilder';
 import { hashToUnit, rockHeightRatio } from '../environment/rockPrototypes';
-import { generateStoneDetail, type PebbleStamp } from '../shaders/regolithDetail';
+import type { PebbleStamp } from '../shaders/regolithDetail';
 import { FINE_PEBBLE_FREQUENCY, MEDIUM_PEBBLE_FREQUENCY } from '../shaders/regolithTiling';
 import { PEBBLE_TILE_SIZE, pebbleInWindow, type PebbleView } from './pebbleLod';
 import { PebbleAtlas, type PlacedPebble } from './pebblePlacement';
@@ -34,7 +34,6 @@ export type ChipPrototype = ReturnType<typeof prototype>;
 export interface PebbleWindow {
   stones: Float32Array;
   shapes?: ChipPrototype[];
-  detailMap?: ReturnType<typeof generateStoneDetail>;
 }
 
 export interface PebbleRequest {
@@ -133,20 +132,23 @@ export class PebbleField {
         continue;
       }
       const radius = Math.min(band.maxRadius, Math.max(0, groundLimit));
+      const reach = band.maxRadius * view.range;
+      const extent = (axis: number) => Math.min(reach, radius * s[axis]) + pad;
       const keep = new Map<string, CachedTile>();
       for (
-        let z = Math.floor((cz - radius * s[3] - pad) / tileSize);
-        z <= Math.floor((cz + radius * s[1] + pad) / tileSize);
+        let z = Math.floor((cz - extent(3)) / tileSize);
+        z <= Math.floor((cz + extent(1)) / tileSize);
         z++
       ) {
         for (
-          let x = Math.floor((cx - radius * s[2] - pad) / tileSize);
-          x <= Math.floor((cx + radius * s[0] + pad) / tileSize);
+          let x = Math.floor((cx - extent(2)) / tileSize);
+          x <= Math.floor((cx + extent(0)) / tileSize);
           x++
         ) {
           const dx = (x + 0.5) * tileSize - cx,
             dz = (z + 0.5) * tileSize - cz;
-          if (!pebbleInWindow(view, dx, dz, radius, pad + tileSize * Math.SQRT1_2)) continue;
+          if (!pebbleInWindow(view, dx, dz, band.maxRadius, pad + tileSize * Math.SQRT1_2, radius))
+            continue;
           const key = `${x},${z}`;
           const cached = tiles.get(key);
           const tile = cached?.stones ?? pack(band.atlas.tile(x, z, band.fine, tileSize));
@@ -155,9 +157,7 @@ export class PebbleField {
           const indices: number[] = [];
           for (let at = 0; at < tile.length; at += FIELD_STRIDE) {
             const width = tile[at + 3] * Math.max(tile[at + 12], tile[at + 13]);
-            if (
-              pebbleInWindow(view, tile[at] - cx, tile[at + 2] - cz, Math.min(width, radius), pad)
-            ) {
+            if (pebbleInWindow(view, tile[at] - cx, tile[at + 2] - cz, width, pad, radius)) {
               slots[at / FIELD_STRIDE] = count + indices.length + 1;
               indices.push(at);
             }
@@ -183,7 +183,6 @@ export class PebbleField {
       result.shapes = Array.from({ length: PEBBLE_SHAPES * PEBBLE_DETAILS.length }, (_, i) =>
         prototype(i)
       );
-      result.detailMap = generateStoneDetail();
       this.builtShapes = true;
     }
     return result;

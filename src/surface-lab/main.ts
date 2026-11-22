@@ -11,7 +11,7 @@ const view = readView(location.hash);
 const stage = element('stage');
 const canvas = element<HTMLCanvasElement>('ground');
 const status = element('stage-status');
-const height = element<HTMLInputElement>('height');
+const distance = element<HTMLInputElement>('distance');
 const sun = element<HTMLInputElement>('sun');
 const relief = element<HTMLInputElement>('relief');
 const angle = element<HTMLSelectElement>('angle');
@@ -21,7 +21,7 @@ const measure = element<HTMLButtonElement>('measure');
 const timing = element('timing');
 const copy = element<HTMLButtonElement>('copy');
 const modeButtons = document.querySelectorAll<HTMLInputElement>('input[name="mode"]');
-const presets = document.querySelectorAll<HTMLButtonElement>('[data-height]');
+const presets = document.querySelectorAll<HTMLButtonElement>('[data-distance]');
 let scene: Awaited<ReturnType<typeof createSurfaceScene>> | undefined;
 let saveTimer: number;
 let copyTimer: number;
@@ -50,12 +50,12 @@ function syncControls() {
   for (const button of presets) {
     button.setAttribute(
       'aria-pressed',
-      String(Math.abs(Number(button.dataset.height) - view.height) < 0.001)
+      String(Math.abs(Number(button.dataset.distance) - view.distance) < 0.001)
     );
   }
-  height.value = String(Math.log2(view.height));
-  height.setAttribute('aria-valuetext', distanceLabel(view.height));
-  element('height-value').textContent = distanceLabel(view.height);
+  distance.value = String(Math.log2(view.distance));
+  distance.setAttribute('aria-valuetext', distanceLabel(view.distance));
+  element('distance-value').textContent = distanceLabel(view.distance);
   element('position').textContent = `X ${view.x.toFixed(2)} m   Z ${view.z.toFixed(2)} m`;
   element('sun-value').textContent = `${view.sun}°`;
   element('relief-value').textContent = `${view.relief.toFixed(2)}×`;
@@ -83,11 +83,11 @@ for (const button of modeButtons)
   });
 for (const button of presets)
   button.addEventListener('click', () => {
-    view.height = Number(button.dataset.height);
+    view.distance = Number(button.dataset.distance);
     changed(true);
   });
-height.addEventListener('input', () => {
-  view.height = 2 ** Number(height.value);
+distance.addEventListener('input', () => {
+  view.distance = 2 ** Number(distance.value);
   changed(true);
 });
 sun.addEventListener('input', () => {

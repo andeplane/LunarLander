@@ -2,7 +2,6 @@ import {
   BackSide,
   BufferAttribute,
   type Camera,
-  type DataTexture,
   DynamicDrawUsage,
   Frustum,
   Group,
@@ -19,10 +18,13 @@ import {
   Vector3,
 } from 'three';
 import { NEAR_SHADOW_CASTER_LAYER } from '../core/layers';
-import { getSharedPebbleStamps, type MoonMaterial } from '../shaders/MoonMaterial';
+import {
+  getSharedPebbleStamps,
+  getSharedStoneDetailMap,
+  type MoonMaterial,
+} from '../shaders/MoonMaterial';
 import { pebbleReliefVertex } from '../shaders/pebbleRelief';
 import { MEDIUM_PEBBLE_FREQUENCY } from '../shaders/regolithTiling';
-import { createRegolithDetailTexture } from '../shaders/regolithDetail';
 import {
   type ChipPrototype,
   FIELD_STRIDE,
@@ -87,8 +89,8 @@ export class PebbleSurface {
     getSharedPebbleStamps().reduce((r, s) => Math.max(r, s.radius), 0) / MEDIUM_PEBBLE_FREQUENCY;
 
   /** Conservative horizontal reach of any mark, including streaming and shadow margins. */
-  groundReach(focal: number, corner: number) {
-    return 12 + (2 * focal * this.maxRadius * corner * 1.3) / PEBBLE_TEXTURE_PX;
+  groundReach(focal: number) {
+    return 12 + (2 * focal * this.maxRadius * 1.08) / PEBBLE_TEXTURE_PX;
   }
 
   private readonly eye = new Vector3();
@@ -103,7 +105,6 @@ export class PebbleSurface {
   private field = new Float32Array(0) as Float32Array;
   private shapes: ChipPrototype[] = [];
   private levels = new Uint8Array(0);
-  private readonly detailMap = { value: null as DataTexture | null };
   private worker?: Worker;
   private fallback?: PebbleField;
   private dirty = false;
@@ -135,7 +136,6 @@ export class PebbleSurface {
   ) {
     const uniforms = {
       uPebbleEye: { value: this.eye },
-      uPebbleForward: { value: this.forward },
       uPebbleProjection: this.projection,
       uPebbleStrength: this.strength,
       uPebbleTime: this.time,
@@ -143,7 +143,9 @@ export class PebbleSurface {
     this.material.defines = { ...groundMaterial.defines, MOON_PEBBLE_STONE: '' };
     this.material.onBeforeCompile = (shader, renderer) => {
       groundMaterial.onBeforeCompile(shader, renderer);
-      Object.assign(shader.uniforms, uniforms, { uChipDetail: this.detailMap });
+      Object.assign(shader.uniforms, uniforms, {
+        uChipDetail: { value: getSharedStoneDetailMap() },
+      });
       shader.vertexShader =
         pebbleReliefVertex +
         shader.vertexShader
@@ -206,10 +208,6 @@ export class PebbleSurface {
     const receive = (result: PebbleWindow) => {
       if (this.disposed) return;
       if (result.shapes) this.shapes = result.shapes;
-      if (result.detailMap) {
-        this.detailMap.value?.dispose();
-        this.detailMap.value = createRegolithDetailTexture(result.detailMap);
-      }
       this.finishRequest?.();
       this.pending = null;
       // Keep the overlapping part of a late reply during fast flight. Waiting for
@@ -299,14 +297,14 @@ export class PebbleSurface {
         field[at + 8] = -this.ground[0] / this.ground[1];
         field[at + 9] = -this.ground[2] / this.ground[1];
       }
-      const dy = field[at + 1] - camera.y,
-        distance = Math.hypot(dx, dy, dz);
+      const dy = field[at + 1] - camera.y;
       const width = radius * Math.max(field[at + 12], field[at + 13]);
-      const cameraDepth = dx * this.forward.x + dy * this.forward.y + dz * this.forward.z;
-      const depth = view && cameraDepth > 0 ? cameraDepth : distance;
-      const pixels = (width * projection) / Math.max(depth, 0.001);
       // The shader finishes the blend before an instance leaves this padded draw list.
-      if (width * projection < PEBBLE_TEXTURE_PX * (depth - moveStep - 0.11 * distance)) continue;
+      const distanceSq = dx * dx + dy * dy + dz * dz;
+      const reach = (width * projection) / PEBBLE_TEXTURE_PX + moveStep;
+      if (distanceSq > reach * reach) continue;
+      const distance = Math.sqrt(distanceSq);
+      const pixels = (width * projection) / Math.max(distance, 0.001);
       // Keep a wider fringe for cast shadows. Only stones that can enter the picture
       // before the next update need a close-up mesh.
       const motionMargin = moveStep + 0.11 * distance;
@@ -360,7 +358,6 @@ export class PebbleSurface {
 
   update(
     camera: Vector3,
-    altitude: number,
     revision: number,
     enabled = true,
     view?: Camera | null,
@@ -410,7 +407,7 @@ export class PebbleSurface {
       this.requestWindow();
     }
     const aspect = perspective?.aspect ?? 0;
-    const moveStep = Math.min(0.65, Math.max(0.14, Math.abs(altitude) * 0.2));
+    const moveStep = 0.35;
     const rebuild =
       this.dirty ||
       !wasActive ||
@@ -450,7 +447,6 @@ export class PebbleSurface {
     this.fallback = undefined;
     for (const b of this.batches.values()) b.geometry.dispose();
     this.batches.clear();
-    this.detailMap.value?.dispose();
     this.material.dispose();
     this.caster.dispose();
   }

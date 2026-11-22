@@ -14,7 +14,7 @@ import { SunShadows } from '../rendering/SunShadows';
 import { PebbleSurface } from '../terrain/PebbleSurface';
 import { createLabMaterials } from './materials';
 import { TIMING_SIZE, timeMaterials } from './timing';
-import { CHANNELS, type LabView, MAX_ALTITUDE, MIN_ALTITUDE, scaleBar } from './view';
+import { CHANNELS, type LabView, MAX_DISTANCE, MIN_DISTANCE, scaleBar, viewTilt } from './view';
 
 export async function createSurfaceScene(
   canvas: HTMLCanvasElement,
@@ -59,6 +59,8 @@ export async function createSurfaceScene(
   scene.add(surface, sun, new AmbientLight(0xffffff, 0.08));
   const controls = new MapControls(camera, canvas);
   controls.enableRotate = false;
+  controls.minDistance = MIN_DISTANCE;
+  controls.maxDistance = MAX_DISTANCE;
   controls.screenSpacePanning = false;
   controls.mouseButtons.RIGHT = controls.mouseButtons.LEFT;
   controls.listenToKeyEvents(canvas);
@@ -85,7 +87,6 @@ export async function createSurfaceScene(
     if (
       pebbles.update(
         viewCamera.position,
-        viewCamera.position.y,
         0,
         candidateMaterial() === materials.flight,
         viewCamera,
@@ -131,7 +132,7 @@ export async function createSurfaceScene(
     // A moving piece of flat geometry covers the frustum. The shader samples
     // its world position, so dragging or resizing the plane cannot move a grain.
     const extent =
-      Math.max(view.angle === 'grazing' ? 120 : 0, view.height * 24) * Math.max(1, w / h);
+      Math.max(view.angle === 'grazing' ? 120 : 0, camera.position.y * 24) * Math.max(1, w / h);
     surface.scale.set(extent, 1, extent);
     surface.position.copy(controls.target);
     function draw(x: number, width: number, showCandidate: boolean) {
@@ -166,20 +167,20 @@ export async function createSurfaceScene(
   }
   function updateCamera() {
     applyingView = true;
-    const tilt = MathUtils.degToRad(
-      view.angle === 'grazing' ? 75 : view.angle === 'oblique' ? 52 : 0.0001
-    );
-    controls.minDistance = MIN_ALTITUDE / Math.cos(tilt);
-    controls.maxDistance = MAX_ALTITUDE / Math.cos(tilt);
+    const tilt = viewTilt(view.angle);
     controls.target.set(view.x, 0, view.z);
-    camera.position.set(view.x, view.height, view.z + view.height * Math.tan(tilt));
+    camera.position.set(
+      view.x,
+      view.distance * Math.cos(tilt),
+      view.z + view.distance * Math.sin(tilt)
+    );
     controls.update();
     applyingView = false;
     invalidate();
   }
   controls.addEventListener('change', () => {
     if (applyingView) return;
-    view.height = camera.position.y;
+    view.distance = camera.position.distanceTo(controls.target);
     view.x = controls.target.x;
     view.z = controls.target.z;
     onNavigate();

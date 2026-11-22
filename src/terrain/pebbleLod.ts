@@ -1,8 +1,8 @@
 import type { PerspectiveCamera } from 'three';
 
 // Below this diameter the matching, mipmapped mark in the soil carries the stone.
-export const PEBBLE_TEXTURE_PX = 3.5;
-export const PEBBLE_FULL_PX = 9;
+export const PEBBLE_TEXTURE_PX = 1.25;
+export const PEBBLE_FULL_PX = 3;
 export const PEBBLE_ARRIVAL_SECONDS = 0.3;
 export const PEBBLE_TILE_SIZE = 4;
 const DIAGONAL = Math.SQRT1_2;
@@ -21,6 +21,8 @@ const AXES = [
 export interface PebbleView {
   x: number;
   z: number;
+  // Maximum straight-line distance to a stone per metre of outline radius.
+  range: number;
   // Metres of horizontal coverage per metre of stone radius.
   support: number[];
   // Range of heights in the viewing pyramid, in the same units.
@@ -53,6 +55,7 @@ export function pebbleView(
   return {
     x,
     z,
+    range: scale,
     support,
     down: scale * (verticalSpan + (m?.[9] ?? 0)),
     up: scale * (verticalSpan - (m?.[9] ?? 0)),
@@ -66,6 +69,7 @@ export function paddedPebbleView(view: PebbleView): PebbleView {
   const turn = Math.max(1, ...view.support, view.down, view.up) * 0.12;
   return {
     ...view,
+    range: view.range * 1.08,
     support: view.support.map((v) => v + turn),
     down: view.down + turn,
     up: view.up + turn,
@@ -78,6 +82,7 @@ export function coversPebbleView(old: PebbleView, view: PebbleView) {
   return (
     old.x === view.x &&
     old.z === view.z &&
+    old.range >= view.range &&
     old.floor <= view.floor &&
     old.ceiling >= view.ceiling &&
     old.down >= view.down &&
@@ -91,8 +96,13 @@ export function pebbleInWindow(
   dx: number,
   dz: number,
   radius: number,
-  pad: number
+  pad: number,
+  groundLimit = Infinity
 ) {
+  const dy = Math.max(0, view.floor, -view.ceiling);
+  const reach = radius * view.range + pad;
+  if (dx * dx + dy * dy + dz * dz > reach * reach) return false;
+  const frustumRadius = Math.min(radius, groundLimit);
   if (
     view.ceiling < -Math.max(0, view.down) * radius - pad ||
     view.floor > Math.max(0, view.up) * radius + pad
@@ -100,7 +110,7 @@ export function pebbleInWindow(
     return false;
   for (let i = 0; i < AXES.length; i++) {
     const [nx, nz] = AXES[i];
-    if (dx * nx + dz * nz > radius * view.support[i] + pad) return false;
+    if (dx * nx + dz * nz > frustumRadius * view.support[i] + pad) return false;
   }
   return true;
 }

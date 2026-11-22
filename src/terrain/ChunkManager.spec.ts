@@ -373,7 +373,8 @@ describe(ChunkManager.name, () => {
     it('streams boulders on zoom and keeps them through a terrain switch and eviction', () => {
       const manager = createManager({ renderDistance: 0, workerCount: 1, lodLevels: [64, 32, 16] });
       const camera = new PerspectiveCamera(70, 1, 0.1, 10000);
-      camera.position.set(0, 3000, 0);
+      // Even the four-metre rocks are subpixel at this range until the camera zooms.
+      camera.position.set(0, 6000, 0);
       camera.lookAt(0, 0, 0);
       manager.setCamera(camera);
       const update = () => manager.update(camera.position, 360);

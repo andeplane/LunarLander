@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_ALTITUDE, readView, scaleBar, viewHash } from './view';
+import { MAX_DISTANCE, readView, scaleBar, viewHash, viewTilt } from './view';
 
 describe('surface lab bookmarks', () => {
   it('reopens the same ground and sampling conditions', () => {
@@ -11,13 +11,21 @@ describe('surface lab bookmarks', () => {
       variant: 'procedural',
       x: -104.257214988573,
       z: 28.125,
-      height: 0.43,
       angle: 'oblique',
     });
+    expect(view.distance * Math.cos(viewTilt('oblique'))).toBeCloseTo(0.43, 10);
+    expect(new URLSearchParams(viewHash(view)).get('d')).toBe(String(view.distance));
+  });
+  it('holds the distance to the target when switching camera angles', () => {
+    for (const angle of ['overhead', 'oblique', 'grazing']) {
+      expect(readView(`#d=56&h=1&angle=${angle}`).distance).toBe(56);
+    }
+    const high = readView('#h=4000&angle=grazing');
+    expect(readView(viewHash(high)).distance * Math.cos(viewTilt('grazing'))).toBeCloseTo(4000);
   });
   it('keeps malformed links within the navigable range', () => {
-    expect(readView('#h=1e9&sun=nan&x=&channel=nope')).toMatchObject({
-      height: MAX_ALTITUDE,
+    expect(readView('#d=1e9&sun=nan&x=&channel=nope')).toMatchObject({
+      distance: MAX_DISTANCE,
       sun: 22,
       x: 19,
       channel: 'lit',

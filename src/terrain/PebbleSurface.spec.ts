@@ -3,9 +3,34 @@ import { describe, expect, it, vi } from 'vitest';
 import { getSharedPebbleStamps, MoonMaterial } from '../shaders/MoonMaterial';
 import { MEDIUM_PEBBLE_FREQUENCY, patchTransform } from '../shaders/regolithTiling';
 import { type PebbleGroundSampler, PebbleSurface } from './PebbleSurface';
+import { pebbleInWindow, pebbleView, PEBBLE_TEXTURE_PX } from './pebbleLod';
 import { PebbleAtlas } from './pebblePlacement';
 
 describe('grounded pebble meshes', () => {
+  it('uses the same range for horizontal, diagonal and vertical approaches', () => {
+    const eye = new PerspectiveCamera(95, 2, 0.01, 1000);
+    eye.lookAt(0, 0, -1);
+    eye.updateMatrixWorld();
+    // This stone reaches the texture handoff at exactly 50 m.
+    for (const [height, horizontal] of [
+      [0, 50],
+      [30, 40],
+      [50, 0],
+    ]) {
+      eye.lookAt(0, -height, -horizontal);
+      eye.updateMatrixWorld();
+      const footprint = pebbleView(0, 0, 50 * PEBBLE_TEXTURE_PX, eye, -height, -height);
+      expect(pebbleInWindow(footprint, 0, -horizontal, 1.01, 0)).toBe(true);
+      expect(pebbleInWindow(footprint, 0, -horizontal, 0.99, 0)).toBe(false);
+    }
+    // Within a wide field of view, turning towards or away from the stone
+    // changes its optical depth while the camera-to-stone distance stays fixed.
+    eye.lookAt(0, 0, -1);
+    eye.updateMatrixWorld();
+    const level = pebbleView(0, 0, 50 * PEBBLE_TEXTURE_PX, eye, 0, 0);
+    expect(pebbleInWindow(level, 40, -30, 0.99, 0)).toBe(false);
+  });
+
   it('puts each chip on its own atlas mark across negative coordinates and tile edges', () => {
     const atlas = new PebbleAtlas(getSharedPebbleStamps());
     const left = atlas.tile(-1, -1, false),
@@ -51,25 +76,25 @@ describe('grounded pebble meshes', () => {
       }
       return result;
     }
-    expect(patch.update(camera, 1.7, 0)).toBe(true);
+    expect(patch.update(camera, 0)).toBe(true);
     expect(patch.root.visible).toBe(true);
     const before = centres(),
       samples = sample.mock.calls.length;
     expect(before.size).toBeGreaterThan(10);
     ground.setParam('pebbleHeight', 1.3);
-    expect(patch.update(camera, 1.7, 0)).toBe(true);
+    expect(patch.update(camera, 0)).toBe(true);
     expect(sample).toHaveBeenCalledTimes(samples);
     camera.x = 4.02;
-    patch.update(camera, 1.7, 0);
+    patch.update(camera, 0);
     expect(centres()).toEqual(before);
     camera.y = 32;
-    expect(patch.update(camera, 32, 0)).toBe(true);
+    expect(patch.update(camera, 0)).toBe(true);
     expect(patch.root.visible).toBe(true);
     camera.y = 800;
-    patch.update(camera, 800, 0, true, undefined, 720, -6, 6);
+    patch.update(camera, 0, true, undefined, 720, -6, 6);
     expect(patch.root.visible).toBe(false);
     ground.setParam('pebbleHeight', 0);
-    patch.update(camera, 1.7, 0);
+    patch.update(camera, 0);
     expect(patch.root.visible).toBe(false);
     patch.dispose();
     ground.dispose();
@@ -86,7 +111,7 @@ describe('grounded pebble meshes', () => {
     view.lookAt(0, 0, -2);
     function triangleCounts(viewportHeight: number) {
       view.updateMatrixWorld();
-      patch.update(view.position, view.position.y, 0, true, view, viewportHeight, 0, 0);
+      patch.update(view.position, 0, true, view, viewportHeight, 0, 0);
       const counts = new Map<string, number>();
       for (const mesh of patch.root.children as Mesh<InstancedBufferGeometry>[]) {
         if (!mesh.layers.isEnabled(0)) continue;

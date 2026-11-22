@@ -535,6 +535,7 @@ export class RockManager {
           center: mesh.boundingSphere.center.clone(),
           radius: mesh.boundingSphere.radius,
         };
+        mesh.userData.placementBounds = base;
         this.trackMesh(mesh, base);
 
         // Until the first updateCullingBounds() call, expand conservatively for
