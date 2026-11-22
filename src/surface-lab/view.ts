@@ -1,14 +1,15 @@
 export const MIN_ALTITUDE = 0.25;
 export const MAX_ALTITUDE = 4000;
 export const MODES = ['game', 'compare', 'candidate'] as const;
-export const VARIANTS = ['flight', 'hybrid', 'procedural'] as const;
+export const VARIANTS = ['flight', 'pebbles', 'hybrid', 'procedural'] as const;
 export const VARIANT_NAMES = {
   flight: 'Refined',
+  pebbles: 'Raised',
   hybrid: 'Hybrid',
   procedural: 'Procedural',
 } as const;
 export const CHANNELS = ['lit', 'albedo', 'normals'] as const;
-export const ANGLES = ['overhead', 'oblique'] as const;
+export const ANGLES = ['overhead', 'oblique', 'grazing'] as const;
 export type LabView = ReturnType<typeof readView>;
 
 function choice<T extends string>(value: string | null, choices: readonly T[], fallback: T): T {

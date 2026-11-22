@@ -135,6 +135,7 @@ const chunkManager = new ChunkManager(
 );
 chunkManager.setCamera(engine.getCamera());
 engine.setChunkManager(chunkManager);
+chunkManager.enablePebbleRelief();
 
 // Initialize flight controller with chunk manager
 const flightController = new FlightController(

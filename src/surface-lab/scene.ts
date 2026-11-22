@@ -10,6 +10,7 @@ import {
   WebGLRenderer,
 } from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
+import { PebbleSurface } from '../terrain/PebbleSurface';
 import { createLabMaterials } from './materials';
 import { timeMaterials } from './timing';
 import { CHANNELS, type LabView, MAX_ALTITUDE, MIN_ALTITUDE, scaleBar } from './view';
@@ -29,6 +30,15 @@ export async function createSurfaceScene(
   renderer.toneMapping = ACESFilmicToneMapping;
   const materials = await createLabMaterials(renderer.capabilities.getMaxAnisotropy());
   const scene = new Scene();
+  const pebbles = new PebbleSurface(materials.flight, 400 / 1024, 400 / 1024, (_x, _z, out, i) => {
+    out[i] = 0;
+    out[i + 1] = 1;
+    out[i + 2] = 0;
+    out[i + 3] = 0;
+    return true;
+  });
+  scene.add(pebbles.root);
+  let patchReady = false;
   const camera = new PerspectiveCamera(46, 1, 0.015, 50000);
   const surface = new Mesh(new PlaneGeometry(1, 1).rotateX(-Math.PI / 2), materials.reference);
   const sun = new DirectionalLight(0xffffff, 3.4);
@@ -44,7 +54,18 @@ export async function createSurfaceScene(
   let materialTiming: AbortController | undefined;
 
   function candidateMaterial() {
-    return view.variant === 'flight' ? materials.flight : materials.procedural;
+    return view.variant === 'flight' || view.variant === 'pebbles'
+      ? materials.flight
+      : materials.procedural;
+  }
+
+  function selectMaterial(showCandidate: boolean) {
+    surface.material = showCandidate
+      ? candidateMaterial()
+      : view.variant === 'pebbles'
+        ? materials.shadedFlight
+        : materials.reference;
+    pebbles.root.visible = patchReady && showCandidate && surface.material === materials.flight;
   }
 
   function render() {
@@ -60,11 +81,15 @@ export async function createSurfaceScene(
     sun.position.copy(sunDirection);
     materials.channel.value = CHANNELS.indexOf(view.channel);
     materials.relief.value = view.relief;
-    materials.flight.setParam('detailStrength', view.relief);
+    materials.flight.setParam('detailStrength', view.variant === 'pebbles' ? 1 : view.relief);
+    materials.flight.setParam('pebbleHeight', view.variant === 'pebbles' ? view.relief : 1);
+    pebbles.update(camera.position, camera.position.y, 0, candidateMaterial() === materials.flight);
+    patchReady = pebbles.root.visible;
     materials.hybrid.value = view.variant === 'hybrid';
     // A moving piece of flat geometry covers the frustum. The shader samples
     // its world position, so dragging or resizing the plane cannot move a grain.
-    const extent = view.height * 24 * Math.max(1, w / h);
+    const extent =
+      Math.max(view.angle === 'grazing' ? 120 : 0, view.height * 24) * Math.max(1, w / h);
     surface.scale.set(extent, 1, extent);
     surface.position.copy(controls.target);
     function draw(x: number, width: number, showCandidate: boolean) {
@@ -72,7 +97,7 @@ export async function createSurfaceScene(
       camera.updateProjectionMatrix();
       renderer.setViewport(x, 0, width, h);
       renderer.setScissor(x, 0, width, h);
-      surface.material = showCandidate ? candidateMaterial() : materials.reference;
+      selectMaterial(showCandidate);
       renderer.render(scene, camera);
     }
     renderer.setScissorTest(true);
@@ -95,7 +120,9 @@ export async function createSurfaceScene(
   }
   function updateCamera() {
     applyingView = true;
-    const tilt = MathUtils.degToRad(view.angle === 'oblique' ? 52 : 0.0001);
+    const tilt = MathUtils.degToRad(
+      view.angle === 'grazing' ? 75 : view.angle === 'oblique' ? 52 : 0.0001
+    );
     controls.minDistance = MIN_ALTITUDE / Math.cos(tilt);
     controls.maxDistance = MAX_ALTITUDE / Math.cos(tilt);
     controls.target.set(view.x, 0, view.z);
@@ -131,7 +158,7 @@ export async function createSurfaceScene(
       return timeMaterials(
         renderer,
         (showCandidate) => {
-          surface.material = showCandidate ? candidateMaterial() : materials.reference;
+          selectMaterial(showCandidate);
           renderer.render(scene, square);
         },
         materialTiming.signal

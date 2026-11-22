@@ -12,7 +12,7 @@
     <header>
       <div class="title"><img src="./favicon.svg" alt="" width="28" height="28" /><h1>Surface lab</h1></div>
       <fieldset class="mode-switch" aria-label="Material view">
-        <label><input type="radio" name="mode" value="game" /><span>Original</span></label>
+        <label><input type="radio" name="mode" value="game" /><span id="reference-tab">Original</span></label>
         <label><input type="radio" name="mode" value="compare" checked /><span>Compare</span></label>
         <label><input type="radio" name="mode" value="candidate" /><span id="solo-label">Refined</span></label>
       </fieldset>
@@ -21,7 +21,7 @@
     <main>
       <div id="stage" data-mode="compare">
         <canvas id="ground" tabindex="0" aria-label="Lunar ground. Drag or use arrow keys to pan. Scroll or pinch to zoom."></canvas>
-        <div class="pane-caption game-caption">Original material</div>
+        <div id="reference-label" class="pane-caption game-caption">Original material</div>
         <div id="candidate-label" class="pane-caption field-caption">Refined flight material</div>
         <div id="scale" aria-label="Ground scale at the centre of the view"><span id="scale-label"></span><i></i></div>
         <div id="stage-status" role="status">Preparing the terrain materials…</div>
@@ -35,14 +35,14 @@
           </div>
         </div>
         <div class="selects">
-          <label for="variant">Candidate</label><select id="variant"><option value="flight">Refined</option><option value="hybrid">Hybrid grain</option><option value="procedural">Procedural</option></select>
-          <label for="angle">Camera</label><select id="angle"><option value="overhead">Overhead</option><option value="oblique">Oblique</option></select>
+          <label for="variant">Candidate</label><select id="variant"><option value="flight">Refined</option><option value="pebbles">Pebbles</option><option value="hybrid">Hybrid grain</option><option value="procedural">Procedural</option></select>
+          <label for="angle">Camera</label><select id="angle"><option value="overhead">Overhead</option><option value="oblique">Oblique</option><option value="grazing">Grazing</option></select>
           <label for="channel">Channel</label><select id="channel"><option value="lit">Sunlit</option><option value="albedo">Albedo</option><option value="normals">Normals</option></select>
         </div>
         <div class="sliders">
           <label for="sun">Sun elevation <output id="sun-value" for="sun"></output></label>
           <input id="sun" type="range" min="6" max="78" step="1" />
-          <label for="relief">Candidate relief <output id="relief-value" for="relief"></output></label>
+          <label for="relief"><span id="relief-label">Candidate relief</span> <output id="relief-value" for="relief"></output></label>
           <input id="relief" type="range" min="0" max="2" step="0.05" />
         </div>
         <div class="timing">

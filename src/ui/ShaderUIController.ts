@@ -145,6 +145,9 @@ export class ShaderUIController {
     folder.add(this.params, 'detailStrength', 0, 3, 0.05)
       .name('Detail Strength');
 
+    folder.add(this.params, 'pebbleHeight', 0, 2, 0.05)
+      .name('Pebble Height');
+
     folder.add(this.params, 'detailContrast', 0, 3, 0.05)
       .name('Detail Contrast');
 

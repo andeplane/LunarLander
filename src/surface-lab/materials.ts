@@ -6,6 +6,7 @@ import { proceduralRegolith } from './proceduralRegolith';
 export async function createLabMaterials(maxAnisotropy: number) {
   const reference = new MoonMaterial({ broadRelief: 'atlas' });
   const flight = new MoonMaterial();
+  const shadedFlight = new MoonMaterial();
   const procedural = new MoonMaterial();
   const loader = new TextureLoader();
   const grain = await loader.loadAsync(grainUrl);
@@ -18,7 +19,7 @@ export async function createLabMaterials(maxAnisotropy: number) {
 
   procedural.setParams({ enableColorVariation: false, enableDetail: false });
 
-  for (const material of [reference, flight, procedural]) {
+  for (const material of [reference, shadedFlight, flight, procedural]) {
     material.setParam('enableCurvature', false);
     const isProcedural = material === procedural;
     const compileGame = material.onBeforeCompile.bind(material);
@@ -60,5 +61,5 @@ export async function createLabMaterials(maxAnisotropy: number) {
       );
     };
   }
-  return { reference, flight, procedural, channel, relief, sunDirection, hybrid };
+  return { reference, shadedFlight, flight, procedural, channel, relief, sunDirection, hybrid };
 }

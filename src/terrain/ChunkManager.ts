@@ -1,3 +1,4 @@
+import { PebbleSurface, type PebbleGroundSampler } from './PebbleSurface';
 import type { SunShadowUniforms } from '../rendering/SunShadows';
 import { type Scene, Vector3, type Camera, type PerspectiveCamera, MeshBasicMaterial, Color } from 'three';
 import { Chunk } from './Chunk';
@@ -94,6 +95,9 @@ export class ChunkManager {
   private requestRender: () => void;
   /** Bumped whenever the set of visible terrain or rock meshes changes. */
   private terrainRevision: number = 0;
+  private pebbleSurface?: PebbleSurface;
+  private pebbleShadowRevision = 0;
+  private readonly pebbleGroundAtCamera = new Float32Array(4);
   /** Coarse terrain from the edge of the chunk disc out to the horizon */
   private farTerrain: FarTerrain;
 
@@ -625,6 +629,18 @@ export class ChunkManager {
     const chunkLodLevels = this.updateChunkVisibility(cameraPosition, fovRadians, screenHeight);
     this.updateRockVisibility(cameraPosition, fovRadians, screenHeight);
     this.updateEdgeStitching(chunkLodLevels);
+    if (this.pebbleSurface) {
+      // Use the displayed surface at the camera rather than the lower-resolution collision mesh.
+      const corner = this.pebbleGroundAtCamera;
+      const ready = this.samplePebbleGround(cameraPosition.x, cameraPosition.z, corner, 0);
+      const changed = this.pebbleSurface.update(
+        cameraPosition, cameraPosition.y - corner[3], this.terrainRevision, ready && !this.debugMode
+      );
+      if (changed) {
+        this.pebbleShadowRevision++;
+        this.requestRender();
+      }
+    }
 
     this.evictStaleLodLevels(cameraPosition, fovRadians, screenHeight);
 
@@ -1015,7 +1031,40 @@ export class ChunkManager {
    * when their contents can have changed.
    */
   getTerrainRevision(): number {
-    return this.terrainRevision;
+    return this.terrainRevision + this.pebbleShadowRevision;
+  }
+
+  /** Read the closest vertex of the visible fine mesh. The patch requests its lattice points exactly. */
+  private samplePebbleGround: PebbleGroundSampler = (x, z, out, offset) => {
+    const { chunkWidth, chunkDepth, lodLevels } = this.config;
+    const gridX = Math.round(x / chunkWidth);
+    const gridZ = Math.round(z / chunkDepth);
+    const chunk = this.chunks.get(`${gridX},${gridZ}`);
+    if (!chunk || chunk.currentLodLevel !== 0) return false;
+    const mesh = chunk.getTerrainMesh(0);
+    if (!mesh) return false;
+    const resolution = lodLevels[0];
+    const column = Math.round(((x - gridX * chunkWidth) / chunkWidth + 0.5) * resolution);
+    const row = Math.round(((z - gridZ * chunkDepth) / chunkDepth + 0.5) * resolution);
+    const index = row * (resolution + 1) + column;
+    const normal = mesh.geometry.getAttribute('normal');
+    out[offset] = normal.getX(index);
+    out[offset + 1] = normal.getY(index);
+    out[offset + 2] = normal.getZ(index);
+    out[offset + 3] = mesh.geometry.getAttribute('position').getY(index);
+    return true;
+  };
+
+  enablePebbleRelief(): void {
+    if (this.pebbleSurface) return;
+    const { chunkWidth, chunkDepth, lodLevels } = this.config;
+    this.pebbleSurface = new PebbleSurface(
+      this.terrainGenerator.getMaterial(),
+      chunkWidth / lodLevels[0],
+      chunkDepth / lodLevels[0],
+      this.samplePebbleGround
+    );
+    this.scene.add(this.pebbleSurface.root);
   }
 
   /**
@@ -1054,6 +1103,7 @@ export class ChunkManager {
     this.chunks.clear();
     this.requestQueue.clear();
     this.inFlight.clear();
+    this.pebbleSurface?.dispose();
     this.farTerrain.dispose();
     this.terrainGenerator.dispose();
     this.rockManager.dispose();

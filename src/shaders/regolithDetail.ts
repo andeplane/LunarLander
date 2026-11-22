@@ -5,6 +5,7 @@ import {
   LinearMipmapLinearFilter,
   NoColorSpace,
   RepeatWrapping,
+  RedFormat,
   RGBAFormat,
   UnsignedByteType,
 } from 'three';
@@ -29,6 +30,8 @@ export interface RegolithDetail {
   size: number;
   /** RGBA8 pixels, row-major, `size * size * 4` bytes. */
   data: Uint8Array;
+  /** Isolated upward pebble relief, in fractions of MAX_PEBBLE_HEIGHT_UV. */
+  pebbleHeight: Uint8Array;
 }
 
 export interface RegolithDetailOptions {
@@ -42,6 +45,9 @@ export const REGOLITH_SLOPE_RANGE = 1.5;
 
 /** Most sides a pebble outline can have. */
 const MAX_PEBBLE_FACETS = 7;
+
+/** Maximum stamped pebble height as a fraction of a full texture tile. */
+export const MAX_PEBBLE_HEIGHT_UV = (7 * 0.7) / 512;
 
 /** RMS slope of the fine granular (fbm) layer, before pits and pebbles. */
 const GRAIN_RMS_SLOPE = 0.2;
@@ -157,6 +163,8 @@ export function generateRegolithDetail(options: RegolithDetailOptions): Regolith
   const texels = size * size;
   const height = new Float32Array(texels);
   const albedo = new Float32Array(texels);
+  const pebbleHeight = new Uint8Array(texels);
+  const encodePebbleHeight = 255 / (size * MAX_PEBBLE_HEIGHT_UV);
 
   // --- Granular base: fractal noise scaled to a fixed RMS slope -------------
   addTilingFbm(height, size, random, 4, 8, 0.62);
@@ -226,7 +234,9 @@ export function generateRegolithDetail(options: RegolithDetailOptions): Regolith
       }
       if (edge >= 1) return;
       const rise = Math.min((1 - edge) * 3, 1);
-      height[index] += bump * rise * (1 - 0.25 * edge);
+      const elevation = bump * rise * (1 - 0.25 * edge);
+      height[index] += elevation;
+      pebbleHeight[index] = Math.max(pebbleHeight[index], Math.round(elevation * encodePebbleHeight));
       albedo[index] += tone * rise;
     });
   }
@@ -263,7 +273,7 @@ export function generateRegolithDetail(options: RegolithDetailOptions): Regolith
     data[i * 4 + 3] = Math.round(((height[i] - minHeight) / heightRange) * 255);
   }
 
-  return { size, data };
+  return { size, data, pebbleHeight };
 }
 
 /**
@@ -278,6 +288,17 @@ export function createRegolithDetailTexture(detail: RegolithDetail, anisotropy =
   texture.generateMipmaps = true;
   texture.anisotropy = anisotropy;
   texture.colorSpace = NoColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/** The same stamp positions as the packed material, without the soil and pits. */
+export function createPebbleHeightTexture(detail: RegolithDetail): DataTexture {
+  const texture = new DataTexture(detail.pebbleHeight, detail.size, detail.size, RedFormat);
+  texture.wrapS = texture.wrapT = RepeatWrapping;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
   texture.needsUpdate = true;
   return texture;
 }

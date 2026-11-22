@@ -1,7 +1,8 @@
-import { Color, type DataTexture, MeshStandardMaterial, ShaderChunk, type Texture, Vector3 } from 'three';
+import { Color, type DataTexture, MeshStandardMaterial, ShaderChunk, type Texture, Vector3, Vector4 } from 'three';
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 import { SUN_SHADOW_FRAGMENT_PARS, type SunShadowUniforms } from '../rendering/SunShadows';
-import { createRegolithDetailTexture, generateRegolithDetail, REGOLITH_SLOPE_RANGE } from './regolithDetail';
+import { createPebbleHeightTexture, createRegolithDetailTexture, generateRegolithDetail, REGOLITH_SLOPE_RANGE } from './regolithDetail';
+import { regolithTiling } from './regolithTiling';
 import { regolithNoise } from './regolithNoise';
 
 /**
@@ -22,6 +23,8 @@ export interface MoonMaterialParams {
   enableDetail: boolean;
   /** Strength of the detail normals (1 = as authored). */
   detailStrength: number;
+  /** Physical height multiplier of nearby chips. Zero keeps their original ground shading. */
+  pebbleHeight: number;
   /** Contrast of the detail albedo speckle (1 = as authored). */
   detailContrast: number;
   /** Strength of the procedural craterlets drawn below mesh resolution. */
@@ -63,6 +66,7 @@ interface MoonMaterialUniforms {
   uPlanetRadius: { value: number };
   uSunDirection: { value: Vector3 };
   uDetailMap: { value: Texture };
+  uPebbleCover: { value: Vector4 };
   uDetailStrength: { value: number };
   uDetailContrast: { value: number };
   uCraterletStrength: { value: number };
@@ -77,19 +81,26 @@ interface MoonMaterialUniforms {
 const DETAIL_MAP_SIZE = 1024;
 const DETAIL_MAP_SEED = 1969;
 
-let sharedDetailMap: DataTexture | null = null;
+let sharedMaps: { detail: DataTexture; pebbles: DataTexture } | undefined;
 
 /**
  * The regolith detail map shared by every MoonMaterial. Generated on first
  * use (a few hundred milliseconds) and kept for the lifetime of the page.
  */
 export function getSharedRegolithDetailMap(): DataTexture {
-  if (!sharedDetailMap) {
-    sharedDetailMap = createRegolithDetailTexture(
-      generateRegolithDetail({ size: DETAIL_MAP_SIZE, seed: DETAIL_MAP_SEED })
-    );
+  return getSharedMaps().detail;
+}
+
+export function getSharedPebbleHeightMap(): DataTexture {
+  return getSharedMaps().pebbles;
+}
+
+function getSharedMaps() {
+  if (!sharedMaps) {
+    const field = generateRegolithDetail({ size: DETAIL_MAP_SIZE, seed: DETAIL_MAP_SEED });
+    sharedMaps = { detail: createRegolithDetailTexture(field), pebbles: createPebbleHeightTexture(field) };
   }
-  return sharedDetailMap;
+  return sharedMaps;
 }
 
 /**
@@ -107,6 +118,7 @@ uniform float uEnableColorVariation;
 uniform float uBrightnessBoost;
 uniform vec3 uSunDirection;
 uniform sampler2D uDetailMap;
+uniform vec4 uPebbleCover;
 uniform float uDetailStrength;
 uniform float uDetailContrast;
 uniform float uCraterletStrength;
@@ -150,11 +162,7 @@ float moonNoise(vec2 p) {
   return mix(mix(a, b, w.x), mix(c, d, w.x), w.y) * 2.0 - 1.0;
 }
 
-vec2 moonHash2(vec2 p) {
-  vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
-  p3 += dot(p3, p3.yzx + 33.33);
-  return fract((p3.xx + p3.yz) * p3.zy);
-}
+${regolithTiling}
 
 /**
  * Gradient noise in about -1..1. Unlike value noise it has no blobs sitting
@@ -217,11 +225,9 @@ vec3 moonBroadSoil(vec2 ground, float footprint) {
 
 /** One randomly placed and turned copy of the detail map, slopes turned back. */
 vec4 moonDetailTap(vec2 uv, vec2 dx, vec2 dy, vec2 vertex) {
-  vec2 h = moonHash2(vertex);
-  float angle = h.x * 6.2831853;
-  vec2 turn = vec2(cos(angle), sin(angle));
-  mat2 rot = mat2(turn.x, turn.y, -turn.y, turn.x);
-  vec4 texel = textureGrad(uDetailMap, rot * uv + vec2(h.y, fract(h.x * 7.31 + h.y * 3.17)), rot * dx, rot * dy);
+  mat2 rot;
+  vec2 at = moonPatchUV(uv, vertex, rot);
+  vec4 texel = textureGrad(uDetailMap, at, rot * dx, rot * dy);
   vec2 slope = (texel.rg * 2.0 - 1.0) * rot;
   return vec4(slope, texel.b - 0.5, texel.a - 0.45);
 }
@@ -236,17 +242,9 @@ vec4 moonDetailTap(vec2 uv, vec2 dx, vec2 dy, vec2 vertex) {
  * because the copies make uv discontinuous. Returns slope in xy, tone in z and cavity in w, all around zero.
  */
 vec4 moonDetail(vec2 uv, vec2 dx, vec2 dy) {
-  vec2 skewed = mat2(1.0, 0.0, -0.57735027, 1.15470054) * (uv * 3.464);
-  vec2 base = floor(skewed);
-  vec3 bary = vec3(fract(skewed), 0.0);
-  bary.z = 1.0 - bary.x - bary.y;
-  vec3 w = bary.z > 0.0 ? vec3(bary.z, bary.y, bary.x) : vec3(-bary.z, 1.0 - bary.y, 1.0 - bary.x);
-  vec2 v1 = bary.z > 0.0 ? base : base + vec2(1.0, 1.0);
-  vec2 v2 = bary.z > 0.0 ? base + vec2(0.0, 1.0) : base + vec2(1.0, 0.0);
-  vec2 v3 = bary.z > 0.0 ? base + vec2(1.0, 0.0) : base + vec2(0.0, 1.0);
-  // Sharpen the blend so most of a triangle shows one clean copy
-  w = w * w * w;
-  w /= w.x + w.y + w.z;
+  vec2 v1, v2, v3;
+  vec3 w;
+  moonPatchWeights(uv, v1, v2, v3, w);
   vec4 sum = moonDetailTap(uv, dx, dy, v1) * w.x;
   if (w.y > 0.003) sum += moonDetailTap(uv, dx, dy, v2) * w.y;
   if (w.z > 0.003) sum += moonDetailTap(uv, dx, dy, v3) * w.z;
@@ -473,6 +471,7 @@ export class MoonMaterial extends MeshStandardMaterial {
       planetRadius: DEFAULT_PLANET_RADIUS,
       enableDetail: true,
       detailStrength: 1.0,
+      pebbleHeight: 1.0,
       detailContrast: 1.0,
       craterletStrength: 1.0,
       backscatter: 0.6,
@@ -496,6 +495,7 @@ export class MoonMaterial extends MeshStandardMaterial {
       uDetailStrength: { value: 1.0 },
       uDetailContrast: { value: 1.0 },
       uCraterletStrength: { value: 1.0 },
+      uPebbleCover: { value: new Vector4(0, 0, 0, 0) },
       uBackscatter: { value: 0.6 },
       uOppositionSurge: { value: 0.35 },
       uAmbientFill: { value: 0.08 },
@@ -572,6 +572,15 @@ export class MoonMaterial extends MeshStandardMaterial {
         ${FRAGMENT_PARS}
         ${shader.fragmentShader}
       `;
+
+      // The near mesh shades the entire area it replaces, including the soil
+      // between chips. Its last half-cell overlaps the original mesh at zero lift.
+      shader.fragmentShader = shader.fragmentShader.replace('#include <clipping_planes_fragment>', `
+        #include <clipping_planes_fragment>
+        #if !defined(MOON_PEBBLE_SURFACE) && !defined(MOON_ROCK)
+          if (uPebbleCover.z > 0.0 && all(lessThan(abs(vWorldPosition.xz - uPebbleCover.xy), uPebbleCover.zw))) discard;
+        #endif
+      `);
 
       // Albedo, detail normal and sun visibility. Everything declared here is
       // at main() scope and is used again by the later injections.
@@ -714,6 +723,11 @@ export class MoonMaterial extends MeshStandardMaterial {
     if (!changed) return;
     Object.assign(this.params, params);
     this.updateUniforms();
+  }
+
+  /** World rectangle shaded by the close pebble mesh. Zero width restores the ground. */
+  setPebbleCover(x: number, z: number, halfX: number, halfZ: number): void {
+    this.shaderUniforms.uPebbleCover.value.set(x, z, halfX, halfZ);
   }
 
   /**

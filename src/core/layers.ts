@@ -11,3 +11,6 @@
  * helpers and UI meshes never end up in the shadow maps.
  */
 export const SHADOW_CASTER_LAYER = 2;
+
+/** Centimetre-scale relief is resolvable only in the nearest sun cascade. */
+export const NEAR_SHADOW_CASTER_LAYER = 3;

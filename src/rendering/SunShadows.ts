@@ -14,7 +14,7 @@ import {
   Vector3,
   WebGLRenderTarget,
 } from 'three';
-import { SHADOW_CASTER_LAYER } from '../core/layers';
+import { NEAR_SHADOW_CASTER_LAYER, SHADOW_CASTER_LAYER } from '../core/layers';
 
 /**
  * Cascaded sun shadows for the lunar surface.
@@ -482,6 +482,8 @@ export class SunShadows {
     );
 
     const camera = this.camera;
+    if (index === 0) camera.layers.enable(NEAR_SHADOW_CASTER_LAYER);
+    else camera.layers.disable(NEAR_SHADOW_CASTER_LAYER);
     camera.left = -frame.halfWidth;
     camera.right = frame.halfWidth;
     camera.top = frame.halfHeight;

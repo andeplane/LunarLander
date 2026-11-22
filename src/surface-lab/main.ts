@@ -34,9 +34,15 @@ function saveView() {
 function syncControls() {
   stage.dataset.mode = view.mode;
   variant.value = view.variant;
+  element('relief-label').textContent =
+    view.variant === 'pebbles' ? 'Pebble height' : 'Candidate relief';
+  element('reference-label').textContent =
+    view.variant === 'pebbles' ? 'Shaded pebbles' : 'Original material';
+  element('reference-tab').textContent = view.variant === 'pebbles' ? 'Shaded' : 'Original';
   element('solo-label').textContent = VARIANT_NAMES[view.variant];
   element('candidate-label').textContent = {
     flight: 'Refined flight material',
+    pebbles: 'Raised pebbles',
     hybrid: 'Hybrid grain',
     procedural: 'World-space procedural',
   }[view.variant];
@@ -129,7 +135,7 @@ measure.addEventListener('click', async () => {
   timing.textContent = 'Timing both materials…';
   try {
     const result = await scene.measure();
-    timing.textContent = `Original ${result.reference.toFixed(2)} ms · ${VARIANT_NAMES[view.variant]} ${result.candidate.toFixed(2)} ms. ${result.method}, median at 512 × 512.`;
+    timing.textContent = `${view.variant === 'pebbles' ? 'Shaded' : 'Original'} ${result.reference.toFixed(2)} ms · ${VARIANT_NAMES[view.variant]} ${result.candidate.toFixed(2)} ms. ${result.method}, median at 512 × 512.`;
   } catch (error) {
     if (!(error instanceof DOMException && error.name === 'AbortError')) {
       timing.textContent = error instanceof Error ? error.message : 'Timing unavailable.';

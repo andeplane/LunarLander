@@ -1,6 +1,6 @@
 import { type Camera, InstancedMesh, Matrix4, Mesh, type OrthographicCamera, Scene, Vector3, type WebGLRenderTarget } from 'three';
 import { describe, expect, it } from 'vitest';
-import { SHADOW_CASTER_LAYER } from '../core/layers';
+import { NEAR_SHADOW_CASTER_LAYER, SHADOW_CASTER_LAYER } from '../core/layers';
 import {
   type CascadeFrame,
   cascadeHalfExtents,
@@ -210,6 +210,10 @@ describe('SunShadows', () => {
     expect(pass.camera.layers.test(caster.layers)).toBe(true);
     expect(pass.camera.layers.test(new Mesh().layers)).toBe(false);
     expect(pass.camera.layers.test(new InstancedMesh(undefined, undefined, 1).layers)).toBe(false);
+    expect(pass.camera.layers.isEnabled(NEAR_SHADOW_CASTER_LAYER)).toBe(true);
+    shadows.plan(makeState());
+    shadows.renderPending(scene);
+    expect(renderer.passes[1].camera.layers.isEnabled(NEAR_SHADOW_CASTER_LAYER)).toBe(false);
   });
 
   it('maps the focus to the centre of the shadow map', () => {
