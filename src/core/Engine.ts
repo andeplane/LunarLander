@@ -11,6 +11,8 @@ import type { PhysicsWorld } from '../physics/PhysicsWorld';
 import type { TerrainColliderManager } from '../physics/TerrainColliderManager';
 import { DEFAULT_PLANET_RADIUS, MAX_PIXEL_RATIO, COMPOSER_MSAA_SAMPLES, MAX_FPS } from './EngineSettings';
 import type { CameraConfig } from '../types';
+import { exposureForSun } from '../rendering/exposure';
+import { SunShadows, type SunShadowFrameState } from '../rendering/SunShadows';
 
 /**
  * Maximum frame delta in seconds. Clamps large deltas (e.g. after
@@ -75,6 +77,17 @@ export class Engine {
   private previousCameraPosition: THREE.Vector3 = new THREE.Vector3();
   private previousCameraQuaternion: THREE.Quaternion = new THREE.Quaternion();
   private needsRender: boolean = true; // Always render first frame
+
+  // Cascaded sun shadow maps for terrain and rocks
+  private sunShadows: SunShadows;
+  private sunShadowState: SunShadowFrameState = {
+    cameraPosition: new THREE.Vector3(),
+    groundHeight: 0,
+    sunDirection: new THREE.Vector3(0, 1, 0),
+    sunVisible: false,
+    terrainRevision: 0,
+    planetRadius: null,
+  };
   
   // Reusable vector for camera direction calculation
   private cameraForward: THREE.Vector3 = new THREE.Vector3();
@@ -135,6 +148,8 @@ export class Engine {
     // after composer.render(). autoReset must be off because the composer
     // issues multiple internal render calls per frame; we reset manually.
     this.renderer.info.autoReset = false;
+
+    this.sunShadows = new SunShadows(this.renderer);
 
     // Handle window resize (removable in dispose)
     window.addEventListener('resize', this.handleResize);
@@ -259,6 +274,7 @@ export class Engine {
    */
   setChunkManager(manager: ChunkManager): void {
     this.chunkManager = manager;
+    manager.setSunShadows(this.sunShadows.uniforms, this.sunShadows.options.mapSize);
   }
 
   /**
@@ -480,6 +496,26 @@ export class Engine {
         const sunHorizonFade = this.celestialSystem.getSunHorizonFade();
         this.chunkManager.setSunDirection(sunDirection);
         this.chunkManager.setSunHorizonFade(sunHorizonFade);
+
+        const exposure = exposureForSun(sunDirection.y, sunHorizonFade);
+        if (Math.abs(exposure - this.renderer.toneMappingExposure) > 1e-3) {
+          this.renderer.toneMappingExposure = exposure;
+          this.requestRender();
+        }
+
+        // Decide whether a shadow cascade needs re-rendering this frame
+        const shadowState = this.sunShadowState;
+        const curvatureOn = this.chunkManager.getMaterial().getParam('enableCurvature');
+        shadowState.cameraPosition.copy(this.camera.position);
+        shadowState.groundHeight =
+          this.chunkManager.getHeightAt(this.camera.position.x, this.camera.position.z) ?? shadowState.groundHeight;
+        shadowState.sunDirection.copy(sunDirection);
+        shadowState.sunVisible = sunHorizonFade > 0.001;
+        shadowState.terrainRevision = this.chunkManager.getTerrainRevision();
+        shadowState.planetRadius = curvatureOn ? this.celestialSystem.getPlanetRadius() : null;
+        if (this.sunShadows.plan(shadowState)) {
+          this.requestRender();
+        }
       }
     }
 
@@ -511,6 +547,7 @@ export class Engine {
     // This avoids the extra full scene render that was previously done into
     // an offscreen target just to collect stats.
     this.renderer.info.reset();
+    this.sunShadows.renderPending(this.scene);
     this.composer.render(this.deltaTime);
 
     // In wireframe mode, Three.js counts lines instead of triangles.
@@ -572,6 +609,7 @@ export class Engine {
     if (this.statsElement) {
       this.statsElement.remove();
     }
+    this.sunShadows.dispose();
     this.bloomPass.dispose();
     this.outputPass.dispose();
     this.composer.dispose();

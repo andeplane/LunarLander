@@ -104,13 +104,7 @@ export class ShaderUIController {
     if (!this.gui) return;
     const folder = this.gui.addFolder('Colors');
     
-    folder.add(this.params, 'colorVariationFrequency', 0.001, 0.02, 0.001)
-      .name('Variation Frequency');
-
-    folder.add(this.params, 'baseColorBlend', 0.0, 1.0, 0.1)
-      .name('Base Color Blend');
-
-    folder.add(this.params, 'brightnessBoost', 1.0, 5.0, 0.1)
+    folder.add(this.params, 'brightnessBoost', 0.2, 3.0, 0.05)
       .name('Brightness Boost');
   }
 
@@ -138,32 +132,45 @@ export class ShaderUIController {
   }
 
   /**
-   * Setup texture LOD parameters folder
-   * Controls for distance-based texture blending and hex tiling
+   * Setup surface parameters folder
+   * Controls for the regolith detail map, light response and shadows
    */
   private setupTextureLodFolder(): void {
     if (!this.gui) return;
-    const folder = this.gui.addFolder('Texture LOD');
+    const folder = this.gui.addFolder('Surface');
     
-    folder.add(this.params, 'enableTexture')
-      .name('Enable Texture');
+    folder.add(this.params, 'enableDetail')
+      .name('Enable Detail');
 
-    folder.add(this.params, 'enableHexTiling')
-      .name('Enable Hex Tiling');
+    folder.add(this.params, 'detailStrength', 0, 3, 0.05)
+      .name('Detail Strength');
 
-    // Hex tiling controls (0 = disabled for debugging)
-    folder.add(this.params, 'hexPatchScale', 0, 20, 0.5)
-      .name('Hex Patch Scale');
+    folder.add(this.params, 'detailContrast', 0, 3, 0.05)
+      .name('Detail Contrast');
 
-    folder.add(this.params, 'hexContrastCorrection')
-      .name('Hex Contrast Correct');
+    folder.add(this.params, 'craterletStrength', 0, 3, 0.05)
+      .name('Craterlets');
 
-    // UV scale controls for height-based interpolation
-    folder.add(this.params, 'nonHexUvScale', 0.05, 1.0, 0.01)
-      .name('Non-Hex UV Scale');
+    folder.add(this.params, 'backscatter', 0, 1, 0.05)
+      .name('Backscatter');
 
-    folder.add(this.params, 'hexUvScale', 0.05, 1.0, 0.01)
-      .name('Hex UV Scale');
+    folder.add(this.params, 'oppositionSurge', 0, 1, 0.05)
+      .name('Opposition Surge');
+
+    folder.add(this.params, 'ambientFill', 0, 0.5, 0.01)
+      .name('Ambient Fill');
+
+    folder.add(this.params, 'shadowStrength', 0, 1, 0.05)
+      .name('Shadow Strength');
+
+    folder.add(this.params, 'debugMode', {
+      Off: 0,
+      'Mesh normal': 1,
+      'Detail normal': 2,
+      'Sun visibility': 3,
+      Albedo: 4,
+      Lighting: 5,
+    }).name('Debug View');
 
     folder.open();
   }

@@ -5,6 +5,7 @@
  * terrain), the physics lander (angle-mode assisted control), cockpit/belly
  * cameras, in-world markers, HUD + screens, touchdown grading and scoring.
  */
+import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 import * as THREE from 'three';
 import type { GameMode } from './ModeManager';
 import type { InputManager } from '../core/InputManager';
@@ -912,7 +913,7 @@ export class LanderMode implements GameMode {
     const dx = this.pad.x - this.camera.position.x;
     const dz = this.pad.z - this.camera.position.z;
     const distSq = dx * dx + dz * dz;
-    const curvatureDrop = distSq / (2 * 5000);
+    const curvatureDrop = distSq / (2 * DEFAULT_PLANET_RADIUS);
     this.vec.set(this.pad.x, this.pad.y - curvatureDrop, this.pad.z);
     data.padDistance = Math.sqrt(distSq);
     this.vec.project(this.camera);

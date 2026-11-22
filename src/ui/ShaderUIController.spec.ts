@@ -41,26 +41,26 @@ describe(createLiveMaterialParams.name, () => {
   });
 
   it('does not re-apply stale values after an external change (the GUI snap-back bug)', () => {
-    const material = makeStubMaterial({ hexPatchScale: 6 });
+    const material = makeStubMaterial({ detailStrength: 6 });
     const params = createLiveMaterialParams(material);
 
     // GUI reads 6, then the console sets 12 behind its back
-    expect(params.hexPatchScale).toBe(6);
-    material.setParam('hexPatchScale', 12);
+    expect(params.detailStrength).toBe(6);
+    material.setParam('detailStrength', 12);
 
     // Touching an unrelated slider writes ITS current value; with a snapshot
-    // object this would also have reverted hexPatchScale to 6 on next write.
+    // object this would also have reverted detailStrength to 6 on next write.
     params.brightnessBoost = 2.0;
 
-    expect(material.store.hexPatchScale).toBe(12);
-    expect(params.hexPatchScale).toBe(12);
+    expect(material.store.detailStrength).toBe(12);
+    expect(params.detailStrength).toBe(12);
   });
 
   it('reports presence of defined params via the in operator', () => {
-    const material = makeStubMaterial({ baseColorBlend: 0.5 });
+    const material = makeStubMaterial({ detailContrast: 0.5 });
     const params = createLiveMaterialParams(material);
 
-    expect('baseColorBlend' in params).toBe(true);
-    expect('hexUvScale' in params).toBe(false);
+    expect('detailContrast' in params).toBe(true);
+    expect('ambientFill' in params).toBe(false);
   });
 });

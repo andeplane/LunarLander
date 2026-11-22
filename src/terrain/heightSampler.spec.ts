@@ -1,26 +1,24 @@
 import { describe, expect, it } from 'vitest';
+import { buildChunkMesh } from './chunkMesh';
 import {
-  applyCratersToHeightBuffer,
   type Crater,
-  type CraterParams,
+  craterParamsFromTerrainArgs,
   generateCratersForRegion,
+  LOD_FADE_END,
   parseGridKey,
 } from './craters';
 import { createHeightSampler, type HeightSamplerConfig } from './heightSampler';
-import { generateTerrain, type TerrainArgs } from './terrain';
+import type { TerrainArgs } from './terrain';
 
 /**
- * Production-like config (mirrors ChunkManager.baseTerrainArgs / main.ts),
- * with a bounded crater size so mesh heights stay in a range where float32
- * vertex storage keeps ~1e-6 absolute precision, and a density high enough
- * that every tested chunk actually contains craters.
+ * Production config (mirrors ChunkManager.baseTerrainArgs / main.ts).
  */
 const baseConfig: HeightSamplerConfig = {
   seed: 0,
-  gain: 0.5,
+  gain: 0.4,
   lacunarity: 2,
   frequency: 0.015,
-  amplitude: 1.0,
+  amplitude: 0.4,
   altitude: 0.1,
   octaves: 4,
   smoothLowerPlanes: 0,
@@ -28,37 +26,22 @@ const baseConfig: HeightSamplerConfig = {
   depth: 400,
   renderDistance: 10,
   craterSeed: 42,
-  craterDensity: 400,
-  craterMinRadius: 5,
-  craterMaxRadius: 40,
-  craterPowerLawExponent: -2.2,
-  craterDepthRatio: 0.15,
-  craterRimHeight: 0.3,
-  craterRimWidth: 0.2,
+  craterDensity: 6000,
+  craterMinRadius: 1,
+  craterMaxRadius: 250,
+  craterPowerLawExponent: -2,
+  craterDepthRatio: 0.2,
+  craterRimHeight: 0.04,
+  craterRimWidth: 1.5,
   craterFloorFlatness: 0,
+  craterDegradedDepthRatio: 0.04,
+  craterFreshnessExponent: 3,
 };
 
-function craterParamsFrom(config: HeightSamplerConfig): CraterParams {
-  return {
-    seed: config.craterSeed,
-    density: config.craterDensity,
-    minRadius: config.craterMinRadius,
-    maxRadius: config.craterMaxRadius,
-    powerLawExponent: config.craterPowerLawExponent,
-    depthRatio: config.craterDepthRatio,
-    rimHeight: config.craterRimHeight,
-    rimWidth: config.craterRimWidth,
-    floorFlatness: config.craterFloorFlatness,
-  };
-}
-
 /**
- * Build a chunk mesh height buffer exactly the way the chunk worker does
- * (see handleChunkMessage in ChunkWorker.ts): base terrain via
- * generateTerrain, then cached region craters converted to local chunk space
- * and applied to the height buffer. (The worker additionally generates a
- * one-vertex skirt, but that only affects normals — interior vertex heights
- * are a pure function of vertex x/z, which we read back from the buffer.)
+ * Build a chunk mesh exactly the way the chunk worker does (see
+ * handleChunkMessage in ChunkWorker.ts): region craters with one vertex
+ * spacing of margin, then buildChunkMesh.
  */
 function buildChunkMeshLikeWorker(
   config: HeightSamplerConfig,
@@ -77,46 +60,47 @@ function buildChunkMeshLikeWorker(
     gridKey,
     config.width,
     config.depth,
-    craterParamsFrom(config)
+    craterParamsFromTerrainArgs(config),
+    Math.max(config.width, config.depth) / resolution
   );
-
-  const geometry = generateTerrain(terrainArgs, false);
-  const positions = geometry.attributes.position.array as Float32Array;
-
-  const localCraters: Crater[] = craters.map((crater) => ({
-    ...crater,
-    centerX: crater.centerX - terrainArgs.posX,
-    centerZ: crater.centerZ - terrainArgs.posZ,
-  }));
-  applyCratersToHeightBuffer(positions, config.width, config.depth, localCraters);
+  const { positions } = buildChunkMesh(terrainArgs, craters);
 
   return { positions, posX: terrainArgs.posX, posZ: terrainArgs.posZ, craters };
 }
 
 describe(createHeightSampler.name, () => {
-  it('matches actual built-mesh vertex heights (base FBM + strength + craters)', () => {
+  it('matches actual built-mesh vertex heights (base terrain + strength + craters)', () => {
     const gridKey = '3,-2';
-    const { positions, posX, posZ, craters } = buildChunkMeshLikeWorker(baseConfig, gridKey, 64);
+    // The mesh fades out craters smaller than 2.5 vertex spacings (LOD
+    // filter); with 128 segments that is 7.8 m, so start the population at
+    // 8 m to compare the full pipeline vertex by vertex
+    const resolution = 128;
+    const config: HeightSamplerConfig = { ...baseConfig, craterMinRadius: 8 };
+    expect(config.craterMinRadius).toBeGreaterThanOrEqual(
+      (LOD_FADE_END * config.width) / resolution
+    );
+    const { positions, posX, posZ, craters } = buildChunkMeshLikeWorker(
+      config,
+      gridKey,
+      resolution
+    );
 
     // Guard against a vacuous pass: the tested chunk must contain craters
     expect(craters.length).toBeGreaterThan(0);
 
-    const sampler = createHeightSampler(baseConfig);
+    const sampler = createHeightSampler(config);
 
+    // The mesh stores float32, and evaluates the very same float64 expression
     const vertexCount = positions.length / 3;
-    let maxError = 0;
     for (let i = 0; i < vertexCount; i++) {
       const worldX = posX + positions[i * 3];
       const worldZ = posZ + positions[i * 3 + 2];
-      const meshHeight = positions[i * 3 + 1];
-      const sampledHeight = sampler.heightAt(worldX, worldZ);
-      maxError = Math.max(maxError, Math.abs(sampledHeight - meshHeight));
+      expect(positions[i * 3 + 1]).toBe(Math.fround(sampler.heightAt(worldX, worldZ)));
     }
-    expect(maxError).toBeLessThanOrEqual(1e-6);
 
     // Sanity: craters actually shaped this mesh (some vertex differs from
     // the crater-free base terrain), so the crater branch was exercised
-    const craterFree = createHeightSampler({ ...baseConfig, craterDensity: 0 });
+    const craterFree = createHeightSampler({ ...config, craterDensity: 0 });
     let maxCraterEffect = 0;
     for (let i = 0; i < vertexCount; i++) {
       const worldX = posX + positions[i * 3];
@@ -127,6 +111,25 @@ describe(createHeightSampler.name, () => {
       );
     }
     expect(maxCraterEffect).toBeGreaterThan(0.5);
+  });
+
+  it('point-samples every crater, including those a coarse mesh leaves out', () => {
+    // Only craters far too small for a 16-segment mesh (25 m spacing)
+    const config: HeightSamplerConfig = { ...baseConfig, craterMaxRadius: 6 };
+    const { positions, posX, posZ } = buildChunkMeshLikeWorker(config, '0,0', 16);
+    const sampler = createHeightSampler(config);
+    const craterFree = createHeightSampler({ ...config, craterDensity: 0 });
+
+    let differing = 0;
+    for (let i = 0; i < positions.length; i += 3) {
+      const worldX = posX + positions[i];
+      const worldZ = posZ + positions[i + 2];
+      // The mesh is the crater-free surface...
+      expect(positions[i + 1]).toBe(Math.fround(craterFree.heightAt(worldX, worldZ)));
+      // ...while the sampler still sees the small craters
+      if (sampler.heightAt(worldX, worldZ) !== craterFree.heightAt(worldX, worldZ)) differing++;
+    }
+    expect(differing).toBeGreaterThan(20);
   });
 
   it('is deterministic: two instances with the same config agree exactly', () => {
@@ -174,12 +177,12 @@ describe(createHeightSampler.name, () => {
 
   describe('slopeAt', () => {
     it('returns near-zero degrees on flat terrain', () => {
-      // Zero main-noise amplitude and no craters: only the low-frequency
-      // altitude-variation field baked into createTerrainEvaluator remains,
-      // which contributes at most ~1 degree of slope
+      // No fine noise, no relief and no craters: a perfectly level surface
       const flatConfig: HeightSamplerConfig = {
         ...baseConfig,
         amplitude: 0,
+        rollingAmplitude: 0,
+        massifHeight: 0,
         craterDensity: 0,
       };
       const sampler = createHeightSampler(flatConfig);
@@ -189,27 +192,29 @@ describe(createHeightSampler.name, () => {
         [123, -456],
         [-789, 321],
       ] as const) {
-        expect(sampler.slopeAt(x, z)).toBeLessThan(2);
+        expect(sampler.slopeAt(x, z)).toBe(0);
       }
     });
 
     it('returns a large slope in degrees on a crater wall', () => {
       const sampler = createHeightSampler(baseConfig);
 
-      // Deterministically pick a sizable crater from the chunk-(0,0) region
-      // and probe its inner bowl wall, where the profile is steepest
+      // Deterministically pick a sizable fresh crater from the chunk-(0,0)
+      // region and probe its inner bowl wall, where the profile is steepest
       const craters = generateCratersForRegion(
         '0,0',
         baseConfig.width,
         baseConfig.depth,
-        craterParamsFrom(baseConfig)
+        craterParamsFromTerrainArgs(baseConfig)
       );
-      const bigCrater = craters.reduce((a, b) => (b.radius > a.radius ? b : a));
-      expect(bigCrater.radius).toBeGreaterThan(baseConfig.craterMinRadius);
+      const bigCrater = craters
+        .filter((crater) => crater.radius > 10 && crater.radius < 100)
+        .reduce((a, b) => (b.freshness > a.freshness ? b : a));
+      expect(bigCrater.freshness).toBeGreaterThan(0.5);
 
       const wallX = bigCrater.centerX + 0.75 * bigCrater.radius;
       const wallSlope = sampler.slopeAt(wallX, bigCrater.centerZ);
-      expect(wallSlope).toBeGreaterThan(5);
+      expect(wallSlope).toBeGreaterThan(10);
       expect(wallSlope).toBeLessThanOrEqual(90);
     });
 

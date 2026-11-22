@@ -7,7 +7,7 @@
  *
  *   height = createTerrainEvaluator(args)(localX, localZ)
  *              * terrainDisplacementStrength(smoothLowerPlanes)
- *          + getCraterHeightModAt(worldX, worldZ, cratersForRegion)
+ *          + sum of craterHeight over cratersForRegion (via a CraterIndex)
  *
  * honoring the same coordinate split the worker uses: the terrain evaluator
  * takes CHUNK-LOCAL x/z (with posX/posZ world offsets baked into its args),
@@ -18,10 +18,11 @@
  */
 
 import {
-  type Crater,
-  type CraterParams,
+  buildCraterIndex,
+  type CraterIndex,
+  craterParamsFromTerrainArgs,
   generateCratersForRegion,
-  getCraterHeightModAt,
+  sampleCraterIndex,
 } from './craters';
 import { createGridKey } from './LodUtils';
 import { createTerrainEvaluator, type TerrainArgs, terrainDisplacementStrength } from './terrain';
@@ -57,8 +58,8 @@ const RAD_TO_DEG = 180 / Math.PI;
 interface ChunkSampleCache {
   /** Terrain evaluator with this chunk's posX/posZ baked in (local x/z in). */
   evaluator: (x: number, z: number) => number;
-  /** Craters affecting this chunk (world coordinates), 3x3 neighbor scan. */
-  craters: Crater[];
+  /** Spatial index over the craters affecting this chunk (world coordinates). */
+  craters: CraterIndex;
   /** World-space X offset of the chunk origin (gridX * chunkWidth). */
   originX: number;
   /** World-space Z offset of the chunk origin (gridZ * chunkDepth). */
@@ -82,17 +83,7 @@ export function createHeightSampler(config: HeightSamplerConfig): TerrainHeightS
   const strength = terrainDisplacementStrength(config.smoothLowerPlanes);
 
   // Identical CraterParams construction to handleChunkMessage in ChunkWorker.ts
-  const craterParams: CraterParams = {
-    seed: config.craterSeed,
-    density: config.craterDensity,
-    minRadius: config.craterMinRadius,
-    maxRadius: config.craterMaxRadius,
-    powerLawExponent: config.craterPowerLawExponent,
-    depthRatio: config.craterDepthRatio,
-    rimHeight: config.craterRimHeight,
-    rimWidth: config.craterRimWidth,
-    floorFlatness: config.craterFloorFlatness,
-  };
+  const craterParams = craterParamsFromTerrainArgs(config);
 
   const chunkCache = new Map<string, ChunkSampleCache>();
 
@@ -127,8 +118,16 @@ export function createHeightSampler(config: HeightSamplerConfig): TerrainHeightS
           posX,
           posZ,
         }),
-        // Same 3x3 neighbor-aware crater region the worker caches per chunk
-        craters: generateCratersForRegion(gridKey, chunkWidth, chunkDepth, craterParams),
+        // Same neighbor-aware crater region the worker caches per chunk
+        // (the worker adds a margin for its mesh skirt; craters that only
+        // reach the margin contribute exactly 0 inside the chunk)
+        craters: buildCraterIndex(
+          generateCratersForRegion(gridKey, chunkWidth, chunkDepth, craterParams),
+          posX - chunkWidth / 2,
+          posZ - chunkDepth / 2,
+          posX + chunkWidth / 2,
+          posZ + chunkDepth / 2
+        ),
         originX: posX,
         originZ: posZ,
       };
@@ -149,7 +148,7 @@ export function createHeightSampler(config: HeightSamplerConfig): TerrainHeightS
     const baseHeight = chunk.evaluator(worldX - chunk.originX, worldZ - chunk.originZ) * strength;
 
     // Craters take world coordinates
-    return baseHeight + getCraterHeightModAt(worldX, worldZ, chunk.craters);
+    return baseHeight + sampleCraterIndex(chunk.craters, worldX, worldZ);
   }
 
   function slopeAt(
