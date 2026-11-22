@@ -16,10 +16,11 @@ function makeChunk(
   gridKey: string,
   resolution: number,
   lodLevel: number,
-  heightFn: (x: number, z: number) => number = () => 0
+  heightFn: (x: number, z: number) => number = () => 0,
+  extraVertices: number = 0
 ): Chunk {
   const vertexCount = resolution + 1;
-  const positions = new Float32Array(vertexCount * vertexCount * 3);
+  const positions = new Float32Array((vertexCount * vertexCount + extraVertices) * 3);
   for (let row = 0; row < vertexCount; row++) {
     for (let col = 0; col < vertexCount; col++) {
       const i = (row * vertexCount + col) * 3;
@@ -84,6 +85,15 @@ describe(TerrainColliderManager.name, () => {
     expect(manager.getActiveColliderCount()).toBe(2);
     expect(world.bodies.len()).toBe(2);
     expect(world.colliders.len()).toBe(2);
+  });
+
+  it('accepts a mesh whose grid is followed by a hanging skirt', () => {
+    chunks.set('0,0', makeChunk('0,0', 8, 0, () => 0, 4 * 8));
+
+    const manager = makeManager([8]);
+    manager.update(new Vector3(0, 10, 0));
+
+    expect(manager.getActiveColliderCount()).toBe(1);
   });
 
   it('skips chunks that have no built mesh yet', () => {

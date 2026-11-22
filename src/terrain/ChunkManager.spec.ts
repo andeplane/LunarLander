@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { Vector3, Mesh, BufferGeometry, BoxGeometry, InstancedMesh, MeshBasicMaterial } from 'three';
+import { Vector3, Mesh, BufferGeometry, BoxGeometry, InstancedMesh, MeshBasicMaterial, Group } from 'three';
 import { ChunkManager, type ChunkConfig } from './ChunkManager';
 import type { TerrainGenerator } from './TerrainGenerator';
 import type { RockManager } from '../environment/RockManager';
@@ -90,6 +90,8 @@ describe(ChunkManager.name, () => {
   let raycastHeight: ReturnType<typeof vi.fn>;
   let terrainGenerator: TerrainGenerator;
   let rockManager: RockManager;
+  let nearRoot: Group;
+  let updateNearDetail: ReturnType<typeof vi.fn<(...args: [Vector3, number, number]) => boolean>>;
 
   beforeEach(() => {
     FakeWorker.instances = [];
@@ -123,18 +125,21 @@ describe(ChunkManager.name, () => {
       dispose: vi.fn(),
     } as unknown as TerrainGenerator;
 
+    nearRoot = new Group();
+    updateNearDetail = vi.fn<(...args: [Vector3, number, number]) => boolean>(() => false);
     rockManager = {
       createRockMeshes: vi.fn((placements: RockPlacement[]) =>
         placements.map(
           () => new InstancedMesh(sharedRockGeometry, new MeshBasicMaterial(), 1)
         )
       ),
-      getStableAxesForDetail: vi.fn(() => undefined),
       getLibrarySize: vi.fn(() => 1),
       getMaterial: vi.fn(() => fakeMaterial),
       setSunDirection: vi.fn(),
       setSunHorizonFade: vi.fn(),
       updateCullingBounds: vi.fn(),
+      updateNearDetail,
+      getNearDetailRoot: vi.fn(() => nearRoot),
       dispose: vi.fn(),
     } as unknown as RockManager;
   });
@@ -143,7 +148,10 @@ describe(ChunkManager.name, () => {
     vi.unstubAllGlobals();
   });
 
-  function createManager(configOverrides: Partial<ChunkConfig> = {}): ChunkManager {
+  function createManager(
+    configOverrides: Partial<ChunkConfig> = {},
+    requestRender: () => void = vi.fn()
+  ): ChunkManager {
     const config: ChunkConfig = {
       renderDistance: 1,
       chunkWidth: 100,
@@ -161,7 +169,7 @@ describe(ChunkManager.name, () => {
       rockManager,
       rockConfig,
       craterConfig,
-      vi.fn()
+      requestRender
     );
   }
 
@@ -194,6 +202,31 @@ describe(ChunkManager.name, () => {
       }
     ).handleWorkerResult(result, 0);
   }
+
+  describe('near-camera rock detail', () => {
+    it('adds the near-detail root to the scene once', () => {
+      createManager();
+      expect(scene.add).toHaveBeenCalledWith(nearRoot);
+    });
+
+    it('refines rocks after every update with the view, and renders when that changed anything', () => {
+      const requestRender = vi.fn();
+      const manager = createManager({}, requestRender);
+      const origin = new Vector3(0, 50, 0);
+      manager.update(origin);
+      drainWorkers();
+      manager.update(origin);
+      expect(updateNearDetail).toHaveBeenLastCalledWith(origin, (70 * Math.PI) / 180, 1080);
+
+      requestRender.mockClear();
+      manager.update(origin);
+      const unchanged = requestRender.mock.calls.length;
+      updateNearDetail.mockReturnValueOnce(true);
+      requestRender.mockClear();
+      manager.update(origin);
+      expect(requestRender.mock.calls.length).toBe(unchanged + 1);
+    });
+  });
 
   describe('request/dispatch lifecycle', () => {
     it('never dispatches the same chunk LOD build twice', () => {
@@ -339,7 +372,7 @@ describe(ChunkManager.name, () => {
       manager.update(new Vector3(0, 50, 0));
 
       const placements: RockPlacement[] = [
-        { prototypeId: 0, matrices: new Float32Array(16) },
+        { prototypeId: 0, tier: 0, matrices: new Float32Array(16), colors: new Float32Array(3) },
       ];
 
       handleWorkerResult(manager, makeResult('0,0', 1, 32, placements));
@@ -361,7 +394,7 @@ describe(ChunkManager.name, () => {
       manager.update(new Vector3(0, 50, 0));
 
       const placements: RockPlacement[] = [
-        { prototypeId: 0, matrices: new Float32Array(16) },
+        { prototypeId: 0, tier: 0, matrices: new Float32Array(16), colors: new Float32Array(3) },
       ];
       handleWorkerResult(manager, makeResult('0,0', 1, 32, placements));
 
@@ -431,7 +464,7 @@ describe(ChunkManager.name, () => {
       manager.update(new Vector3(0, 50, 0));
 
       const placements: RockPlacement[] = [
-        { prototypeId: 0, matrices: new Float32Array(16) },
+        { prototypeId: 0, tier: 0, matrices: new Float32Array(16), colors: new Float32Array(3) },
       ];
       handleWorkerResult(manager, makeResult('0,0', 0, 64, placements));
       handleWorkerResult(manager, makeResult('0,0', 3, 8));

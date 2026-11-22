@@ -19,7 +19,6 @@ import { LoadingManager } from './ui/LoadingManager';
 import { TouchControls } from './ui/TouchControls';
 import { isTouchDevice } from './utils/mobile';
 import type { CameraConfig, RockGenerationConfig, CraterGenerationConfig } from './types';
-import { TextureLoader, MirroredRepeatWrapping, SRGBColorSpace, type Texture, LinearMipmapLinearFilter, LinearFilter } from 'three';
 import { DEFAULT_PLANET_RADIUS } from './core/EngineSettings';
 import { PhysicsWorld } from './physics/PhysicsWorld';
 import { TerrainColliderManager } from './physics/TerrainColliderManager';
@@ -41,7 +40,7 @@ app.appendChild(canvas);
 // Initialize loading manager early
 const loadingManager = new LoadingManager();
 // Track: surface-high-detail + skybox + 4 Earth textures
-loadingManager.registerTextures(6);
+loadingManager.registerTextures(5);
 
 // Camera configuration (from PRD section 9.2)
 const cameraConfig: CameraConfig = {
@@ -74,29 +73,38 @@ const chunkConfig: ChunkConfig = {
   workerCount: undefined, // Auto-detect from CPU cores (default: hardwareConcurrency - 1, capped at 8)
 };
 
-// Rock generation configuration (scientific lunar distribution from Rüsch et al. 2024)
-// N(>D) = densityConstant * D^powerLawExponent gives rocks per m² above diameter D
+// Rock generation configuration: N(>D) = densityConstant * D^powerLawExponent
+// rocks per m² above diameter D on average, gathered into boulder fields
+// (see rockPlacement.ts). About 790 rocks per 400 m chunk at LOD 0, between
+// ~260 on open plains and ~1700 in the middle of a boulder field.
 const rockGeneration: RockGenerationConfig = {
-  minDiameter: 0.75,           // Smallest visible rock (meters) - affects total density
-  maxDiameter: 10.0,          // Largest boulders (meters)
-  densityConstant: 0.0005,    // N(>1m) per m² (500 per km² for mature lunar terrain)
-  powerLawExponent: -2.5,     // Size-frequency exponent (scientific lunar value)
+  minDiameter: 0.33,          // Smallest rock (meters) - sets the total count
+  maxDiameter: 12.0,          // Largest boulders (meters)
+  densityConstant: 0.00048,   // N(>1m) per m² averaged over fields and plains
+  powerLawExponent: -2.1,     // Size-frequency exponent (shallower than the -2.5 of block fields: keeps house-size boulders in view)
   // LOD scaling - rocks smaller than minDiameter * scale are hidden at that LOD
-  lodMinDiameterScale: [1.0, 1.0, 1.0, 2.0, 4.0, 6.0],
+  lodMinDiameterScale: [1.0, 1.5, 2.5, 4.5, 9.0, 18.0, 40.0],
 };
 
-// Crater generation configuration (lunar crater size-frequency distribution)
-// Based on S(D) ≈ 22,000 · D^(-2.4) craters per km² from Apollo 11 site data
+// Crater generation configuration, matched to counts on the lunar maria
+// (Minton et al. 2019, Apollo 15 site): equilibrium N(>r) = 8400 r^-2 per km²
+// up to r = 150 m and the steeper production slope above. Per 400 m chunk
+// that is ~1340 craters with r >= 1 m and ~13 with r >= 10 m; an r >= 250 m
+// crater turns up about every 12 km².
 const craterGeneration: CraterGenerationConfig = {
   seed: 42,                    // Deterministic seed for reproducible placement
-  density: 100,                // Craters per km² (tuned for visual appeal)
-  minRadius: 5,                // Smallest craters (5m radius = 10m diameter)
-  maxRadius: 150,              // Largest craters (150m radius = 300m diameter)
-  powerLawExponent: -2.2,      // Slightly shallower than lunar (-2.4) for more variety
-  depthRatio: 0.15,            // Depth = 15% of diameter (realistic lunar depth)
-  rimHeight: 0.3,              // Rim height = 30% of depth (small raised edge)
-  rimWidth: 0.2,               // Rim extends 20% beyond crater radius
-  floorFlatness: 0,            // Parabolic bowl shape (0 = fully curved)
+  density: 8400,               // Craters per km² with radius >= 1 m
+  minRadius: 1,                // Smallest craters (2 m diameter)
+  maxRadius: 1000,             // Largest craters (2 km diameter)
+  powerLawExponent: -2,        // Equilibrium size-frequency slope
+  breakRadius: 150,            // Equilibrium ends here ...
+  steepExponent: -3.2,         // ... and the production slope takes over
+  depthRatio: 0.2,             // Fresh rim-to-floor depth = 20% of diameter (12% below 50 m)
+  rimHeight: 0.036,            // Fresh crater rim = 3.6% of diameter (Pike 1977)
+  rimWidth: 1.5,               // Ejecta blanket reaches 2.5 radii from the center
+  floorFlatness: 0,            // No extra flattening (large craters flatten on their own)
+  degradedDepthRatio: 0.05,    // Oldest craters still countable: depth = 5% of diameter
+  freshnessExponent: 3,        // Ages spread evenly up to erasure
 };
 
 // Initialize terrain generator and rock manager
@@ -307,42 +315,6 @@ const shaderUI = new ShaderUIController(
 // Shader panel stays hidden until Explore mode is entered (onModeChange)
 shaderUI.setVisible(false);
 
-// Load texture
-const textureLoader = new TextureLoader();
-
-// Configure texture settings helper
-const configureTexture = (texture: Texture) => {
-  texture.wrapS = MirroredRepeatWrapping;
-  texture.wrapT = MirroredRepeatWrapping;
-  texture.colorSpace = SRGBColorSpace;
-  texture.anisotropy = 16; // Max anisotropic filtering for better quality at angles
-  texture.minFilter = LinearMipmapLinearFilter; // Trilinear filtering for best mipmap quality
-  texture.magFilter = LinearFilter; // Linear interpolation when zoomed in
-  texture.generateMipmaps = true;
-};
-
-// Load high detail texture
-textureLoader.load(
-  `${import.meta.env.BASE_URL}textures/surface-high-detail.png`,
-  (texture) => {
-    configureTexture(texture);
-    
-    // Apply to materials
-    const terrainMaterial = terrainGenerator.getMaterial();
-    const rockMaterial = rockManager.getMaterial();
-    
-    terrainMaterial.setParam('textureHighDetail', texture);
-    rockMaterial.setParam('textureHighDetail', texture);
-    
-    // Report texture loaded
-    loadingManager.onTextureLoaded();
-  },
-  undefined,
-  () => {
-    loadingManager.onTextureError('surface-high-detail');
-  }
-);
-
 // Start the render loop
 engine.start();
 
@@ -378,6 +350,9 @@ interface DebugWindow extends Window {
     getRockMaterial: () => MoonMaterial;
     setDebugMode: (mode: number) => void;
     render: () => void;
+    celestialSystem: typeof celestialSystem;
+    chunkManager: typeof chunkManager;
+    flightController: typeof flightController;
   };
 }
 // Wrap a live material's setParam to auto-trigger re-render and keep the GUI
@@ -410,11 +385,14 @@ const wrapMaterialForDebug = (mat: MoonMaterial): MoonMaterial => {
     engine.setPostProcessingEnabled(mode === 0);
     engine.requestRender();
     console.log(`Debug mode set to ${mode}`);
-    console.log('Modes: 0=normal, 1=meshNormal, 2=microNormal, 3=worldNorm, 4=detailFade, 5=viewDir, 6=gl_FrontFacing');
+    console.log('Modes: 0=normal, 1=meshNormal, 2=detailNormal, 3=sunVisibility, 4=albedo, 5=lighting');
   },
-  render: () => engine.requestRender()
+  render: () => engine.requestRender(),
+  celestialSystem,
+  chunkManager,
+  flightController,
 };
-console.log('Debug: window.debug.setDebugMode(1-6) to visualize shader values');
+console.log('Debug: window.debug.setDebugMode(1-5) to visualize shader values');
 
 // Handle cleanup on page unload
 window.addEventListener('beforeunload', () => {

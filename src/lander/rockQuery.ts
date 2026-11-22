@@ -1,34 +1,30 @@
 /**
- * Deterministic rock lookup for the pad search (ADR-0004 §1): re-runs the
- * chunk worker's rock placement math on the main thread for the chunks
- * overlapping the search area and returns world-space positions + diameters.
+ * Deterministic rock lookup for the pad search (ADR-0004 §1): enumerates the
+ * rock population of the chunks overlapping the search area on the main
+ * thread and returns world-space positions + diameters.
  *
- * Approximation note: the worker seeds its unified height sampler with the
- * chunk's craters before placing rocks; standalone calls run without that
- * crater cache, so rocks that sit near craters can land a few meters from
- * their rendered spot (findFlatterPosition sees slightly different slopes).
- * The pad search adds the rock's own radius as clearance and rejects
- * cratered discs anyway, so this inaccuracy is harmless for exclusion.
+ * Uses the same enumeration (forEachRock) the chunk worker places rocks
+ * with, so the result is exactly the LOD 0 population, without sampling any
+ * terrain height. A rendered rock sits within its own burial depth times the
+ * terrain slope of the position reported here (centimeters).
  */
+
+import { forEachRock } from '../terrain/rockPlacement';
 import type { TerrainArgs } from '../terrain/terrain';
-import { generateRockPlacements } from '../terrain/ChunkWorker';
-import { createGridKey } from '../terrain/LodUtils';
 import type { RockGenerationConfig } from '../types';
 import type { RockNearby } from './padSearch';
-
-const EMPTY_POSITIONS: number[] = [];
 
 /**
  * All rocks whose chunks overlap the given world-space bounds.
  *
  * @param baseArgs ChunkManager.getBaseTerrainArgs()
  * @param rockConfig the same RockGenerationConfig main.ts feeds ChunkManager
- * @param rockLibrarySize prototype count (RockManager's constructor arg)
+ * @param _rockLibrarySize prototype count (unused: the population does not depend on the shapes)
  */
 export function rocksInArea(
   baseArgs: Omit<TerrainArgs, 'resolution' | 'posX' | 'posZ'>,
   rockConfig: RockGenerationConfig,
-  rockLibrarySize: number,
+  _rockLibrarySize: number,
   minX: number,
   maxX: number,
   minZ: number,
@@ -45,33 +41,15 @@ export function rocksInArea(
 
   for (let gx = minGridX; gx <= maxGridX; gx++) {
     for (let gz = minGridZ; gz <= maxGridZ; gz++) {
-      const args: TerrainArgs = {
-        ...baseArgs,
-        resolution: 64, // ignored by analytic height sampling
-        posX: gx * width,
-        posZ: gz * depth,
-      };
-      const placements = generateRockPlacements(
-        EMPTY_POSITIONS,
-        args,
-        0, // finest LOD = full rock population
-        createGridKey(gx, gz),
-        rockLibrarySize,
-        rockConfig
-      );
-      for (const placement of placements) {
-        const m = placement.matrices;
-        for (let i = 0; i < m.length; i += 16) {
-          // Column-major 4x4: translation at 12/13/14; uniform scale =
-          // length of the first column = the rock diameter
-          const diameter = Math.hypot(m[i], m[i + 1], m[i + 2]);
-          rocks.push({
-            x: m[i + 12] + args.posX,
-            z: m[i + 14] + args.posZ,
-            diameter,
-          });
+      const posX = gx * width;
+      const posZ = gz * depth;
+      forEachRock(
+        { seed: baseArgs.seed, width, depth, posX, posZ },
+        rockConfig,
+        (x, z, diameter) => {
+          rocks.push({ x: x + posX, z: z + posZ, diameter });
         }
-      }
+      );
     }
   }
   return rocks;

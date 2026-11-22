@@ -1,6 +1,8 @@
+import { SHADOW_CASTER_LAYER } from '../core/layers';
 import { BufferAttribute, BufferGeometry, Mesh, MeshBasicMaterial, Color, Vector3, Raycaster, type Sphere } from 'three';
 import { MoonMaterial } from '../shaders/MoonMaterial';
 import type { ChunkWorkerResult } from './ChunkWorker';
+import { appendSkirtIndices, hasSkirtVertices } from './chunkSkirt';
 import { computeStitchedIndices } from './EdgeStitcher';
 import type { NeighborLods } from './LodUtils';
 import {
@@ -35,11 +37,15 @@ export class TerrainGenerator {
   // Track original indices for edge stitching restoration
   // Key: "gridKey:lodLevel"
   private originalIndices: Map<string, Uint32Array> = new Map();
+  // Stitched index arrays with the hanging skirt appended
+  private skirtedIndices: WeakMap<Uint32Array, Uint32Array> = new WeakMap();
 
   constructor(config: TerrainGeneratorConfig) {
     this.config = config;
     // Single shared material instance for all chunks (critical for performance)
     this.material = new MoonMaterial();
+    // Culling bounds and the curvature shader must agree on the radius
+    this.material.setParam('planetRadius', config.planetRadius);
   }
 
   /**
@@ -98,6 +104,10 @@ export class TerrainGenerator {
       : this.material;
 
     const mesh = new Mesh(geometry, material);
+    // Terrain casts sun shadows (see SunShadows); debug wireframes do not
+    if (!debugMode) {
+      mesh.layers.enable(SHADOW_CASTER_LAYER);
+    }
     if (baseSphere) {
       mesh.userData.baseBoundingSphere = baseSphere;
     }
@@ -244,8 +254,25 @@ export class TerrainGenerator {
     );
 
     // Apply to geometry - only happens on signature transitions
-    mesh.geometry.setIndex(new BufferAttribute(stitchedIndices, 1));
+    const position = mesh.geometry.getAttribute('position');
+    const skirted = position !== undefined && hasSkirtVertices(position.count, resolution);
+    mesh.geometry.setIndex(
+      new BufferAttribute(skirted ? this.withSkirt(stitchedIndices, resolution) : stitchedIndices, 1)
+    );
     mesh.userData.stitchKey = stitchKey;
+  }
+
+  /**
+   * Stitched grid indices with the chunk's hanging skirt appended. Cached per
+   * stitched array, which EdgeStitcher itself caches per configuration.
+   */
+  private withSkirt(stitchedIndices: Uint32Array, resolution: number): Uint32Array {
+    let indices = this.skirtedIndices.get(stitchedIndices);
+    if (indices === undefined) {
+      indices = appendSkirtIndices(stitchedIndices, resolution);
+      this.skirtedIndices.set(stitchedIndices, indices);
+    }
+    return indices;
   }
 
   /**

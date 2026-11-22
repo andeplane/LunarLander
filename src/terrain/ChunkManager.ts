@@ -1,7 +1,8 @@
+import type { SunShadowUniforms } from '../rendering/SunShadows';
 import { type Scene, Vector3, type Camera, type PerspectiveCamera, MeshBasicMaterial, Color } from 'three';
 import { Chunk } from './Chunk';
 import type { TerrainGenerator } from './TerrainGenerator';
-import { RockManager } from '../environment/RockManager';
+import type { RockManager } from '../environment/RockManager';
 import type { TerrainArgs } from './terrain';
 import type { ChunkWorkerResult } from './ChunkWorker';
 import type { RockGenerationConfig, CraterGenerationConfig } from '../types';
@@ -15,6 +16,7 @@ import {
   type NeighborLods
 } from './LodUtils';
 import { ChunkRequestQueue, type QueuedRequest } from './ChunkRequestQueue';
+import { FarTerrain } from './FarTerrain';
 
 /**
  * Configuration for chunk management
@@ -90,6 +92,10 @@ export class ChunkManager {
   /** Last known terrain height (world Y) under the camera, for LOD distances */
   private cameraTerrainY: number = 0;
   private requestRender: () => void;
+  /** Bumped whenever the set of visible terrain or rock meshes changes. */
+  private terrainRevision: number = 0;
+  /** Coarse terrain from the edge of the chunk disc out to the horizon */
+  private farTerrain: FarTerrain;
 
   constructor(
     scene: Scene,
@@ -112,10 +118,10 @@ export class ChunkManager {
     this.baseTerrainArgs = {
       // Noise parameters for lunar terrain
       seed: 0,
-      gain: 0.5,
+      gain: 0.4,
       lacunarity: 2,               // Octave wavelengths span ~67m down to ~8m, keeping the surface smooth (craters/rocks add fine detail)
       frequency: 0.015,            // Low frequency for broad lunar features
-      amplitude: 1.0,              // Gentle height variation
+      amplitude: 0.4,              // Fine undulation only (~±3 m); rolling ground and massifs come from the relief layer
       altitude: 0.1,
       octaves: 4,                  // Few octaves for smooth terrain (craters add detail)
       smoothLowerPlanes: 0,
@@ -135,12 +141,21 @@ export class ChunkManager {
       craterRimHeight: craterGenerationConfig.rimHeight,
       craterRimWidth: craterGenerationConfig.rimWidth,
       craterFloorFlatness: craterGenerationConfig.floorFlatness,
+      craterDegradedDepthRatio: craterGenerationConfig.degradedDepthRatio,
+      craterFreshnessExponent: craterGenerationConfig.freshnessExponent,
+      craterBreakRadius: craterGenerationConfig.breakRadius,
+      craterSteepExponent: craterGenerationConfig.steepExponent,
     };
 
     this.requestQueue = new ChunkRequestQueue({
       chunkWidth: config.chunkWidth,
       chunkDepth: config.chunkDepth,
     });
+
+    this.farTerrain = new FarTerrain(this.terrainGenerator.getMaterial(), this.baseTerrainArgs);
+    this.scene.add(this.farTerrain.mesh);
+    // Near-camera rock meshes (RockManager.updateNearDetail)
+    this.scene.add(this.rockManager.getNearDetailRoot());
 
     this.setupWorkers();
 
@@ -255,6 +270,7 @@ export class ChunkManager {
     // Add terrain mesh to chunk
     const distance = this.computeLodDistance(lodLevel);
     chunk.addTerrainMesh(terrainMesh, lodLevel, distance);
+    this.terrainRevision++;
     this.requestRender();
 
     // Replace any existing rock meshes for this LOD level so a repeated
@@ -263,7 +279,7 @@ export class ChunkManager {
 
     // Create rock meshes via RockManager (if placements exist)
     if (result.rockPlacements && result.rockPlacements.length > 0) {
-      const rockMeshes = this.rockManager.createRockMeshes(result.rockPlacements, lodLevel);
+      const rockMeshes = this.rockManager.createRockMeshes(result.rockPlacements);
       for (const rockMesh of rockMeshes) {
         chunk.addRockMesh(rockMesh, lodLevel);
         
@@ -445,41 +461,15 @@ export class ChunkManager {
         this.inFlight.add(key);
         workerState.busy = true;
 
-        // Get stable axes for this LOD level
-        const detail = RockManager.getDetailForLod(
-          request.lodLevel,
-          this.config.chunkWidth,
-          this.config.chunkDepth,
-          this.config.lodLevels
-        );
-        const stableAxes = this.rockManager.getStableAxesForDetail(detail);
-        
-        // Flatten stable axes array to Float32Array [x1, y1, z1, x2, y2, z2, ...]
-        let stableAxesFlat: Float32Array | undefined;
-        if (stableAxes) {
-          stableAxesFlat = new Float32Array(stableAxes.length * 3);
-          for (let i = 0; i < stableAxes.length; i++) {
-            stableAxesFlat[i * 3] = stableAxes[i].x;
-            stableAxesFlat[i * 3 + 1] = stableAxes[i].y;
-            stableAxesFlat[i * 3 + 2] = stableAxes[i].z;
-          }
-        }
-
         const message = {
           terrainArgs: request.terrainArgs,
           gridKey: request.gridKey,
           lodLevel: request.lodLevel,
           rockLibrarySize: this.rockManager.getLibrarySize(),
           rockConfig: this.rockGenerationConfig,
-          stableAxes: stableAxesFlat,
         };
 
-        // Transfer the freshly built stableAxes buffer instead of cloning it
-        if (stableAxesFlat) {
-          workerState.worker.postMessage(message, [stableAxesFlat.buffer]);
-        } else {
-          workerState.worker.postMessage(message);
-        }
+        workerState.worker.postMessage(message);
       }
     }
   }
@@ -559,6 +549,16 @@ export class ChunkManager {
 
     const renderDistance = Math.floor(this.config.renderDistance);
     const nearbyKeys = this.getNearbyChunkPositionKeys(camPosInGrid, renderDistance);
+
+    if (
+      this.farTerrain.update(cameraPosition.x, cameraPosition.z, {
+        centerX: camPosInGrid.x,
+        centerZ: camPosInGrid.z,
+        radius: renderDistance,
+      })
+    ) {
+      this.requestRender();
+    }
     const nearbySet = new Set(nearbyKeys);
 
     this.requestQueue.pruneStale(nearbySet);
@@ -636,6 +636,12 @@ export class ChunkManager {
         this.removeChunk(gridKey);
       }
     }
+
+    // Redraw the rocks right around the camera from finer meshes, once the
+    // chunk meshes' visibility and unloading are final for this frame
+    if (this.rockManager.updateNearDetail(cameraPosition, fovRadians, screenHeight)) {
+      this.requestRender();
+    }
   }
 
   /**
@@ -685,6 +691,7 @@ export class ChunkManager {
       );
 
       const actualLod = chunk.findBestAvailableLod(desiredLod);
+      if (chunk.currentLodLevel !== actualLod) this.terrainRevision++;
       chunk.setLodLevel(actualLod);
       chunkLodLevels.set(gridKey, actualLod);
     }
@@ -825,6 +832,7 @@ export class ChunkManager {
 
     chunk.removeFromScene(this.scene);
     chunk.dispose();
+    this.terrainRevision++;
 
     // Clear stitching data
     this.terrainGenerator.clearStitchingData(gridKey);
@@ -1002,6 +1010,23 @@ export class ChunkManager {
   }
 
   /**
+   * Counter that changes whenever shadow-casting geometry is added, removed
+   * or swapped to another LOD level. Lets the sun shadow maps refresh only
+   * when their contents can have changed.
+   */
+  getTerrainRevision(): number {
+    return this.terrainRevision;
+  }
+
+  /**
+   * Make terrain and rocks receive the sun shadow cascades.
+   */
+  setSunShadows(uniforms: SunShadowUniforms, mapSize: number): void {
+    this.terrainGenerator.getMaterial().setSunShadows(uniforms, mapSize);
+    this.rockManager.getMaterial().setSunShadows(uniforms, mapSize);
+  }
+
+  /**
    * Set sun horizon fade factor
    * Should be called each frame with the current horizon fade (0 = below horizon, 1 = above horizon)
    * Applies to both terrain and rocks
@@ -1029,6 +1054,7 @@ export class ChunkManager {
     this.chunks.clear();
     this.requestQueue.clear();
     this.inFlight.clear();
+    this.farTerrain.dispose();
     this.terrainGenerator.dispose();
     this.rockManager.dispose();
   }

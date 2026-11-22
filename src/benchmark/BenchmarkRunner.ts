@@ -7,12 +7,13 @@
  * - Full chunk generation via the production ChunkWorker (terrain + craters + rocks)
  */
 
-import { generateTerrain, type TerrainArgs } from '../terrain/terrain';
-import { applyCratersToHeightBuffer, generateCratersForRegion, type CraterParams } from '../terrain/craters';
-import { DEFAULT_LOD_LEVELS, getResolutionForLodLevel } from '../terrain/LodUtils';
-import type { ChunkWorkerMessage, ChunkWorkerResult } from '../terrain/ChunkWorker';
-import type { RockGenerationConfig } from '../types';
 import { RockBuilder } from '../environment/RockBuilder';
+import type { ChunkWorkerMessage, ChunkWorkerResult } from '../terrain/ChunkWorker';
+import { buildChunkMesh } from '../terrain/chunkMesh';
+import { craterParamsFromTerrainArgs, generateCratersForRegion } from '../terrain/craters';
+import { DEFAULT_LOD_LEVELS, getResolutionForLodLevel } from '../terrain/LodUtils';
+import type { TerrainArgs } from '../terrain/terrain';
+import type { RockGenerationConfig } from '../types';
 import { calculateStats, sanitizeIterations } from './stats';
 
 /**
@@ -21,14 +22,14 @@ import { calculateStats, sanitizeIterations } from './stats';
 export interface BenchmarkResult {
   category: 'terrain' | 'rock' | 'chunk';
   config: string;
-  times: number[];       // All iteration times in ms
-  mean: number;          // Mean time in ms
-  min: number;           // Min time in ms
-  max: number;           // Max time in ms
-  median: number;        // Median time in ms
-  vertices: number;      // Vertex count (if applicable)
-  triangles: number;     // Triangle count (if applicable)
-  throughput: string;    // e.g., "1234 verts/ms" or "5678 tris/ms"
+  times: number[]; // All iteration times in ms
+  mean: number; // Mean time in ms
+  min: number; // Min time in ms
+  max: number; // Max time in ms
+  median: number; // Median time in ms
+  vertices: number; // Vertex count (if applicable)
+  triangles: number; // Triangle count (if applicable)
+  throughput: string; // e.g., "1234 verts/ms" or "5678 tris/ms"
 }
 
 /**
@@ -55,33 +56,16 @@ function getDefaultTerrainArgs(resolution: number): TerrainArgs {
     posX: 0,
     posZ: 0,
     renderDistance: 5,
-    // Crater params
+    // Crater params (mirrors craterGeneration in src/main.ts)
     craterSeed: 42,
-    craterDensity: 100,
-    craterMinRadius: 5,
-    craterMaxRadius: 150,
-    craterPowerLawExponent: -2.2,
-    craterDepthRatio: 0.15,
-    craterRimHeight: 0.3,
-    craterRimWidth: 0.2,
+    craterDensity: 6000,
+    craterMinRadius: 1,
+    craterMaxRadius: 250,
+    craterPowerLawExponent: -2,
+    craterDepthRatio: 0.2,
+    craterRimHeight: 0.04,
+    craterRimWidth: 1.5,
     craterFloorFlatness: 0,
-  };
-}
-
-/**
- * Default crater parameters for benchmarking
- */
-function getDefaultCraterParams(): CraterParams {
-  return {
-    seed: 42,
-    density: 100,
-    minRadius: 5,
-    maxRadius: 150,
-    powerLawExponent: -2.2,
-    depthRatio: 0.15,
-    rimHeight: 0.3,
-    rimWidth: 0.2,
-    floorFlatness: 0,
   };
 }
 
@@ -90,11 +74,11 @@ function getDefaultCraterParams(): CraterParams {
  */
 function getDefaultRockConfig(): RockGenerationConfig {
   return {
-    minDiameter: 0.75,
-    maxDiameter: 10.0,
-    densityConstant: 0.0005,
-    powerLawExponent: -2.5,
-    lodMinDiameterScale: [1.0, 1.0, 1.0, 2.0, 4.0, 6.0],
+    minDiameter: 0.33,
+    maxDiameter: 12.0,
+    densityConstant: 0.00048,
+    powerLawExponent: -2.1,
+    lodMinDiameterScale: [1.0, 1.5, 2.5, 4.5, 9.0, 18.0, 40.0],
   };
 }
 
@@ -102,26 +86,11 @@ function getDefaultRockConfig(): RockGenerationConfig {
 const DEFAULT_ROCK_LIBRARY_SIZE = 30;
 
 /**
- * Build the extended terrain args exactly like the production ChunkWorker does:
- * +2 segments (= +1 vertex skirt per edge) so edge vertices get full face
- * neighborhoods for correct normals. Keeps benchmark cost aligned with the
- * real per-chunk terrain work.
- */
-function getExtendedTerrainArgs(terrainArgs: TerrainArgs): TerrainArgs {
-  const vertexSpacing = terrainArgs.width / terrainArgs.resolution;
-  return {
-    ...terrainArgs,
-    resolution: terrainArgs.resolution + 2,
-    width: terrainArgs.width + 2 * vertexSpacing,
-    depth: terrainArgs.depth + 2 * vertexSpacing,
-  };
-}
-
-/**
  * Run terrain generation benchmark at various resolutions.
  *
- * Mirrors the worker pipeline: extended (+2 skirt) mesh generation, crater
- * application on the extended height buffer, and vertex normal recomputation.
+ * Mirrors the worker pipeline: crater lookup for the chunk region (served
+ * from the crater cell cache after the first iteration, as in the worker) and
+ * buildChunkMesh (skirted height grid, crater rasterization, normals).
  */
 export async function runTerrainBenchmark(
   resolutions: number[],
@@ -136,43 +105,43 @@ export async function runTerrainBenchmark(
   for (const resolution of resolutions) {
     const times: number[] = [];
     const terrainArgs = getDefaultTerrainArgs(resolution);
-    const extendedArgs = getExtendedTerrainArgs(terrainArgs);
-    const craterParams = getDefaultCraterParams();
+    const craterParams = craterParamsFromTerrainArgs(terrainArgs);
+    // One vertex of margin for the mesh skirt, like the worker
+    const margin = Math.max(terrainArgs.width, terrainArgs.depth) / resolution;
     const gridKey = '0,0';
 
     let vertices = 0;
     let triangles = 0;
 
     for (let i = 0; i < runs; i++) {
-      onProgress?.(++current, total, `Terrain ${resolution}x${resolution}, iteration ${i + 1}/${runs}`);
+      onProgress?.(
+        ++current,
+        total,
+        `Terrain ${resolution}x${resolution}, iteration ${i + 1}/${runs}`
+      );
 
       // Allow UI to update
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       const start = performance.now();
 
-      // Generate extended terrain (with +1 vertex skirt), like the worker
-      const geometry = generateTerrain(extendedArgs);
-
-      // Generate craters for the chunk region and apply to the extended buffer
-      const craters = generateCratersForRegion(gridKey, terrainArgs.width, terrainArgs.depth, craterParams);
-      const positions = geometry.attributes.position.array as Float32Array;
-      applyCratersToHeightBuffer(positions, extendedArgs.width, extendedArgs.depth, craters);
-
-      // Recompute normals
-      geometry.computeVertexNormals();
+      const craters = generateCratersForRegion(
+        gridKey,
+        terrainArgs.width,
+        terrainArgs.depth,
+        craterParams,
+        margin
+      );
+      const mesh = buildChunkMesh(terrainArgs, craters);
 
       const end = performance.now();
       times.push(end - start);
 
       // Capture geometry info on last iteration
       if (i === runs - 1) {
-        vertices = geometry.attributes.position.count;
-        triangles = geometry.index ? geometry.index.count / 3 : vertices / 3;
+        vertices = mesh.positions.length / 3;
+        triangles = resolution * resolution * 2;
       }
-
-      // Cleanup
-      geometry.dispose();
     }
 
     const stats = calculateStats(times);
@@ -217,10 +186,14 @@ export async function runRockBenchmark(
     const expectedTriangles = 20 * (detail + 1) ** 2;
 
     for (let i = 0; i < runs; i++) {
-      onProgress?.(++current, total, `Rocks detail=${detail}, library=${librarySize}, iteration ${i + 1}/${runs}`);
+      onProgress?.(
+        ++current,
+        total,
+        `Rocks detail=${detail}, library=${librarySize}, iteration ${i + 1}/${runs}`
+      );
 
       // Allow UI to update
-      await new Promise(resolve => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       const start = performance.now();
 
@@ -269,16 +242,16 @@ export async function runRockBenchmark(
  * Create a production chunk worker (same module the app uses).
  */
 function createChunkWorker(): Worker {
-  return new Worker(
-    new URL('../terrain/ChunkWorker.ts', import.meta.url),
-    { type: 'module' }
-  );
+  return new Worker(new URL('../terrain/ChunkWorker.ts', import.meta.url), { type: 'module' });
 }
 
 /**
  * Post a chunk build request to the worker and wait for its result.
  */
-function runChunkWorkerJob(worker: Worker, message: ChunkWorkerMessage): Promise<ChunkWorkerResult> {
+function runChunkWorkerJob(
+  worker: Worker,
+  message: ChunkWorkerMessage
+): Promise<ChunkWorkerResult> {
   return new Promise((resolve, reject) => {
     const onMessage = (e: MessageEvent<ChunkWorkerResult>) => {
       cleanup();
@@ -309,8 +282,6 @@ function buildChunkWorkerMessage(lodLevel: number, resolution: number): ChunkWor
     lodLevel,
     rockLibrarySize: DEFAULT_ROCK_LIBRARY_SIZE,
     rockConfig: getDefaultRockConfig(),
-    // stableAxes omitted: the worker falls back to computing orientations,
-    // which is the same code path exercised when axes are unavailable.
   };
 }
 
@@ -337,7 +308,10 @@ export async function runChunkBenchmark(
     // Warm up the worker (module compile + JIT) with a cheap chunk so the
     // first timed iteration isn't dominated by startup cost.
     const lowestResolution = DEFAULT_LOD_LEVELS[DEFAULT_LOD_LEVELS.length - 1];
-    await runChunkWorkerJob(worker, buildChunkWorkerMessage(DEFAULT_LOD_LEVELS.length - 1, lowestResolution));
+    await runChunkWorkerJob(
+      worker,
+      buildChunkWorkerMessage(DEFAULT_LOD_LEVELS.length - 1, lowestResolution)
+    );
 
     for (const lodLevel of lodLevels) {
       const times: number[] = [];
@@ -347,13 +321,20 @@ export async function runChunkBenchmark(
       let triangles = 0;
 
       for (let i = 0; i < runs; i++) {
-        onProgress?.(++current, total, `Chunk LOD ${lodLevel} (${resolution}×${resolution}), iteration ${i + 1}/${runs}`);
+        onProgress?.(
+          ++current,
+          total,
+          `Chunk LOD ${lodLevel} (${resolution}×${resolution}), iteration ${i + 1}/${runs}`
+        );
 
         // Allow UI to update
-        await new Promise(resolve => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         const start = performance.now();
-        const result = await runChunkWorkerJob(worker, buildChunkWorkerMessage(lodLevel, resolution));
+        const result = await runChunkWorkerJob(
+          worker,
+          buildChunkWorkerMessage(lodLevel, resolution)
+        );
         const end = performance.now();
 
         times.push(end - start);

@@ -1,34 +1,29 @@
-import { generateTerrain, createTerrainEvaluator, terrainDisplacementStrength, computeSkirtedGridDimensions, type TerrainArgs } from './terrain';
-import { 
-  generateCratersForRegion, 
-  getCraterHeightModAt, 
-  applyCratersToHeightBuffer,
-  parseGridKey,
-  type CraterParams, 
-  type Crater 
+import { createTerrainEvaluator, terrainDisplacementStrength, type TerrainArgs } from './terrain';
+import {
+  buildCraterIndex,
+  craterParamsFromTerrainArgs,
+  generateCratersForRegion,
+  sampleCraterIndex,
+  type Crater,
+  type CraterIndex,
 } from './craters';
-import alea from 'alea';
+import { buildChunkMesh } from './chunkMesh';
+import { chunkSkirtDepth, skirtIndexCount, writeSkirtIndices } from './chunkSkirt';
+import { placeRocks, type RockPlacement } from './rockPlacement';
 import type { RockGenerationConfig } from '../types';
 
 /**
  * Message sent to the chunk worker
  */
 export interface ChunkWorkerMessage {
-  terrainArgs: Parameters<typeof generateTerrain>[0];
+  terrainArgs: TerrainArgs;
   gridKey: string;
   lodLevel: number;
   rockLibrarySize: number;
   rockConfig: RockGenerationConfig;
-  stableAxes?: Float32Array; // Flattened array of stable axes [x1, y1, z1, x2, y2, z2, ...] (one per prototype)
 }
 
-/**
- * Rock placement data computed in worker
- */
-export interface RockPlacement {
-  prototypeId: number;
-  matrices: Float32Array;  // Flattened Matrix4 array (16 floats per rock)
-}
+export type { RockPlacement };
 
 /**
  * Result from chunk worker including terrain and rock data
@@ -49,174 +44,68 @@ export interface ChunkWorkerResult {
 }
 
 // ============================================================================
-// Scientific Rock Distribution (Rüsch et al. 2024)
-// ============================================================================
-
-/**
- * Calculate expected rock count per m² above a given diameter.
- * Uses power-law: N(>D) = A * D^exponent
- * 
- * @param diameter - Minimum rock diameter in meters
- * @param densityConstant - A in formula (rocks per m² at D=1m)
- * @param exponent - Power-law exponent (typically -2.5)
- */
-function rockDensityAbove(diameter: number, densityConstant: number, exponent: number): number {
-  return densityConstant * diameter ** exponent;
-}
-
-/**
- * Calculate expected rocks per chunk for a given minimum diameter.
- */
-function expectedRocksPerChunk(
-  minDiameter: number,
-  chunkArea: number,
-  densityConstant: number,
-  exponent: number
-): number {
-  const density = rockDensityAbove(minDiameter, densityConstant, exponent);
-  return Math.round(density * chunkArea);
-}
-
-/**
- * Sample a rock diameter from the truncated power-law distribution.
- * N(>D) = A * D^exponent (cumulative size-frequency distribution)
- * 
- * Uses inverse CDF sampling:
- * D = [ Dmin^exp + u * (Dmax^exp - Dmin^exp) ]^(1/exp)
- * 
- * @param random - Random number generator function
- * @param dMin - Minimum diameter for this LOD
- * @param dMax - Maximum diameter (rare large boulders)
- * @param exponent - Power-law exponent
- */
-function sampleRockDiameter(
-  random: () => number,
-  dMin: number,
-  dMax: number,
-  exponent: number
-): number {
-  const u = random();
-
-  const dMinPow = dMin ** exponent;
-  const dMaxPow = dMax ** exponent;
-
-  return (dMinPow + u * (dMaxPow - dMinPow)) ** (1 / exponent);
-}
-
-/**
- * Get minimum rock diameter for a given LOD level based on config.
- */
-function getMinDiameterForLod(
-  lodLevel: number,
-  baseMinDiameter: number,
-  lodMinDiameterScale: number[]
-): number {
-  const scaleIndex = Math.min(lodLevel, lodMinDiameterScale.length - 1);
-  const scale = lodMinDiameterScale[scaleIndex];
-  return baseMinDiameter * scale;
-}
-
-// ============================================================================
-// Matrix4 Utilities (manual implementation for worker)
-// ============================================================================
-
-/**
- * Compose a Matrix4 from position, quaternion (from euler), and scale.
- * Returns a flat Float32Array of 16 elements.
- */
-function composeMatrix(
-  px: number, py: number, pz: number,
-  rx: number, ry: number, rz: number,
-  sx: number, sy: number, sz: number
-): Float32Array {
-  // Convert Euler angles to quaternion
-  const c1 = Math.cos(rx / 2);
-  const c2 = Math.cos(ry / 2);
-  const c3 = Math.cos(rz / 2);
-  const s1 = Math.sin(rx / 2);
-  const s2 = Math.sin(ry / 2);
-  const s3 = Math.sin(rz / 2);
-
-  const qx = s1 * c2 * c3 + c1 * s2 * s3;
-  const qy = c1 * s2 * c3 - s1 * c2 * s3;
-  const qz = c1 * c2 * s3 + s1 * s2 * c3;
-  const qw = c1 * c2 * c3 - s1 * s2 * s3;
-
-  // Build rotation matrix from quaternion
-  const x2 = qx + qx, y2 = qy + qy, z2 = qz + qz;
-  const xx = qx * x2, xy = qx * y2, xz = qx * z2;
-  const yy = qy * y2, yz = qy * z2, zz = qz * z2;
-  const wx = qw * x2, wy = qw * y2, wz = qw * z2;
-
-  // Column-major order (Three.js convention)
-  return new Float32Array([
-    (1 - (yy + zz)) * sx,
-    (xy + wz) * sx,
-    (xz - wy) * sx,
-    0,
-
-    (xy - wz) * sy,
-    (1 - (xx + zz)) * sy,
-    (yz + wx) * sy,
-    0,
-
-    (xz + wy) * sz,
-    (yz - wx) * sz,
-    (1 - (xx + yy)) * sz,
-    0,
-
-    px,
-    py,
-    pz,
-    1
-  ]);
-}
-
-// ============================================================================
 // Rock Placement Generation (World-Space, LOD-Stable)
 // ============================================================================
-
-// Configuration constants for rock placement
-const GRADIENT_DELTA = 0.5; // Distance for gradient calculation (meters)
-const MAX_SLOPE_THRESHOLD = 0.3; // Maximum acceptable slope for direct placement
-const SEARCH_RADIUS = 2.5; // Radius to search for flatter positions (meters)
-const SEARCH_SAMPLES = 10; // Number of positions to sample in search
-const MIN_BURIAL_PERCENT = 0.4; // Minimum percentage of rock below surface (40%)
-const MAX_BURIAL_PERCENT = 0.6; // Maximum percentage of rock below surface (60%)
 
 // Terrain evaluator cached per chunk (reuses exact same logic as generateTerrain)
 let cachedTerrainEvaluator: ((x: number, z: number) => number) | null = null;
 
 // Cached craters for current chunk (used by both terrain and rock placement)
 let cachedCraters: Crater[] = [];
+// Point-query index over cachedCraters, built on the first height sample
+let cachedCraterIndex: CraterIndex | null = null;
+// Identifies the chunk + crater parameters the cache was built for
+let cachedCraterKey = '';
+let cachedCraterMargin = 0;
+let cachedChunkWidth = 0;
+let cachedChunkDepth = 0;
 let cachedChunkWorldX = 0;
 let cachedChunkWorldZ = 0;
+
+/** Rock placement probes heights up to a few meters outside the chunk. */
+const ROCK_PROBE_MARGIN = 4;
 
 /**
  * Setup the height sampler by creating the terrain evaluator.
  * Uses the exact same logic as generateTerrain - just caches the evaluator function.
+ *
+ * Also makes sure the crater cache belongs to this chunk, so standalone
+ * callers of generateRockPlacements (main-thread rock queries) sample the
+ * same cratered surface as the worker.
  */
 function setupHeightSampler(terrainArgs: TerrainArgs): void {
   // Create terrain evaluator (reuses exact same logic as generateTerrain)
   cachedTerrainEvaluator = createTerrainEvaluator(terrainArgs);
+  setupCraterCache(terrainArgs);
 }
 
 /**
- * Setup crater cache for current chunk.
+ * Setup crater cache for the chunk described by terrainArgs.
+ *
+ * The region includes a margin of one vertex spacing (the mesh skirt used
+ * for normals) plus the reach of rock placement probes. No-op when the cache
+ * already holds this chunk with a sufficient margin.
  */
-function setupCraterCache(
-  gridKey: string, 
-  chunkWidth: number, 
-  chunkDepth: number, 
-  params: CraterParams
-): void {
+function setupCraterCache(terrainArgs: TerrainArgs): void {
+  const { width, depth, posX, posZ, resolution } = terrainArgs;
+  const params = craterParamsFromTerrainArgs(terrainArgs);
+  const gridX = Math.round(posX / width);
+  const gridZ = Math.round(posZ / depth);
+  const margin = Math.max(width, depth) / Math.max(resolution, 1) + ROCK_PROBE_MARGIN;
+  const key = `${gridX},${gridZ}|${width}|${depth}|${JSON.stringify(params)}`;
+  if (key === cachedCraterKey && margin <= cachedCraterMargin) return;
+
   // Generate craters for this region (including neighbors for seamless edges)
-  cachedCraters = generateCratersForRegion(gridKey, chunkWidth, chunkDepth, params);
-  
+  cachedCraters = generateCratersForRegion(`${gridX},${gridZ}`, width, depth, params, margin);
+  cachedCraterIndex = null;
+  cachedCraterKey = key;
+  cachedCraterMargin = margin;
+  cachedChunkWidth = width;
+  cachedChunkDepth = depth;
+
   // Cache chunk world offset for coordinate conversion
-  const [gridX, gridZ] = parseGridKey(gridKey);
-  cachedChunkWorldX = gridX * chunkWidth;
-  cachedChunkWorldZ = gridZ * chunkDepth;
+  cachedChunkWorldX = gridX * width;
+  cachedChunkWorldZ = gridZ * depth;
 }
 
 /**
@@ -250,519 +139,97 @@ function sampleHeightFromVertices(
   // Apply crater modifications (convert local to world coordinates)
   const worldX = x + cachedChunkWorldX;
   const worldZ = z + cachedChunkWorldZ;
-  const craterMod = getCraterHeightModAt(worldX, worldZ, cachedCraters);
+  if (cachedCraters.length === 0) return baseHeight;
+  if (cachedCraterIndex === null) {
+    const halfX = cachedChunkWidth / 2 + cachedCraterMargin;
+    const halfZ = cachedChunkDepth / 2 + cachedCraterMargin;
+    cachedCraterIndex = buildCraterIndex(
+      cachedCraters,
+      cachedChunkWorldX - halfX,
+      cachedChunkWorldZ - halfZ,
+      cachedChunkWorldX + halfX,
+      cachedChunkWorldZ + halfZ
+    );
+  }
+  const craterMod = sampleCraterIndex(cachedCraterIndex, worldX, worldZ);
   
   return baseHeight + craterMod;
 }
 
 /**
- * Extract interior vertices from an extended mesh (with skirt).
- * Removes the outer row/column of vertices to get the original chunk size.
+ * Point sampler over the worker's height pipeline for one chunk: returns the
+ * height at chunk-local (x, z) exactly as rock placement sees it. Exposed so
+ * tests can pin the worker path against heightSampler.ts and the chunk mesh.
  *
- * @param extendedPositions - Positions from extended mesh (with skirt)
- * @param extendedNormals - Normals from extended mesh
- * @param extendedRes - Resolution of extended mesh (original resolution + 2)
- * @param targetRes - Target resolution (original resolution)
- * @returns Extracted positions and normals for interior vertices only
+ * The returned function reads module-level caches, so it is only valid until
+ * the next chunk is set up (generateRockPlacements / handleChunkMessage).
  */
-function extractInterior(
-  extendedPositions: Float32Array,
-  extendedNormals: Float32Array,
-  extendedRes: number,  // resolution + 2
-  targetRes: number     // resolution
-): {
-  positions: Float32Array;
-  normals: Float32Array;
-} {
-  const targetVerticesPerRow = targetRes + 1;
-  const extendedVerticesPerRow = extendedRes + 1;
-  const positions = new Float32Array(targetVerticesPerRow * targetVerticesPerRow * 3);
-  const normals = new Float32Array(targetVerticesPerRow * targetVerticesPerRow * 3);
-
-  for (let z = 0; z < targetVerticesPerRow; z++) {
-    for (let x = 0; x < targetVerticesPerRow; x++) {
-      // Skip first row/column of extended mesh (the skirt)
-      const srcIdx = ((z + 1) * extendedVerticesPerRow + (x + 1)) * 3;
-      const dstIdx = (z * targetVerticesPerRow + x) * 3;
-
-      positions[dstIdx] = extendedPositions[srcIdx];
-      positions[dstIdx + 1] = extendedPositions[srcIdx + 1];
-      positions[dstIdx + 2] = extendedPositions[srcIdx + 2];
-
-      normals[dstIdx] = extendedNormals[srcIdx];
-      normals[dstIdx + 1] = extendedNormals[srcIdx + 1];
-      normals[dstIdx + 2] = extendedNormals[srcIdx + 2];
-    }
-  }
-  return { positions, normals };
+export function createWorkerHeightProbe(
+  terrainArgs: TerrainArgs
+): (localX: number, localZ: number) => number {
+  setupHeightSampler(terrainArgs);
+  return (localX: number, localZ: number) =>
+    sampleHeightFromVertices(null, 0, 0, 0, localX, localZ, terrainArgs.smoothLowerPlanes);
 }
 
 /**
- * Calculate surface gradient (slope) at a given position.
- * Samples heights at nearby points to compute gradient vector.
- * 
- * @param x - X position in local chunk space
- * @param z - Z position in local chunk space
- * @param smoothLowerPlanes - Terrain smoothness parameter
- * @returns Slope magnitude (sqrt(gradX^2 + gradZ^2))
- */
-function calculateSlope(
-  x: number,
-  z: number,
-  smoothLowerPlanes: number
-): number {
-  if (!cachedTerrainEvaluator) {
-    return 0;
-  }
-
-  // Sample heights at 4 nearby points
-  const h1 = sampleHeightFromVertices(null, 0, 0, 0, x + GRADIENT_DELTA, z, smoothLowerPlanes);
-  const h2 = sampleHeightFromVertices(null, 0, 0, 0, x - GRADIENT_DELTA, z, smoothLowerPlanes);
-  const h3 = sampleHeightFromVertices(null, 0, 0, 0, x, z + GRADIENT_DELTA, smoothLowerPlanes);
-  const h4 = sampleHeightFromVertices(null, 0, 0, 0, x, z - GRADIENT_DELTA, smoothLowerPlanes);
-
-  // Calculate gradient components
-  const gradX = (h1 - h2) / (2 * GRADIENT_DELTA);
-  const gradZ = (h3 - h4) / (2 * GRADIENT_DELTA);
-
-  // Return slope magnitude
-  return Math.sqrt(gradX * gradX + gradZ * gradZ);
-}
-
-/**
- * Calculate surface normal at a given position.
- * Uses gradient calculation to determine the "upward" normal direction.
- * 
- * @param x - X position in local chunk space
- * @param z - Z position in local chunk space
- * @param smoothLowerPlanes - Terrain smoothness parameter
- * @returns Normalized surface normal vector [nx, ny, nz]
- */
-function calculateSurfaceNormal(
-  x: number,
-  z: number,
-  smoothLowerPlanes: number
-): [number, number, number] {
-  if (!cachedTerrainEvaluator) {
-    return [0, 1, 0]; // Default to up
-  }
-
-  // Sample heights at 4 nearby points
-  const h1 = sampleHeightFromVertices(null, 0, 0, 0, x + GRADIENT_DELTA, z, smoothLowerPlanes);
-  const h2 = sampleHeightFromVertices(null, 0, 0, 0, x - GRADIENT_DELTA, z, smoothLowerPlanes);
-  const h3 = sampleHeightFromVertices(null, 0, 0, 0, x, z + GRADIENT_DELTA, smoothLowerPlanes);
-  const h4 = sampleHeightFromVertices(null, 0, 0, 0, x, z - GRADIENT_DELTA, smoothLowerPlanes);
-
-  // Calculate gradient components
-  const gradX = (h1 - h2) / (2 * GRADIENT_DELTA);
-  const gradZ = (h3 - h4) / (2 * GRADIENT_DELTA);
-
-  // Surface normal is perpendicular to gradient: normal = normalize([-gradX, 1, -gradZ])
-  const nx = -gradX;
-  const ny = 1;
-  const nz = -gradZ;
-
-  // Normalize
-  const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-  if (len < 1e-6) {
-    return [0, 1, 0]; // Default to up if gradient is zero
-  }
-  return [nx / len, ny / len, nz / len];
-}
-
-/**
- * Find a flatter position near an initial candidate position.
- * Uses deterministic RNG to search nearby positions for lower slope.
- * 
- * @param initialX - Initial X position
- * @param initialZ - Initial Z position
- * @param smoothLowerPlanes - Terrain smoothness parameter
- * @param random - Deterministic random number generator
- * @returns Improved position [x, z] with lower slope
- */
-function findFlatterPosition(
-  initialX: number,
-  initialZ: number,
-  smoothLowerPlanes: number,
-  random: () => number
-): [number, number] {
-  // Check initial position slope
-  const initialSlope = calculateSlope(initialX, initialZ, smoothLowerPlanes);
-
-  // If initial position is flat enough, use it directly
-  if (initialSlope < MAX_SLOPE_THRESHOLD) {
-    return [initialX, initialZ];
-  }
-
-  // Search nearby positions for flatter spot
-  let bestX = initialX;
-  let bestZ = initialZ;
-  let bestSlope = initialSlope;
-
-  for (let i = 0; i < SEARCH_SAMPLES; i++) {
-    // Generate random offset within search radius
-    const angle = random() * Math.PI * 2;
-    const radius = random() * SEARCH_RADIUS;
-    const offsetX = Math.cos(angle) * radius;
-    const offsetZ = Math.sin(angle) * radius;
-
-    const candidateX = initialX + offsetX;
-    const candidateZ = initialZ + offsetZ;
-    const candidateSlope = calculateSlope(candidateX, candidateZ, smoothLowerPlanes);
-
-    // Keep track of flattest position found
-    if (candidateSlope < bestSlope) {
-      bestX = candidateX;
-      bestZ = candidateZ;
-      bestSlope = candidateSlope;
-    }
-  }
-
-  return [bestX, bestZ];
-}
-
-/**
- * Compute stable orientation that aligns rock's stable axis with surface normal.
- * Uses quaternion rotation to align the stable axis with the surface normal.
- * 
- * @param stableAxis - Rock's stable axis vector [x, y, z] (normalized)
- * @param surfaceNormal - Surface normal vector [nx, ny, nz] (normalized)
- * @param random - Deterministic random number generator for small variation
- * @returns Euler angles [rx, ry, rz] for rotation
- */
-function computeStableOrientation(
-  stableAxis: [number, number, number],
-  surfaceNormal: [number, number, number],
-  random: () => number
-): [number, number, number] {
-  const [sx, sy, sz] = stableAxis;
-  const [nx, ny, nz] = surfaceNormal;
-
-  // Calculate dot product
-  const dot = sx * nx + sy * ny + sz * nz;
-  
-  // If vectors are already aligned (or opposite), add small random rotation
-  if (Math.abs(dot) > 0.9999) {
-    // Add small random rotation around surface normal for natural variation
-    const angle = random() * Math.PI * 2;
-    return [0, angle, 0]; // Simple rotation around Y axis
-  }
-
-  // Calculate rotation axis (cross product)
-  const cx = sy * nz - sz * ny;
-  const cy = sz * nx - sx * nz;
-  const cz = sx * ny - sy * nx;
-  
-  // Normalize cross product
-  const clen = Math.sqrt(cx * cx + cy * cy + cz * cz);
-  if (clen < 1e-6) {
-    // Vectors are parallel, use identity with small variation
-    const angle = random() * Math.PI * 2;
-    return [0, angle, 0];
-  }
-  
-  // Build quaternion from axis-angle representation
-  // q = [cos(θ/2), sin(θ/2) * axis]
-  // where θ = acos(dot) and axis = normalized cross product
-  const angle = Math.acos(Math.max(-1, Math.min(1, dot))); // Clamp dot to [-1, 1]
-  const halfAngle = angle / 2;
-  const sinHalfAngle = Math.sin(halfAngle);
-  
-  const qw = Math.cos(halfAngle);
-  const qx = (cx / clen) * sinHalfAngle;
-  const qy = (cy / clen) * sinHalfAngle;
-  const qz = (cz / clen) * sinHalfAngle;
-
-  // Convert quaternion to Euler angles (ZYX order, same as Three.js)
-  // Roll (x-axis rotation)
-  const sinr_cosp = 2 * (qw * qx + qy * qz);
-  const cosr_cosp = 1 - 2 * (qx * qx + qy * qy);
-  const rx = Math.atan2(sinr_cosp, cosr_cosp);
-
-  // Pitch (y-axis rotation)
-  const sinp = 2 * (qw * qy - qz * qx);
-  let ry: number;
-  if (Math.abs(sinp) >= 1) {
-    ry = Math.sign(sinp) * Math.PI / 2; // Use 90 degrees if out of range
-  } else {
-    ry = Math.asin(sinp);
-  }
-
-  // Yaw (z-axis rotation)
-  const siny_cosp = 2 * (qw * qz + qx * qy);
-  const cosy_cosp = 1 - 2 * (qy * qy + qz * qz);
-  const rz = Math.atan2(siny_cosp, cosy_cosp);
-
-  // Add small random rotation around surface normal for natural variation
-  const variationAngle = (random() - 0.5) * 0.2; // ±0.1 radians (~±6 degrees)
-  return [rx, ry + variationAngle, rz];
-}
-
-/**
- * Generate rock placements for a chunk using scientific lunar distribution.
+ * Generate rock placements for a chunk.
  *
- * Uses power-law distribution N(>D) = A * D^-2.5 to calculate the full rock
- * population for the base minimum diameter, then generates every rock with a
- * per-rock RNG stream seeded by (gridKey, rockIndex). Diameters are always
- * sampled from the full truncated power-law [baseMinDiam, maxDiam], so a
- * given rock has the same size, position, and shape at every LOD — the LOD
- * only filters out rocks below its minimum visible diameter. (Sampling from
- * [lodMinDiam, maxDiam] instead would re-map the same random draw to a
- * different diameter per LOD, making rocks visibly grow/shrink on LOD
- * transitions.)
+ * The rock population (positions, sizes, shapes) is a pure function of the
+ * terrain seed and the chunk's grid position, see rockPlacement.ts; the LOD
+ * only drops small rocks and selects cheaper meshes. Rocks rest on the same
+ * cratered height function the terrain mesh is built from.
+ *
+ * @param positions - Chunk mesh positions (unused: heights are analytic)
+ * @param terrainArgs - Terrain parameters of the chunk
+ * @param lodLevel - Chunk LOD level
+ * @param _gridKey - Chunk grid key (the chunk is identified by terrainArgs)
+ * @param rockLibrarySize - Number of rock shapes in the prototype library
+ * @param rockConfig - Rock generation config
  */
 export function generateRockPlacements(
   positions: ArrayLike<number>,
   terrainArgs: TerrainArgs,
   lodLevel: number,
-  gridKey: string,
+  _gridKey: string,
   rockLibrarySize: number,
-  rockConfig: RockGenerationConfig,
-  stableAxes?: Float32Array
+  rockConfig: RockGenerationConfig
 ): RockPlacement[] {
-  const seed = hashString(gridKey);
-
-  const chunkWidth = terrainArgs.width;
-  const chunkDepth = terrainArgs.depth;
-  const chunkArea = chunkWidth * chunkDepth;
-  const resolution = terrainArgs.resolution;
-
-  // LOD-independent base minimum diameter (the finest LOD's threshold)
-  // defines the full rock population for this chunk
-  const baseMinDiameter = getMinDiameterForLod(
-    0,
-    rockConfig.minDiameter,
-    rockConfig.lodMinDiameterScale
-  );
-
-  // This LOD's visibility threshold: rocks smaller than this are skipped,
-  // not re-sized
-  const lodMinDiameter = getMinDiameterForLod(
-    lodLevel,
-    rockConfig.minDiameter,
-    rockConfig.lodMinDiameterScale
-  );
-
-  // Full population count from the scientific distribution
-  const rockCount = expectedRocksPerChunk(
-    baseMinDiameter,
-    chunkArea,
-    rockConfig.densityConstant,
-    rockConfig.powerLawExponent
-  );
-
   // Setup height sampler ONCE for all rocks in this chunk
   setupHeightSampler(terrainArgs);
-
-  // Group placements by prototype ID
-  const placementsByPrototype: Map<number, Float32Array[]> = new Map();
-
-  // Generate the full population; each rock gets its own RNG stream so its
-  // attributes never depend on which other rocks were generated or skipped
-  for (let i = 0; i < rockCount; i++) {
-    const random = alea(seed, i);
-
-    // Sample rock diameter from the full truncated power-law
-    // [baseMinDiam, maxDiam] — identical at every LOD
-    const diameter = sampleRockDiameter(
-      random,
-      baseMinDiameter,
-      rockConfig.maxDiameter,
-      rockConfig.powerLawExponent
-    );
-
-    // Coarser LODs only show larger rocks; skip before the expensive
-    // placement work
-    if (diameter < lodMinDiameter) {
-      continue;
-    }
-
-    // Generate initial random position in local chunk space (centered at origin)
-    const initialX = (random() - 0.5) * chunkWidth;
-    const initialZ = (random() - 0.5) * chunkDepth;
-
-    // Find flatter position near initial position
-    const [localX, localZ] = findFlatterPosition(
-      initialX,
-      initialZ,
-      terrainArgs.smoothLowerPlanes,
-      random
-    );
-
-    // Assign prototype ID (deterministic from RNG)
-    const prototypeId = Math.floor(random() * rockLibrarySize);
-
-    // Calculate surface normal at placement position
-    const surfaceNormal = calculateSurfaceNormal(
-      localX,
-      localZ,
-      terrainArgs.smoothLowerPlanes
-    );
-
-    // Get stable axis for this prototype (if available)
-    let rx: number, ry: number, rz: number;
-    if (stableAxes && stableAxes.length >= (prototypeId + 1) * 3) {
-      const stableAxis: [number, number, number] = [
-        stableAxes[prototypeId * 3],
-        stableAxes[prototypeId * 3 + 1],
-        stableAxes[prototypeId * 3 + 2]
-      ];
-      // Compute stable orientation aligning stable axis with surface normal
-      [rx, ry, rz] = computeStableOrientation(stableAxis, surfaceNormal, random);
-    } else {
-      // Fallback to random rotation if stable axes not available
-      rx = random() * Math.PI * 2;
-      ry = random() * Math.PI * 2;
-      rz = random() * Math.PI * 2;
-    }
-
-    // Sample terrain height at final position
-    const y = sampleHeightFromVertices(
-      positions,
-      resolution,
-      chunkWidth,
-      chunkDepth,
-      localX,
-      localZ,
-      terrainArgs.smoothLowerPlanes
-    );
-
-    // Scale based on diameter (base rock geometry is 1m)
-    const scale = diameter;
-
-    // Rock geometry is centered at origin with Y-scale of 0.7 baked in
-    // So rock extends from -0.35*diameter to +0.35*diameter in Y (total height = 0.7*diameter)
-    // To bury 40-60%: rock bottom should be 0.28*diameter to 0.42*diameter below surface
-    // Calculate burial depth: 0.28*diameter + random() * 0.14*diameter (gives 40-60% range)
-    const burialDepth = diameter * (MIN_BURIAL_PERCENT * 0.7 + random() * (MAX_BURIAL_PERCENT - MIN_BURIAL_PERCENT) * 0.7);
-    // Offset: 0.35*diameter - burialDepth
-    const offsetY = diameter * 0.35 - burialDepth;
-    const finalY = y + offsetY;
-
-    // Compute transform matrix
-    const matrix = composeMatrix(
-      localX, finalY, localZ,
-      rx, ry, rz,
-      scale, scale, scale
-    );
-
-    // Add to prototype group
-    if (!placementsByPrototype.has(prototypeId)) {
-      placementsByPrototype.set(prototypeId, []);
-    }
-    const matrices = placementsByPrototype.get(prototypeId);
-    if (matrices) {
-      matrices.push(matrix);
-    }
-  }
-
-  // Convert to RockPlacement array
-  const result: RockPlacement[] = [];
-
-  for (const [prototypeId, matrices] of placementsByPrototype.entries()) {
-    // Flatten all matrices into single Float32Array
-    const flatMatrices = new Float32Array(matrices.length * 16);
-    for (let i = 0; i < matrices.length; i++) {
-      flatMatrices.set(matrices[i], i * 16);
-    }
-
-    result.push({
-      prototypeId,
-      matrices: flatMatrices
-    });
-  }
-
-  return result;
-}
-
-/**
- * Simple string hash for seeding random generator
- */
-function hashString(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32-bit integer
-  }
-  return hash;
+  const { resolution, width, depth, smoothLowerPlanes } = terrainArgs;
+  return placeRocks(terrainArgs, lodLevel, rockLibrarySize, rockConfig, (x, z) =>
+    sampleHeightFromVertices(positions, resolution, width, depth, x, z, smoothLowerPlanes)
+  );
 }
 
 // ============================================================================
 // Worker Message Handler
 // ============================================================================
 
-const handleChunkMessage = (m: MessageEvent<ChunkWorkerMessage>): void => {
-  const { terrainArgs, gridKey, lodLevel, rockLibrarySize, rockConfig, stableAxes } = m.data;
+export const handleChunkMessage = (m: MessageEvent<ChunkWorkerMessage>): void => {
+  const { terrainArgs, gridKey, lodLevel, rockLibrarySize, rockConfig } = m.data;
 
   // Setup crater cache FIRST (before terrain generation)
   // This ensures both terrain and rock placement use the same craters
-  const craterParams: CraterParams = {
-    seed: terrainArgs.craterSeed,
-    density: terrainArgs.craterDensity,
-    minRadius: terrainArgs.craterMinRadius,
-    maxRadius: terrainArgs.craterMaxRadius,
-    powerLawExponent: terrainArgs.craterPowerLawExponent,
-    depthRatio: terrainArgs.craterDepthRatio,
-    rimHeight: terrainArgs.craterRimHeight,
-    rimWidth: terrainArgs.craterRimWidth,
-    floorFlatness: terrainArgs.craterFloorFlatness,
-  };
-  setupCraterCache(gridKey, terrainArgs.width, terrainArgs.depth, craterParams);
+  setupCraterCache(terrainArgs);
 
-  // Generate extended terrain geometry (with +1 vertex skirt on each edge)
-  // This allows edge vertices to have full face neighborhoods for correct normals
-  // (spacing is per-axis so non-square chunks keep seamless edges)
-  const { extendedResolution, extendedWidth, extendedDepth } = computeSkirtedGridDimensions(
-    terrainArgs.width,
-    terrainArgs.depth,
-    terrainArgs.resolution
+  // Build the terrain mesh: base terrain + craters on a grid with a one-vertex
+  // skirt (so edge vertices get full face neighborhoods for correct normals),
+  // one normals pass over the final cratered heights, skirt stripped.
+  // A wall hung from the perimeter closes the slits between LODs.
+  const vertexSpacing = Math.max(terrainArgs.width, terrainArgs.depth) / terrainArgs.resolution;
+  const { positions, normals } = buildChunkMesh(
+    terrainArgs,
+    cachedCraters,
+    chunkSkirtDepth(vertexSpacing)
   );
 
-  // Create extended terrain args
-  // The terrain evaluator will automatically sample correct positions for extended vertices
-  const extendedTerrainArgs: TerrainArgs = {
-    ...terrainArgs,
-    resolution: extendedResolution,
-    width: extendedWidth,
-    depth: extendedDepth,
-  };
-  
-  // Skip the normals pass here: craters modify heights below, after which
-  // normals are computed once. Computing them now would be wasted work.
-  const geometry = generateTerrain(extendedTerrainArgs, false);
-
-  // Extract terrain attributes (positions is mutable Float32Array)
-  const extendedPositions = geometry.attributes.position.array as Float32Array;
-
-  // Apply cached craters to the extended terrain height buffer
-  // Convert to local chunk space for mesh modification
-  const localCraters: Crater[] = cachedCraters.map(crater => ({
-    ...crater,
-    centerX: crater.centerX - cachedChunkWorldX,
-    centerZ: crater.centerZ - cachedChunkWorldZ,
-  }));
-  
-  // Apply to extended mesh (using extended dimensions)
-  applyCratersToHeightBuffer(extendedPositions, extendedWidth, extendedDepth, localCraters);
-  
-  // Update geometry and compute normals on extended mesh (single normals pass
-  // over the final, cratered heights)
-  geometry.attributes.position.needsUpdate = true;
-  geometry.computeVertexNormals();
-  const extendedNormals = geometry.attributes.normal.array as Float32Array;
-
-  // Extract interior vertices (remove skirt)
-  const { positions, normals } = extractInterior(
-    extendedPositions,
-    extendedNormals,
-    extendedResolution,
-    terrainArgs.resolution
-  );
-  
   // Generate index for interior mesh (standard grid indices)
   const targetVerticesPerRow = terrainArgs.resolution + 1;
-  const index = new Uint32Array(terrainArgs.resolution * terrainArgs.resolution * 2 * 3);
+  const index = new Uint32Array(
+    terrainArgs.resolution * terrainArgs.resolution * 2 * 3 + skirtIndexCount(terrainArgs.resolution)
+  );
   let idx = 0;
   for (let z = 0; z < terrainArgs.resolution; z++) {
     for (let x = 0; x < terrainArgs.resolution; x++) {
@@ -780,6 +247,7 @@ const handleChunkMessage = (m: MessageEvent<ChunkWorkerMessage>): void => {
       index[idx++] = d;
     }
   }
+  writeSkirtIndices(index, idx, terrainArgs.resolution);
 
   // Generate rock placements using scientific lunar distribution
   // Rocks will now sit on the cratered terrain
@@ -789,8 +257,7 @@ const handleChunkMessage = (m: MessageEvent<ChunkWorkerMessage>): void => {
     lodLevel,
     gridKey,
     rockLibrarySize,
-    rockConfig,
-    stableAxes
+    rockConfig
   );
 
   // Build result
@@ -810,8 +277,10 @@ const handleChunkMessage = (m: MessageEvent<ChunkWorkerMessage>): void => {
     positions.buffer,
     normals.buffer,
     index.buffer,
-    ...rockPlacements.map((placement) => placement.matrices.buffer),
   ];
+  for (const placement of rockPlacements) {
+    transfer.push(placement.matrices.buffer, placement.colors.buffer);
+  }
 
   postMessage(result, { transfer });
 };

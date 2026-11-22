@@ -32,6 +32,9 @@ import { applyCurvatureStep, directionFromObserver } from './celestialMath';
  * orientation.
  */
 
+/** Linear brightness multiplier for the star map. */
+const SKYBOX_BRIGHTNESS = 2.6;
+
 export interface CelestialConfig {
   // Sun configuration
   sunDistance: number;      // Distance from camera (visual only)
@@ -70,7 +73,7 @@ export interface CelestialConfig {
 const DEFAULT_CONFIG: CelestialConfig = {
   sunDistance: 50000,    // Far enough to look like skybox object
   sunSize: 500,          // Visual size
-  sunIntensity: 5.0,
+  sunIntensity: 3.4,
   earthDistance: 40000,
   earthSize: 1500,       // Earth appears ~4x larger than sun from Moon
   earthshineMultiplier: 0.15,
@@ -291,9 +294,11 @@ export class CelestialSystem {
         texture.colorSpace = THREE.SRGBColorSpace;
         
         // Apply to skybox material
+        // The star map is exposed for the Milky Way; push it past 1.0 so stars
+        // survive the daylight exposure and the brightest ones pick up bloom
         const material = this.skyboxMesh.material as THREE.MeshBasicMaterial;
         material.map = texture;
-        material.color.setHex(0xffffff); // Remove black tint
+        material.color.setScalar(SKYBOX_BRIGHTNESS);
         material.needsUpdate = true;
         
         this.skyboxTexture = texture;
@@ -447,10 +452,11 @@ export class CelestialSystem {
     this.sunOffset.copy(this.sunWorldPos).sub(this.celestialContainer.position);
     this.earthOffset.copy(this.earthWorldPos).sub(this.celestialContainer.position);
 
-    // Calculate direction FROM Earth TO Sun (for Earth shader)
-    // Earth's day/night depends on which side faces the sun
-    // (the shared camera offset cancels in the subtraction)
-    this.sunDirection.copy(this.sunWorldPos).sub(this.earthWorldPos).normalize();
+    // Direction FROM Earth TO Sun (for Earth shader). The sun is 400 times
+    // further away than Earth, so it lies in the same direction from both;
+    // using the scene positions of the two meshes would give Earth the wrong
+    // phase, because the sun mesh is drawn only a little beyond the Earth mesh.
+    this.sunDirection.copy(this.sunOffset).normalize();
 
     // Update Earth material with world-space sun direction
     this.earthMaterial.setSunDirection(this.sunDirection);
