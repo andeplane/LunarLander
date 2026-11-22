@@ -5,6 +5,7 @@ import { FlightController } from './camera/FlightController';
 import { ModeManager } from './modes/ModeManager';
 import { MenuMode } from './modes/MenuMode';
 import { ExploreMode } from './modes/ExploreMode';
+import { RoverMode } from './modes/RoverMode';
 import { LanderMode } from './modes/LanderMode';
 // Skybox is now handled as a mesh inside CelestialSystem
 import { CelestialSystem } from './environment/CelestialSystem';
@@ -161,12 +162,14 @@ if (isTouchDevice()) {
 const debugEnabled =
   new URLSearchParams(window.location.search).get('debug') === 'true';
 
-// --- Game modes (ADR-0001): Menu, Explore, Lander share one world ---
+// --- Game modes (ADR-0001): Menu, Explore, Lander and Rover share one world ---
+let drivingColliders: TerrainColliderManager | undefined;
 const modeManager = new ModeManager(inputManager, (mode) => {
   const isExplore = mode === exploreMode;
+  if (drivingColliders) drivingColliders.surfaceDriving = mode === roverMode;
   // Debug UI and the O/I/C debug keys all require ?debug=true
   engine.setStatsVisible(debugEnabled && isExplore);
-  engine.setDebugKeysEnabled(debugEnabled && mode !== landerMode);
+  engine.setDebugKeysEnabled(debugEnabled && mode !== landerMode && mode !== roverMode);
   shaderUI.setVisible(debugEnabled && isExplore);
 });
 engine.setModeManager(modeManager);
@@ -193,8 +196,21 @@ const landerMode = new LanderMode({
   setPaused: (paused) => modeManager.setPaused(paused),
 });
 
+const roverMode = new RoverMode({
+  camera: engine.getCamera(),
+  canvas,
+  scene: engine.getScene(),
+  input: inputManager,
+  chunks: chunkManager,
+  rocks: rockManager,
+  shadows: engine.getSunShadows(),
+  onExit: () => modeManager.switchTo(menuMode),
+  requestRender: () => engine.requestRender(),
+});
+
 const menuMode = new MenuMode(engine.getCamera(), {
   onSelectExplore: () => modeManager.switchTo(exploreMode),
+  onSelectRover: () => modeManager.switchTo(roverMode),
   onSelectLander: () => modeManager.switchTo(landerMode),
   getSurfaceLabHref: () => {
     const { x, y, z } = engine.getCamera().position;
@@ -226,6 +242,9 @@ physicsWorld.initialize().then(() => {
     { physicsRange: 2 }
   );
   
+  drivingColliders = terrainColliderManager;
+  drivingColliders.surfaceDriving = modeManager.getActiveMode() === roverMode;
+
   // Create ball manager
   const ballManager = new BallManager(
     physicsWorld.getWorld(),
@@ -250,10 +269,12 @@ physicsWorld.initialize().then(() => {
 
   // Late injection into modes (they exist before physics is ready)
   exploreMode.setBallManager(ballManager);
+  roverMode.setPhysics(physicsWorld);
   landerMode.setPhysics(physicsWorld, ballManager);
 
   console.log('[Physics] Physics system ready. Press Space to shoot balls (Explore mode).');
 }).catch((err) => {
+  roverMode.reportPhysicsFailure();
   console.error('[Physics] Failed to initialize:', err);
 });
 

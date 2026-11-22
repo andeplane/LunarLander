@@ -84,3 +84,10 @@
   font-size: 0.85rem;
   text-underline-offset: 0.2em;
 }
+
+@media (max-height: 540px) {
+  .menu-overlay { justify-content: safe center; overflow-y: auto; gap: .35rem; }
+  .menu-subtitle { margin-bottom: .3rem; }
+  .menu-buttons { gap: .4rem; }
+  .menu-button { padding: .45rem .9rem; }
+}

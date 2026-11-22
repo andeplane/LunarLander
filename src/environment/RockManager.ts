@@ -482,6 +482,11 @@ export class RockManager {
     this.warmupHandle = null;
   }
 
+  /** Stable placement transforms, including rocks promoted to a finer display mesh. */
+  getPlacementMatrices(mesh: InstancedMesh): Float32Array | undefined {
+    return this.groups.get(mesh)?.matrices;
+  }
+
   /**
    * Create InstancedMesh objects from worker-computed placement data: one
    * mesh (one draw call) per placement group.

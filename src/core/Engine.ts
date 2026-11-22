@@ -324,8 +324,12 @@ export class Engine {
   }
 
   /**
-   * Get the Three.js scene
+   * Shared sunlight cascades for vehicle materials.
    */
+  getSunShadows(): SunShadows {
+    return this.sunShadows;
+  }
+
   getScene(): THREE.Scene {
     return this.scene;
   }

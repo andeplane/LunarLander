@@ -1162,7 +1162,7 @@ export class ChunkManager {
   }
 
   /** Height and slope of the actual visible triangle, including a coarser neighbour during streaming. */
-  private samplePebbleGround: PebbleGroundSampler = (x, z, out, offset) => {
+  readonly sampleVisibleGround: PebbleGroundSampler = (x, z, out, offset) => {
     const { chunkWidth, chunkDepth, lodLevels } = this.config;
     const gridX = Math.round(x / chunkWidth),
       gridZ = Math.round(z / chunkDepth);
@@ -1204,7 +1204,7 @@ export class ChunkManager {
     if (this.pebbleSurface) return;
     this.pebbleSurface = new PebbleSurface(
       this.terrainGenerator.getMaterial(),
-      this.samplePebbleGround,
+      this.sampleVisibleGround,
       this.requestRender
     );
     this.scene.add(this.pebbleSurface.root);

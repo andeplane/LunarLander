@@ -351,7 +351,12 @@ export class SunShadows {
   private pendingState: SunShadowFrameState | null = null;
   private pendingHalfExtent = 0;
   private renderedNearCasterRevision = -1;
+  private movingCasterDirty = false;
   private renderCount = 0;
+
+  invalidateMovingCaster(): void {
+    this.movingCasterDirty = true;
+  }
 
   constructor(renderer: ShadowPassRenderer, options: Partial<SunShadowOptions> = {}) {
     this.renderer = renderer;
@@ -459,7 +464,9 @@ export class SunShadows {
       const refreshDue =
         geometryChanged &&
         this.frameIndex - cascade.renderedFrame >= options.terrainRefreshFrames[i];
-      if (refreshDue && chosen < 0) chosen = i;
+      const vehicleDue = i === 0 && this.movingCasterDirty &&
+        this.frameIndex - cascade.renderedFrame >= 3;
+      if ((refreshDue || vehicleDue) && chosen < 0) chosen = i;
     }
 
     if (chosen < 0) return false;
@@ -535,7 +542,10 @@ export class SunShadows {
     cascade.halfExtent = this.pendingHalfExtent;
     cascade.invTwoRadius = invTwoRadius;
     cascade.revision = state.terrainRevision;
-    if (index === 0) this.renderedNearCasterRevision = state.nearCasterRevision;
+    if (index === 0) {
+      this.renderedNearCasterRevision = state.nearCasterRevision;
+      this.movingCasterDirty = false;
+    }
     cascade.renderedFrame = this.frameIndex;
     cascade.cameraX = state.cameraPosition.x;
     cascade.cameraZ = state.cameraPosition.z;

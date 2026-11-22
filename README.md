@@ -1,7 +1,9 @@
 # Lunar Explorer
 
-A browser-based Moon experience built with TypeScript and Three.js, featuring procedural terrain generation with LOD-based chunk streaming. Two modes, selected from the main menu:
+A browser-based Moon experience built with TypeScript and Three.js, featuring procedural terrain generation with LOD-based chunk streaming. Three modes are available from the main menu.
 
+
+- **Drive the Rover** lets you take an Apollo Lunar Roving Vehicle across the terrain in chase or driver view.
 - **Explore** — free flight over the lunar surface.
 - **Fly the Lander** — a 3D lunar-lander game played from inside the cockpit: real Rapier physics, drone-style assisted attitude control (tilt-to-translate, auto-level on release), fuel management, seeded missions with landing pads, Apollo-derived landing grades (Perfect / Good / Hard / Crash), and scoring with local best tracking. Design decisions are documented in [docs/adr/](docs/adr/).
 
@@ -136,6 +138,12 @@ Based on Rüsch et al. 2024 lunar rock distribution research:
 **Key Files:**
 - [`src/environment/RockBuilder.ts`](src/environment/RockBuilder.ts) - Rock geometry generation
 - [`src/environment/RockManager.ts`](src/environment/RockManager.ts) - Rock placement and instancing
+
+### Drive the Rover
+
+Use **W/S** to drive forward or reverse, **A/D** to steer and **Space** to brake. The arrow keys also work. Drag the chase view to orbit, press **C** to switch seatside/chase views, **R** to recover upright nearby and **Esc** to return to the menu. Touch devices have separate steering and pedal buttons.
+
+The original articulated model uses Apollo wheelbase, track and tire dimensions. Four driven wheels, counter-steering axles and independent spring-damper suspension act on a loaded rigid chassis in lunar gravity. The model includes a suited driver, wire wheels, thermal blankets and a working instrument panel. ImageGen supplied the cloth, foil, fender and alloy surface textures. [NASA Apollo 17 press kit](https://www.nasa.gov/wp-content/uploads/static/apollo50th/pdf/A17_PressKit.pdf)
 
 ### Lander Game
 

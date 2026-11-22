@@ -14,6 +14,7 @@ import type { ChunkManager } from '../terrain/ChunkManager';
 import { parseGridKey } from '../terrain/LodUtils';
 import type { Chunk } from '../terrain/Chunk';
 import {
+  PHYSICS_RESOLUTION_CAP,
   effectivePhysicsResolution,
   sampleHeightfield,
   selectPhysicsSourceLod,
@@ -48,6 +49,7 @@ export class TerrainColliderManager {
   private chunkManager: ChunkManager;
   private config: Required<TerrainColliderConfig>;
   private colliders: Map<string, ChunkCollider> = new Map(); // key: gridKey
+  surfaceDriving = false;
   private chunkWidth: number;
   private chunkDepth: number;
   private lodLevels: number[];
@@ -84,7 +86,16 @@ export class TerrainColliderManager {
       // meshes produce bit-identical heightfields), NOT the displayed LOD:
       // neighbors then agree exactly along shared edges even when their visual
       // LODs differ, so balls can't catch or fall at chunk borders.
-      const sourceLod = selectPhysicsSourceLod(chunk.builtLevels, this.lodLevels);
+      // A wheel is only 81 cm across. Keep sub-metre height samples in the
+      // occupied chunk and across approaching borders while surface driving.
+      let cap = PHYSICS_RESOLUTION_CAP;
+      if (this.surfaceDriving) {
+        const [gx, gz] = parseGridKey(chunk.gridKey);
+        const nearX = Math.abs(cameraPosition.x - gx * this.chunkWidth) < this.chunkWidth / 2 + 18;
+        const nearZ = Math.abs(cameraPosition.z - gz * this.chunkDepth) < this.chunkDepth / 2 + 18;
+        if (nearX && nearZ) cap = 512;
+      }
+      const sourceLod = selectPhysicsSourceLod(chunk.builtLevels, this.lodLevels, cap);
       const mesh = sourceLod !== null ? chunk.getTerrainMesh(sourceLod) : null;
       if (sourceLod === null || !mesh) {
         continue; // Chunk not ready yet
@@ -95,14 +106,14 @@ export class TerrainColliderManager {
       // source change only requires a rebuild if the effective resolution
       // differs (e.g. 1024 <-> 512 both sample the same 128-cell heightfield).
       const meshResolution = this.lodLevels[sourceLod] ?? this.lodLevels[0];
-      const physicsResolution = effectivePhysicsResolution(meshResolution);
+      const physicsResolution = effectivePhysicsResolution(meshResolution, cap);
       const needsRebuild =
         !existing || existing.physicsResolution !== physicsResolution;
 
       if (needsRebuild) {
         // Build-then-swap: only replace the old collider once the new one is
         // valid, so a failed rebuild never leaves the chunk colliderless
-        const collider = this.createHeightfieldCollider(chunk, mesh, sourceLod);
+        const collider = this.createHeightfieldCollider(chunk, mesh, sourceLod, physicsResolution);
         if (collider) {
           if (existing) {
             this.removeChunkCollider(existing);
@@ -172,7 +183,8 @@ export class TerrainColliderManager {
   private createHeightfieldCollider(
     chunk: Chunk,
     mesh: ThreeMesh,
-    sourceLod: number
+    sourceLod: number,
+    numCells: number
   ): ChunkCollider | null {
     const geometry = mesh.geometry;
     const positions = geometry.attributes.position;
@@ -200,7 +212,6 @@ export class TerrainColliderManager {
 
     // Sample the visual mesh down to the capped physics resolution
     // (Rapier can't handle 1M+ heights; 129x129 vertices is manageable)
-    const numCells = effectivePhysicsResolution(meshResolution);
     const sample = sampleHeightfield(
       (i) => positions.getY(i),
       meshResolution,

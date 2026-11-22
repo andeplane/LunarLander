@@ -87,6 +87,26 @@ describe(TerrainColliderManager.name, () => {
     expect(world.colliders.len()).toBe(2);
   });
 
+  it('refines both sides of an approaching rover crossing and restores ordinary colliders on exit', () => {
+    for (const key of ['0,0', '1,0']) chunks.set(key, makeChunk(key, 256, 0));
+    const manager = makeManager([256]);
+    const eye = new Vector3(45, 1, 0);
+    const resolutions = () => {
+      const rows: number[] = [];
+      world.forEachCollider(c => rows.push(c.heightfieldNRows()));
+      return rows;
+    };
+    manager.update(eye);
+    expect(resolutions()).toEqual([128, 128]);
+    manager.surfaceDriving = true;
+    manager.update(eye);
+    expect(resolutions()).toEqual([256, 256]);
+    manager.surfaceDriving = false;
+    manager.update(eye);
+    expect(resolutions()).toEqual([128, 128]);
+    expect(world.bodies.len()).toBe(2);
+  });
+
   it('accepts a mesh whose grid is followed by a hanging skirt', () => {
     chunks.set('0,0', makeChunk('0,0', 8, 0, () => 0, 4 * 8));
 

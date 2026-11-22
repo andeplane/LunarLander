@@ -1,0 +1,138 @@
+.rover-hud {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  color: #faf7ed;
+  pointer-events: none;
+  user-select: none;
+  --edge: clamp(14px, 2.5vw, 36px);
+  font-family: Inter, system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.rover-actions,
+.rover-instruments,
+.rover-keys,
+.rover-pedals,
+.rover-status {
+  position: absolute;
+}
+.rover-actions {
+  top: max(var(--edge), env(safe-area-inset-top));
+  right: max(var(--edge), env(safe-area-inset-right));
+  display: flex;
+  gap: 5px;
+}
+.rover-hud button,
+.rover-instruments,
+.rover-keys,
+.rover-status:not(:empty) {
+  background: rgba(22, 21, 19, 0.89);
+  color: #faf7ed;
+  border: 1px solid rgba(239, 232, 216, 0.32);
+  border-radius: 4px;
+}
+.rover-hud button {
+  pointer-events: auto;
+  touch-action: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.55rem 0.85rem;
+  min-height: 42px;
+}
+.rover-hud button:hover,
+.rover-hud button:active {
+  background: #4b4035;
+}
+.rover-hud button:focus-visible {
+  outline: 2px solid #ffd298;
+  outline-offset: 2px;
+}
+.rover-instruments {
+  bottom: max(var(--edge), env(safe-area-inset-bottom));
+  left: max(var(--edge), env(safe-area-inset-left));
+  padding: 10px 16px 12px;
+}
+.rover-speed {
+  color: #e8dfd0;
+  line-height: 1.15;
+  font-size: 0.75rem;
+}
+.rover-speed strong {
+  font-size: 2rem;
+  font-weight: 550;
+  letter-spacing: -0.03em;
+  color: white;
+}
+.rover-readings {
+  display: flex;
+  gap: 18px;
+  margin-top: 7px;
+  font-size: 0.73rem;
+  color: #c8c3b9;
+}
+.rover-readings b {
+  font-weight: 550;
+  color: #fff;
+}
+.rover-keys {
+  bottom: var(--edge);
+  right: var(--edge);
+  padding: 8px 12px;
+  font-size: 0.73rem;
+}
+.rover-keys kbd {
+  color: #ffcf94;
+  font: inherit;
+  margin: 0 2px;
+}
+.rover-keys kbd:not(kbd + kbd),
+.rover-keys span {
+  margin-left: 10px;
+}
+.rover-keys kbd:first-child {
+  margin-left: 0;
+}
+.rover-status:not(:empty) {
+  top: max(72px, 12%);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.55rem 1rem;
+  font-size: 0.85rem;
+  text-align: center;
+}
+.rover-pedals {
+  bottom: max(var(--edge), env(safe-area-inset-bottom));
+  left: var(--edge);
+  right: var(--edge);
+  display: flex;
+  gap: 5px;
+}
+.rover-pedals button {
+  min-height: 50px;
+  padding: 0.55rem;
+  min-width: 46px;
+}
+.rover-pedals button:nth-child(3) {
+  margin-left: auto;
+}
+.rover-pedals button:last-child {
+  background: #78502c;
+}
+.has-touch .rover-instruments {
+  bottom: calc(max(var(--edge), env(safe-area-inset-bottom)) + 60px);
+}
+.has-touch .rover-keys {
+  display: none;
+}
+@media (max-width: 720px) {
+  .rover-keys {
+    bottom: auto;
+    top: 70px;
+    max-width: 250px;
+  }
+}
+
+.driver-view .rover-keys span {
+  display: none;
+}

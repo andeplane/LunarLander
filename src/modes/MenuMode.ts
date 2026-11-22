@@ -11,6 +11,7 @@ export class MenuMode implements GameMode {
   private camera: PerspectiveCamera;
   private overlay: HTMLDivElement | null = null;
   private onSelectExplore: () => void;
+  private onSelectRover: () => void;
   private onSelectLander: () => void;
   private getSurfaceLabHref: () => string;
   private requestRender: () => void;
@@ -24,6 +25,7 @@ export class MenuMode implements GameMode {
     camera: PerspectiveCamera,
     callbacks: {
       onSelectExplore: () => void;
+      onSelectRover: () => void;
       onSelectLander: () => void;
       getSurfaceLabHref: () => string;
       requestRender: () => void;
@@ -31,6 +33,7 @@ export class MenuMode implements GameMode {
   ) {
     this.camera = camera;
     this.onSelectExplore = callbacks.onSelectExplore;
+    this.onSelectRover = callbacks.onSelectRover;
     this.onSelectLander = callbacks.onSelectLander;
     this.getSurfaceLabHref = callbacks.getSurfaceLabHref;
     this.requestRender = callbacks.requestRender;
@@ -68,7 +71,7 @@ export class MenuMode implements GameMode {
 
     const subtitle = document.createElement('div');
     subtitle.className = 'menu-subtitle';
-    subtitle.textContent = 'A procedural Moon, yours to fly';
+    subtitle.textContent = 'Explore a procedural Moon';
 
     const buttons = document.createElement('div');
     buttons.className = 'menu-buttons';
@@ -83,8 +86,14 @@ export class MenuMode implements GameMode {
     landerBtn.innerHTML = '<span class="menu-button-name">Fly the Lander</span><span class="menu-button-desc">Land on the Moon — from inside the cockpit</span>';
     landerBtn.addEventListener('click', () => this.onSelectLander());
 
+    const roverBtn = document.createElement('button');
+    roverBtn.className = 'menu-button';
+    roverBtn.innerHTML = '<span class="menu-button-name">Drive the Rover</span><span class="menu-button-desc">Cross the lunar surface in the Apollo LRV</span>';
+    roverBtn.addEventListener('click', this.onSelectRover);
+
     buttons.appendChild(exploreBtn);
     buttons.appendChild(landerBtn);
+    buttons.appendChild(roverBtn);
     overlay.appendChild(title);
     overlay.appendChild(subtitle);
     overlay.appendChild(buttons);
