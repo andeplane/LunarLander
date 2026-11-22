@@ -156,19 +156,22 @@ describe(createReliefSource.name, () => {
     let plains = 0;
     let total = 0;
     let highest = 0;
+    let lowest = Number.POSITIVE_INFINITY;
     let steepest = 0;
     const step = 50;
+    // One expect per bound, not per sample: 230k expect calls time out on CI
     for (let x = -12000; x <= 12000; x += step) {
       for (let z = -12000; z <= 12000; z += step) {
         const h = massifs(x, z);
-        expect(h).toBeGreaterThanOrEqual(0);
-        expect(h).toBeLessThanOrEqual(RELIEF_DEFAULTS.massifHeight);
+        lowest = Math.min(lowest, h);
         if (h === 0) plains++;
         total++;
         highest = Math.max(highest, h);
         steepest = Math.max(steepest, Math.abs(massifs(x + step, z) - h) / step);
       }
     }
+    expect(lowest).toBeGreaterThanOrEqual(0);
+    expect(highest).toBeLessThanOrEqual(RELIEF_DEFAULTS.massifHeight);
     expect(plains / total).toBeGreaterThan(0.6);
     expect(plains / total).toBeLessThan(0.95);
     // In meters (x2.8): massifs well over 100 m tall, flanks under ~35 degrees
