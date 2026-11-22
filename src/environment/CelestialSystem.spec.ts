@@ -142,6 +142,20 @@ describe(CelestialSystem.name, () => {
     });
   });
 
+  describe('Earth phase', () => {
+    it('lights Earth from the direction of the sun in the sky, not from the sun mesh', () => {
+      const system = makeSystem();
+      system.setSunPosition(0, Math.PI / 2); // straight overhead
+      system.update(new THREE.Vector3(4000, 120, -2500), 1 / 60);
+
+      // The sun is effectively at infinity: Earth sees it where the observer does
+      const toSun = system.getSunDirection();
+      expect(toSun.distanceTo(system.getSunDirectionForTerrain())).toBeCloseTo(0, 6);
+      expect(toSun.y).toBeCloseTo(1, 5);
+      system.dispose();
+    });
+  });
+
   describe('curvature parallel transport', () => {
     it('rotates the sky by traveled distance / planet radius', () => {
       const system = makeSystem();

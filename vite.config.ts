@@ -39,6 +39,8 @@ export default defineConfig({
   },
   server: {
     port: 3000,
-    open: true
+    // Opt-in: `VITE_OPEN=true npm run dev` opens a browser tab. Off by default so
+    // automated/headless runs never take over the developer's browser.
+    open: process.env.VITE_OPEN === 'true'
   }
 })

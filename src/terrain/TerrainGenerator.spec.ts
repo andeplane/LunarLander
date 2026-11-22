@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Mesh, BufferGeometry, BufferAttribute, MeshBasicMaterial, Object3D, type Sphere, Vector3 } from 'three';
 import { TerrainGenerator } from './TerrainGenerator';
-import { generateGridIndices, clearStitchCache } from './EdgeStitcher';
+import { appendSkirtIndices, skirtVertexCount } from './chunkSkirt';
+import { generateGridIndices, clearStitchCache, computeStitchedIndices } from './EdgeStitcher';
 import type { NeighborLods } from './LodUtils';
 
 describe(`${TerrainGenerator.name}.applyEdgeStitching`, () => {
@@ -64,6 +65,25 @@ describe(`${TerrainGenerator.name}.applyEdgeStitching`, () => {
 
     expect(setIndexSpy).toHaveBeenCalledTimes(1);
     expect(mesh.geometry.index).toBe(stitchedAttribute);
+  });
+
+  it('keeps the hanging skirt when it swaps in stitched indices', () => {
+    const vertexCount = 5 * 5 + skirtVertexCount(resolution);
+    mesh.geometry.setAttribute(
+      'position',
+      new BufferAttribute(new Float32Array(vertexCount * 3), 3)
+    );
+    setIndexSpy.mockClear();
+
+    generator.applyEdgeStitching(gridKey, mesh, 0, lods({ north: 1 }), lodLevels);
+    const stitched = computeStitchedIndices(resolution, lods({ north: 1 }), 0, lodLevels);
+    const first = mesh.geometry.index?.array;
+    expect(first).toEqual(appendSkirtIndices(stitched, resolution));
+
+    // The skirted array is cached with the stitched one it extends
+    generator.applyEdgeStitching(gridKey, mesh, 0, lods({ south: 1 }), lodLevels);
+    generator.applyEdgeStitching(gridKey, mesh, 0, lods({ north: 1 }), lodLevels);
+    expect(mesh.geometry.index?.array).toBe(first);
   });
 
   it('rebuilds indices when the neighbor-LOD signature changes', () => {

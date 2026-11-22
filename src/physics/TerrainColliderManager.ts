@@ -7,6 +7,7 @@
  * - Updating colliders when chunks enter/leave physics range or LOD changes
  * - Proper height extraction from mesh geometry (handles negative heights in craters)
  */
+import { hasSkirtVertices } from '../terrain/chunkSkirt';
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { Vector3, Mesh as ThreeMesh } from 'three';
 import type { ChunkManager } from '../terrain/ChunkManager';
@@ -186,7 +187,11 @@ export class TerrainColliderManager {
     const meshVertexCount = meshResolution + 1;
     const meshTotalVertices = meshVertexCount * meshVertexCount;
 
-    if (positions.count !== meshTotalVertices) {
+    // The grid comes first; a hanging skirt may follow it (see chunkSkirt.ts)
+    if (
+      positions.count !== meshTotalVertices &&
+      !hasSkirtVertices(positions.count, meshResolution)
+    ) {
       console.warn(
         `[TerrainCollider] Mesh vertex count (${positions.count}) doesn't match expected (${meshTotalVertices}) for resolution ${meshResolution}`
       );
