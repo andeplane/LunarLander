@@ -35,6 +35,14 @@ npm run preview
 
 The development server will start at `http://localhost:3000` (or the next available port).
 
+### Surface lab
+
+Open [Surface lab](./surface-lab.html) on the development server to compare the checkout’s game material with two world-space experiments. **Hybrid grain** uses a high-pass extract of the existing surface image over procedural soil. **Fully procedural** computes the grain, slopes and impact marks from ground coordinates. Both views use the same camera, sun and flat ground. Drag to pan, scroll or pinch to zoom, or jump to an altitude preset. Switch to **Albedo** or **Normals** to isolate a pattern, and use **Copy view link** to revisit the same patch and settings.
+
+To rebake the hybrid’s grain after editing the source photo, run `python scripts/bake_surface_lab_grain.py` with the packages in `scripts/requirements.txt`.
+
+**Time both materials** measures seven warmed draws per material on a 512 × 512 target. The result identifies the GPU timer or the synchronized draw-and-readback fallback. These timings cover the isolated ground pass. The flight scene also renders terrain geometry, rocks, shadows and post-processing.
+
 ## Features
 
 ### Visual Effects (Shaders & Lighting)

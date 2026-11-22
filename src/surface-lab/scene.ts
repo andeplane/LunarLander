@@ -1,0 +1,136 @@
+import {
+  ACESFilmicToneMapping,
+  AmbientLight,
+  DirectionalLight,
+  MathUtils,
+  Mesh,
+  PerspectiveCamera,
+  PlaneGeometry,
+  Scene,
+  WebGLRenderer,
+} from 'three';
+import { MapControls } from 'three/addons/controls/MapControls.js';
+import { createLabMaterials } from './materials';
+import { timeMaterials } from './timing';
+import { CHANNELS, type LabView, MAX_ALTITUDE, MIN_ALTITUDE, scaleBar } from './view';
+
+export async function createSurfaceScene(
+  canvas: HTMLCanvasElement,
+  view: LabView,
+  onNavigate: () => void,
+  onScale: (scale: ReturnType<typeof scaleBar>) => void
+) {
+  const renderer = new WebGLRenderer({
+    canvas,
+    antialias: false,
+    powerPreference: 'high-performance',
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  renderer.toneMapping = ACESFilmicToneMapping;
+  const materials = await createLabMaterials(renderer.capabilities.getMaxAnisotropy());
+  const scene = new Scene();
+  const camera = new PerspectiveCamera(46, 1, 0.015, 50000);
+  const surface = new Mesh(new PlaneGeometry(1, 1).rotateX(-Math.PI / 2), materials.game);
+  const sun = new DirectionalLight(0xffffff, 3.4);
+  const sunDirection = materials.sunDirection.value;
+  scene.add(surface, sun, new AmbientLight(0xffffff, 0.08));
+  const controls = new MapControls(camera, canvas);
+  controls.enableRotate = false;
+  controls.screenSpacePanning = false;
+  controls.mouseButtons.RIGHT = controls.mouseButtons.LEFT;
+  controls.listenToKeyEvents(canvas);
+  let applyingView = false;
+  let pendingFrame = 0;
+  let materialTiming: AbortController | undefined;
+
+  function render() {
+    pendingFrame = 0;
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    if (!w || !h) return;
+    const dpr = renderer.getPixelRatio();
+    if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr))
+      renderer.setSize(w, h, false);
+    const elevation = MathUtils.degToRad(view.sun);
+    sunDirection.set(-0.8 * Math.cos(elevation), Math.sin(elevation), -0.6 * Math.cos(elevation));
+    sun.position.copy(sunDirection);
+    materials.channel.value = CHANNELS.indexOf(view.channel);
+    materials.relief.value = view.relief;
+    materials.hybrid.value = view.variant === 'hybrid';
+    // A moving piece of flat geometry covers the frustum. The shader samples
+    // its world position, so dragging or resizing the plane cannot move a grain.
+    const extent = view.height * 24 * Math.max(1, w / h);
+    surface.scale.set(extent, 1, extent);
+    surface.position.copy(controls.target);
+    function draw(x: number, width: number, isProcedural: boolean) {
+      camera.aspect = width / h;
+      camera.updateProjectionMatrix();
+      renderer.setViewport(x, 0, width, h);
+      renderer.setScissor(x, 0, width, h);
+      surface.material = isProcedural ? materials.procedural : materials.game;
+      renderer.render(scene, camera);
+    }
+    renderer.setScissorTest(true);
+    const split = Math.floor(w / 2);
+    if (view.mode === 'compare') {
+      draw(0, split, false);
+      draw(split, w - split, true);
+    } else {
+      draw(0, w, view.mode === 'candidate');
+    }
+    const metresPerPixel =
+      (2 *
+        camera.position.distanceTo(controls.target) *
+        Math.tan(MathUtils.degToRad(camera.fov / 2))) /
+      h;
+    onScale(scaleBar(metresPerPixel, Math.min(112, (view.mode === 'compare' ? split : w) * 0.36)));
+  }
+  function invalidate() {
+    if (!pendingFrame) pendingFrame = requestAnimationFrame(render);
+  }
+  function updateCamera() {
+    applyingView = true;
+    const tilt = MathUtils.degToRad(view.angle === 'oblique' ? 52 : 0.0001);
+    controls.minDistance = MIN_ALTITUDE / Math.cos(tilt);
+    controls.maxDistance = MAX_ALTITUDE / Math.cos(tilt);
+    controls.target.set(view.x, 0, view.z);
+    camera.position.set(view.x, view.height, view.z + view.height * Math.tan(tilt));
+    controls.update();
+    applyingView = false;
+    invalidate();
+  }
+  controls.addEventListener('change', () => {
+    if (applyingView) return;
+    view.height = camera.position.y;
+    view.x = controls.target.x;
+    view.z = controls.target.z;
+    onNavigate();
+    invalidate();
+  });
+  new ResizeObserver(invalidate).observe(canvas);
+  updateCamera();
+  return {
+    updateCamera,
+    invalidate,
+    cancelTiming() {
+      materialTiming?.abort();
+    },
+    async measure() {
+      materialTiming?.abort();
+      materialTiming = new AbortController();
+      if (pendingFrame) cancelAnimationFrame(pendingFrame);
+      render();
+      const square = camera.clone();
+      square.aspect = 1;
+      square.updateProjectionMatrix();
+      return timeMaterials(
+        renderer,
+        (isProcedural) => {
+          surface.material = isProcedural ? materials.procedural : materials.game;
+          renderer.render(scene, square);
+        },
+        materialTiming.signal
+      );
+    },
+  };
+}

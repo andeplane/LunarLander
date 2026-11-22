@@ -33,6 +33,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         benchmark: resolve(__dirname, 'benchmark.html'),
+        surfaceLab: resolve(__dirname, 'surface-lab.html'),
       },
     },
   },
