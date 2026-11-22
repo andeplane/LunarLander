@@ -13,7 +13,7 @@ import { MapControls } from 'three/addons/controls/MapControls.js';
 import { SunShadows } from '../rendering/SunShadows';
 import { PebbleSurface } from '../terrain/PebbleSurface';
 import { createLabMaterials } from './materials';
-import { timeMaterials } from './timing';
+import { TIMING_SIZE, timeMaterials } from './timing';
 import { CHANNELS, type LabView, MAX_ALTITUDE, MIN_ALTITUDE, scaleBar } from './view';
 
 export async function createSurfaceScene(
@@ -81,6 +81,32 @@ export async function createSurfaceScene(
     pebbles.root.visible = patchReady && showCandidate && surface.material === materials.flight;
   }
 
+  function preparePebbles(viewCamera: PerspectiveCamera, viewportHeight: number) {
+    if (
+      pebbles.update(
+        viewCamera.position,
+        viewCamera.position.y,
+        0,
+        candidateMaterial() === materials.flight,
+        viewCamera,
+        viewportHeight
+      )
+    )
+      shadowRevision++;
+    patchReady = pebbles.root.visible;
+    const shadowState = {
+      cameraPosition: viewCamera.position,
+      groundHeight: 0,
+      sunDirection,
+      sunVisible: true,
+      terrainRevision: 0,
+      nearCasterRevision: shadowRevision,
+      planetRadius: null,
+    };
+    // The lab renders on demand. Initialise all three depth samplers in the same frame.
+    for (let i = 0; i < 3 && shadows.plan(shadowState); i++) shadows.renderPending(scene);
+  }
+
   function render() {
     pendingFrame = 0;
     const w = canvas.clientWidth;
@@ -97,28 +123,8 @@ export async function createSurfaceScene(
     materials.flight.setParam('detailStrength', view.variant === 'pebbles' ? 1 : view.relief);
     materials.flight.setParam('pebbleHeight', view.variant === 'pebbles' ? view.relief : 1);
     camera.aspect = (view.mode === 'compare' ? w / 2 : w) / h;
-    if (
-      pebbles.update(
-        camera.position,
-        camera.position.y,
-        0,
-        candidateMaterial() === materials.flight,
-        camera
-      )
-    )
-      shadowRevision++;
-    patchReady = pebbles.root.visible;
-    const shadowState = {
-      cameraPosition: camera.position,
-      groundHeight: 0,
-      sunDirection,
-      sunVisible: true,
-      terrainRevision: 0,
-      nearCasterRevision: shadowRevision,
-      planetRadius: null,
-    };
-    // The lab renders on demand. Initialise all three depth samplers in the same frame.
-    for (let i = 0; i < 3 && shadows.plan(shadowState); i++) shadows.renderPending(scene);
+    camera.updateProjectionMatrix();
+    preparePebbles(camera, canvas.height);
     materials.hybrid.value = view.variant === 'hybrid';
     // A moving piece of flat geometry covers the frustum. The shader samples
     // its world position, so dragging or resizing the plane cannot move a grain.
@@ -152,6 +158,10 @@ export async function createSurfaceScene(
   function invalidate() {
     if (!pendingFrame) pendingFrame = requestAnimationFrame(render);
   }
+  function renderNow() {
+    if (pendingFrame) cancelAnimationFrame(pendingFrame);
+    render();
+  }
   function updateCamera() {
     applyingView = true;
     const tilt = MathUtils.degToRad(
@@ -175,9 +185,9 @@ export async function createSurfaceScene(
   });
   new ResizeObserver(invalidate).observe(canvas);
   updateCamera();
-  render();
+  renderNow();
   await pebbles.ready();
-  render();
+  renderNow();
   return {
     updateCamera,
     invalidate,
@@ -186,22 +196,28 @@ export async function createSurfaceScene(
     },
     async measure() {
       materialTiming?.abort();
-      materialTiming = new AbortController();
-      if (pendingFrame) cancelAnimationFrame(pendingFrame);
-      render();
+      const timing = new AbortController();
+      materialTiming = timing;
+      renderNow();
       await pebbles.ready();
-      render();
+      timing.signal.throwIfAborted();
+      renderNow();
       const square = camera.clone();
       square.aspect = 1;
       square.updateProjectionMatrix();
-      return timeMaterials(
-        renderer,
-        (showCandidate) => {
-          selectMaterial(showCandidate);
-          renderer.render(scene, square);
-        },
-        materialTiming.signal
-      );
+      preparePebbles(square, TIMING_SIZE);
+      try {
+        return await timeMaterials(
+          renderer,
+          (showCandidate) => {
+            selectMaterial(showCandidate);
+            renderer.render(scene, square);
+          },
+          timing.signal
+        );
+      } finally {
+        invalidate();
+      }
     },
   };
 }

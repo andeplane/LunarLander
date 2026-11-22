@@ -532,7 +532,7 @@ export class ChunkManager {
   /**
    * Update terrain based on camera position
    */
-  update(cameraPosition: Vector3): void {
+  update(cameraPosition: Vector3, viewportHeight = window.innerHeight): void {
     if (this.camera) {
       this.camera.getWorldDirection(this.cameraForward);
     }
@@ -638,7 +638,8 @@ export class ChunkManager {
         cameraPosition.y - corner[3],
         this.terrainRevision,
         ready && !this.debugMode,
-        this.camera
+        this.camera,
+        viewportHeight
       );
       if (changed) {
         this.pebbleShadowRevision++;

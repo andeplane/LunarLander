@@ -9,6 +9,8 @@ import { type RockArchetype, rockArchetype, rockHeightRatio } from './rockProtot
  * Shared by generate(), generateLibrary() and createLibraryBuilder().
  */
 export interface RockLibraryOptions {
+  /** Small broken fragments have oblique fracture faces and an uneven crown. */
+  archetype?: RockArchetype | 'fragment';
   /**
    * Icosphere subdivision frequency of the starting mesh. The result has at
    * most 20·(detail+1)² triangles (fewer once collapsed ones are removed).
@@ -424,13 +426,20 @@ function trimSpikes(body: CutBody, random: () => number, limitRatio: number): vo
 
 /** Build the cut planes and stretch for one shape. */
 function createCutBody(
-  archetype: RockArchetype,
+  archetype: RockArchetype | 'fragment',
   heightRatio: number,
   random: () => number
 ): CutBody {
   const body = new CutBody();
 
-  if (archetype === 'block' || archetype === 'slab') {
+  if (archetype === 'fragment') {
+    // A few deep breaks leave an asymmetric section of the parent rock. Shallow
+    // cuts chip its remaining rim without creating pairs of parallel faces.
+    addObliqueCuts(body, random, 2 + Math.floor(random() * 3), 0.45, 0.72);
+    addObliqueCuts(body, random, 4 + Math.floor(random() * 4), 0.72, 0.94);
+    addChips(body, random, 3);
+    body.stretch = [1, heightRatio * range(random, 0.9, 1.25), range(random, 0.61, 0.96)];
+  } else if (archetype === 'block' || archetype === 'slab') {
     // An irregular hexahedron: six roughly axis-aligned faces, each tilted
     const tilt = archetype === 'slab' ? 0.16 : 0.26;
     const axes: readonly (readonly [number, number, number])[] = [
@@ -1288,7 +1297,7 @@ export class RockBuilder {
     const random = alea(seed);
     const noise3D = createNoise3D(random);
     const heightRatio = rockHeightRatio(seed);
-    const body = createCutBody(rockArchetype(seed), heightRatio, random);
+    const body = createCutBody(options.archetype ?? rockArchetype(seed), heightRatio, random);
     const rotation = restingRotation(body);
 
     const base = getBaseSphere(detail);

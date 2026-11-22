@@ -5,6 +5,7 @@ self.onmessage = ({ data }: MessageEvent<PebbleRequest>) => {
   if (data.stamps) field = new PebbleField(data.stamps);
   const result = field.window(data.x, data.z);
   const buffers = [result.stones.buffer];
+  if (result.detailMap) buffers.push(result.detailMap.data.buffer);
   for (const mesh of result.shapes ?? [])
     buffers.push(mesh.position.buffer, mesh.normal.buffer, mesh.index.buffer);
   self.postMessage(result, { transfer: buffers as ArrayBuffer[] });

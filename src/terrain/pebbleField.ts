@@ -1,6 +1,6 @@
 import { RockBuilder } from '../environment/RockBuilder';
-import { rockHeightRatio } from '../environment/rockPrototypes';
-import type { PebbleStamp } from '../shaders/regolithDetail';
+import { hashToUnit, rockHeightRatio } from '../environment/rockPrototypes';
+import { generateStoneDetail, type PebbleStamp } from '../shaders/regolithDetail';
 import {
   FINE_PEBBLE_REACH,
   PEBBLE_REACH,
@@ -10,15 +10,21 @@ import {
 } from './pebblePlacement';
 
 export const PEBBLE_SHAPES = 8;
-// Fourteen interleaved GPU floats (ground, form, bed, width), plus the CPU's shape index.
-export const INSTANCE_STRIDE = 14;
+export const PEBBLE_DETAILS = [1, 4, 11] as const;
+// Four interleaved instance attributes, followed by a CPU-only shape index.
+export const INSTANCE_STRIDE = 15;
 export const FIELD_STRIDE = INSTANCE_STRIDE + 1;
 
 function prototype(key: number) {
   const shape = key % PEBBLE_SHAPES;
+  const wear = hashToUnit(shape + 53);
   const source = RockBuilder.generate(shape, {
-    detail: key >= PEBBLE_SHAPES ? 4 : 1,
-    roughness: 1.15,
+    archetype: 'fragment',
+    detail: PEBBLE_DETAILS[Math.floor(key / PEBBLE_SHAPES)],
+    roughness: 1.7 + 1.3 * wear,
+    bevel: 1.05 + 1.45 * wear,
+    edgeSnap: 0.12,
+    creaseAngle: 52 + 14 * wear,
   });
   source.scale(2, 1 / rockHeightRatio(shape), 2);
   return {
@@ -34,6 +40,7 @@ export interface PebbleWindow {
   z: number;
   stones: Float32Array;
   shapes?: ChipPrototype[];
+  detailMap?: ReturnType<typeof generateStoneDetail>;
 }
 
 export interface PebbleRequest {
@@ -93,11 +100,20 @@ export class PebbleField {
       const r = p.stamp.outline;
       data[at + 12] = (r[0] + r[3]) * 0.5;
       data[at + 13] = (r[1] + r[2] + r[4] + r[5]) * 0.25;
-      data[at + 14] = p.shape;
+      // Adjacent marks have similar atlas coordinates. Choose the actual fragment
+      // and its mineral exposure independently at each world-space position.
+      const seed = Math.imul(Math.round(p.x * 512), 0x8da6b343) ^ Math.round(p.z * 512);
+      const variety = hashToUnit(seed) * PEBBLE_SHAPES;
+      const shape = Math.floor(variety);
+      data[at + 14] = variety - shape;
+      data[at + INSTANCE_STRIDE] = shape;
     }
     const result: PebbleWindow = { x: tx, z: tz, stones: data };
     if (!this.builtShapes) {
-      result.shapes = Array.from({ length: PEBBLE_SHAPES * 2 }, (_, i) => prototype(i));
+      result.shapes = Array.from({ length: PEBBLE_SHAPES * PEBBLE_DETAILS.length }, (_, i) =>
+        prototype(i)
+      );
+      result.detailMap = generateStoneDetail();
       this.builtShapes = true;
     }
     return result;

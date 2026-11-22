@@ -16,7 +16,6 @@ export interface PlacedPebble {
   z: number;
   radius: number;
   height: number;
-  shape: number;
   burial: number;
   angle: number;
   reach: number;
@@ -122,7 +121,6 @@ export class PebbleAtlas {
               output.push({
                 x,
                 z,
-                shape: Math.min(7, Math.floor(stamp.v * 8)),
                 burial:
                   0.32 + 0.3 * stamp.u + 0.13 * (1 - weight) + 0.17 * exposure(x * 0.21, z * 0.21),
                 radius: radius * (0.79 + 0.21 * weight),

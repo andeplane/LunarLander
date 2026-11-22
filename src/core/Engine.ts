@@ -469,7 +469,7 @@ export class Engine {
 
     // Update chunk manager with camera position
     if (this.chunkManager) {
-      this.chunkManager.update(this.camera.position);
+      this.chunkManager.update(this.camera.position, this.renderer.domElement.height);
     }
 
     // Update terrain colliders (must happen before physics step)

@@ -1,6 +1,6 @@
 import { type WebGLRenderer, WebGLRenderTarget } from 'three';
 
-const SIZE = 512;
+export const TIMING_SIZE = 512;
 const SAMPLES = 7;
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
@@ -16,13 +16,14 @@ export async function timeMaterials(
   const isSoftware =
     info &&
     /swiftshader|llvmpipe|softpipe|software/i.test(gl.getParameter(info.UNMASKED_RENDERER_WEBGL));
-  const target = new WebGLRenderTarget(SIZE, SIZE);
+  const target = new WebGLRenderTarget(TIMING_SIZE, TIMING_SIZE);
   const pixel = new Uint8Array(4);
   function draw(candidate: boolean, readBack: boolean) {
     renderer.setRenderTarget(target);
     try {
       render(candidate);
-      if (readBack) renderer.readRenderTargetPixels(target, SIZE / 2, SIZE / 2, 1, 1, pixel);
+      if (readBack)
+        renderer.readRenderTargetPixels(target, TIMING_SIZE / 2, TIMING_SIZE / 2, 1, 1, pixel);
     } finally {
       renderer.setRenderTarget(null);
     }

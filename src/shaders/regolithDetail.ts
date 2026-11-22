@@ -303,11 +303,64 @@ export function generateRegolithDetail(options: RegolithDetailOptions): Regolith
   return { size, data, pebbles };
 }
 
+/** Millimetre-scale fractured rock matrix. RG = slope, B = mineral tone, A = exposed surface. */
+export function generateStoneDetail() {
+  const size = 256;
+  const random = alea('lunar fragment matrix');
+  const height = new Float32Array(size * size);
+  const mineral = new Float32Array(size * size);
+  const cavity = new Float32Array(size * size);
+  addTilingFbm(height, size, random, 8, 5, 0.66);
+  addTilingFbm(mineral, size, random, 16, 4, 0.7);
+
+  // Flakes break out in slivers. The floor slopes towards one end, with a steeper
+  // fracture lip on the opposite end. Their highlights follow the actual sun.
+  for (let i = 0; i < 560; i++) {
+    const radius = 1.3 + 8.8 * random() ** 3;
+    const width = 0.22 + 0.65 * random();
+    const angle = 2 * Math.PI * random();
+    const cs = Math.cos(angle),
+      sn = Math.sin(angle);
+    const depth = 0.12 + 0.2 * random();
+    stamp(size, random() * size, random() * size, radius, 1, (index, _t, dx, dy) => {
+      const along = cs * dx + sn * dy;
+      const across = (cs * dy - sn * dx) / width;
+      const cut = Math.max(0, 1 - Math.abs(along) ** 1.6 - across * across);
+      const hollow = cut * Math.min(1, 1.8 * (along + 1));
+      height[index] -= radius * depth * hollow;
+      cavity[index] = Math.max(cavity[index], hollow);
+    });
+  }
+  const slope = computeSlopes(height, size);
+  const data = new Uint8Array(size * size * 4);
+  const byte = (v: number) => Math.round(255 * Math.max(0, Math.min(1, v)));
+  for (let i = 0; i < height.length; i++) {
+    // Occasional pale inclusions set into a fine-grained darker matrix.
+    const grain = random() - 0.5;
+    const inclusion = Math.max(0, mineral[i] - 0.46);
+    const tone = mineral[i] * 0.1 + inclusion * 0.23 + grain * 0.19 - cavity[i] * 0.11;
+    data[i * 4] = byte(0.5 + slope.dx[i] / (2 * REGOLITH_SLOPE_RANGE));
+    data[i * 4 + 1] = byte(0.5 + slope.dy[i] / (2 * REGOLITH_SLOPE_RANGE));
+    data[i * 4 + 2] = byte(0.5 + tone);
+    data[i * 4 + 3] = byte(1 - cavity[i]);
+  }
+  return { size, data };
+}
+
 /**
  * Wrap a generated detail map in a mipmapped, repeating GPU texture.
  */
-export function createRegolithDetailTexture(detail: RegolithDetail, anisotropy = 8): DataTexture {
-  const texture = new DataTexture(detail.data, detail.size, detail.size, RGBAFormat, UnsignedByteType);
+export function createRegolithDetailTexture(
+  detail: Pick<RegolithDetail, 'data' | 'size'>,
+  anisotropy = 8
+): DataTexture {
+  const texture = new DataTexture(
+    detail.data,
+    detail.size,
+    detail.size,
+    RGBAFormat,
+    UnsignedByteType
+  );
   texture.wrapS = RepeatWrapping;
   texture.wrapT = RepeatWrapping;
   texture.magFilter = LinearFilter;

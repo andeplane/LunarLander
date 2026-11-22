@@ -1,4 +1,4 @@
-import { type InstancedBufferGeometry, type Mesh, Vector3 } from 'three';
+import { type InstancedBufferGeometry, type Mesh, PerspectiveCamera, Vector3 } from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { getSharedPebbleStamps, MoonMaterial } from '../shaders/MoonMaterial';
 import { MEDIUM_PEBBLE_FREQUENCY, patchTransform } from '../shaders/regolithTiling';
@@ -68,5 +68,40 @@ describe('grounded pebble meshes', () => {
     expect(patch.update(camera, 1.7, 0)).toBe(false);
     patch.dispose();
     ground.dispose();
+  });
+
+  it('refines the same visible stone when its screen footprint grows', () => {
+    const ground = new MoonMaterial();
+    const patch = new PebbleSurface(ground, (_x, _z, out) => {
+      out.set([0, 1, 0, 0]);
+      return true;
+    });
+    const view = new PerspectiveCamera(65, 1, 0.02, 100);
+    view.position.set(0, 1.4, 0);
+    view.lookAt(0, 0, -2);
+    function triangleCounts(viewportHeight: number) {
+      patch.update(view.position, 1.4, 0, true, view, viewportHeight);
+      const counts = new Map<string, number>();
+      for (const mesh of patch.root.children as Mesh<InstancedBufferGeometry>[]) {
+        if (!mesh.layers.isEnabled(0)) continue;
+        const geometry = mesh.geometry;
+        const at = geometry.getAttribute('chipGround');
+        const triangles = (geometry.getIndex()?.count ?? 0) / 3;
+        for (let i = 0; i < geometry.instanceCount; i++) {
+          counts.set(`${at.getX(i)},${at.getZ(i)}`, triangles);
+        }
+      }
+      return counts;
+    }
+    try {
+      const small = triangleCounts(240);
+      const large = triangleCounts(1600);
+      expect(new Set(large.keys())).toEqual(new Set(small.keys()));
+      expect([...large].some(([key, n]) => n > 1200 && n > (small.get(key) ?? 0))).toBe(true);
+      expect(Math.min(...large.values())).toBeLessThan(100);
+    } finally {
+      patch.dispose();
+      ground.dispose();
+    }
   });
 });
