@@ -1031,7 +1031,11 @@ export class ChunkManager {
    * when their contents can have changed.
    */
   getTerrainRevision(): number {
-    return this.terrainRevision + this.pebbleShadowRevision;
+    return this.terrainRevision;
+  }
+
+  getNearCasterRevision(): number {
+    return this.pebbleShadowRevision;
   }
 
   /** Read the closest vertex of the visible fine mesh. The patch requests its lattice points exactly. */

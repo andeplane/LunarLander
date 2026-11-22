@@ -86,6 +86,7 @@ export class Engine {
     sunDirection: new THREE.Vector3(0, 1, 0),
     sunVisible: false,
     terrainRevision: 0,
+    nearCasterRevision: 0,
     planetRadius: null,
   };
   
@@ -512,6 +513,7 @@ export class Engine {
         shadowState.sunDirection.copy(sunDirection);
         shadowState.sunVisible = sunHorizonFade > 0.001;
         shadowState.terrainRevision = this.chunkManager.getTerrainRevision();
+        shadowState.nearCasterRevision = this.chunkManager.getNearCasterRevision();
         shadowState.planetRadius = curvatureOn ? this.celestialSystem.getPlanetRadius() : null;
         if (this.sunShadows.plan(shadowState)) {
           this.requestRender();

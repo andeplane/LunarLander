@@ -200,6 +200,8 @@ export interface SunShadowFrameState {
   sunVisible: boolean;
   /** Changes whenever shadow-casting geometry is added, removed or swapped. */
   terrainRevision: number;
+  /** Geometry that casts only into the nearest sun shadow map. */
+  nearCasterRevision: number;
   /** Planet radius of the curvature warp, or null when curvature is off. */
   planetRadius: number | null;
 }
@@ -299,7 +301,14 @@ float sunShadowCascade1(vec3 worldPos, vec3 worldNormal) {
 /** Fraction of sunlight reaching a surface point: 0 = fully shadowed, 1 = lit. */
 float sunShadowVisibility(vec3 worldPos, vec3 worldNormal) {
   if (uSunShadowActive.x < 0.5) return sunShadowCascade1(worldPos, worldNormal);
-  vec3 coord = sunShadowCoord(uSunShadowMatrix[0], uSunShadowWarp[0], worldPos, worldNormal, uSunShadowTexel.x);
+  float nearTexel = uSunShadowTexel.x;
+  #ifdef MOON_PEBBLE_SURFACE
+    // The ordinary terrain bias is about 6 cm here and would clear most pebbles.
+    // Bring it back to full strength before the replacement mesh meets the terrain.
+    vec3 toEye = worldPos - cameraPosition;
+    nearTexel *= mix(0.15, 1.0, smoothstep(6.25, 23.04, dot(toEye, toEye)));
+  #endif
+  vec3 coord = sunShadowCoord(uSunShadowMatrix[0], uSunShadowWarp[0], worldPos, worldNormal, nearTexel);
   float edge = sunShadowEdge(coord);
   if (edge >= 1.0) return sunShadowCascade1(worldPos, worldNormal);
   float visibility = sunShadowPcf(uSunShadowMap0, coord);
@@ -339,6 +348,7 @@ export class SunShadows {
   private pendingCascade = -1;
   private pendingState: SunShadowFrameState | null = null;
   private pendingHalfExtent = 0;
+  private renderedNearCasterRevision = -1;
   private renderCount = 0;
 
   constructor(renderer: ShadowPassRenderer, options: Partial<SunShadowOptions> = {}) {
@@ -439,8 +449,11 @@ export class SunShadows {
         chosen = i;
         break;
       }
+      const geometryChanged =
+        cascade.revision !== state.terrainRevision ||
+        (i === 0 && this.renderedNearCasterRevision !== state.nearCasterRevision);
       const refreshDue =
-        cascade.revision !== state.terrainRevision &&
+        geometryChanged &&
         this.frameIndex - cascade.renderedFrame >= options.terrainRefreshFrames[i];
       if (refreshDue && chosen < 0) chosen = i;
     }
@@ -518,6 +531,7 @@ export class SunShadows {
     cascade.halfExtent = this.pendingHalfExtent;
     cascade.invTwoRadius = invTwoRadius;
     cascade.revision = state.terrainRevision;
+    if (index === 0) this.renderedNearCasterRevision = state.nearCasterRevision;
     cascade.renderedFrame = this.frameIndex;
     cascade.cameraX = state.cameraPosition.x;
     cascade.cameraZ = state.cameraPosition.z;

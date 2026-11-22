@@ -50,6 +50,7 @@ function makeState(overrides: Partial<SunShadowFrameState> = {}): SunShadowFrame
     sunDirection: new Vector3(1, 1, 0).normalize(),
     sunVisible: true,
     terrainRevision: 1,
+    nearCasterRevision: 0,
     planetRadius: null,
     ...overrides,
   };
@@ -305,6 +306,16 @@ describe('SunShadows', () => {
     expect(renders).toBe(3);
     expect(shadows.getRenderCount()).toBe(before + 3);
     expect(shadows.plan(changed)).toBe(false);
+  });
+
+  it('refreshes only the nearest map when close pebbles move', () => {
+    const renderer = new FakeRenderer();
+    const shadows = new SunShadows(renderer, { mapSize: 64, terrainRefreshFrames: [1, 1, 1] });
+    const scene = new Scene();
+    expect(settle(shadows, scene, makeState())).toBe(3);
+
+    expect(settle(shadows, scene, makeState({ nearCasterRevision: 1 }))).toBe(1);
+    expect(renderer.passes[3].target).toBe(renderer.passes[0].target);
   });
 
   it('invalidate() forces a full re-render and hides stale maps', () => {

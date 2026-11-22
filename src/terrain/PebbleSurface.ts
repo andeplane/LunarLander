@@ -76,6 +76,7 @@ export class PebbleSurface {
   private readonly support = new Float32Array(SIDE * SIDE * 4);
   private readonly ground = new DataTexture(this.support, SIDE, SIDE, RGBAFormat, FloatType);
   private readonly eye = new Vector3();
+  private readonly shadowEye = new Vector3();
   private readonly strength = { value: 1 };
   private readonly geometry: BufferGeometry;
   private readonly material = new MeshStandardMaterial();
@@ -185,8 +186,16 @@ export class PebbleSurface {
     }
     const ix = Math.round(camera.x / this.dx),
       iz = Math.round(camera.z / this.dz);
-    if (ix === this.gridX && iz === this.gridZ && revision === this.revision && wasVisible)
-      return previousStrength !== this.strength.value;
+    if (ix === this.gridX && iz === this.gridZ && revision === this.revision && wasVisible) {
+      // A vertical descent also changes pebble silhouettes inside a stationary support grid.
+      if (
+        previousStrength === this.strength.value &&
+        this.shadowEye.distanceToSquared(camera) < 0.25 ** 2
+      )
+        return false;
+      this.shadowEye.copy(camera);
+      return true;
+    }
     this.gridX = ix;
     this.gridZ = iz;
     this.revision = revision;
@@ -213,6 +222,7 @@ export class PebbleSurface {
       (PEBBLE_PATCH_RADIUS - 0.5) * this.dz
     );
     this.ground.needsUpdate = true;
+    this.shadowEye.copy(camera);
     this.root.visible = true;
     return true;
   }

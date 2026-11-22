@@ -21,6 +21,10 @@ describe('grounded pebble relief', () => {
     camera.x += 0.03;
     expect(patch.update(camera, 0.6, 1)).toBe(false);
     expect(sample).toHaveBeenCalledTimes(samples);
+    camera.y += 0.3;
+    expect(patch.update(camera, 0.9, 1)).toBe(true);
+    expect(patch.update(camera, 0.9, 1)).toBe(false);
+    expect(sample).toHaveBeenCalledTimes(samples);
     terrain.setParam('pebbleHeight', 1.5);
     expect(patch.update(camera, 0.6, 1)).toBe(true);
     expect(sample).toHaveBeenCalledTimes(samples);
