@@ -195,6 +195,13 @@ const landerMode = new LanderMode({
 const menuMode = new MenuMode(engine.getCamera(), {
   onSelectExplore: () => modeManager.switchTo(exploreMode),
   onSelectLander: () => modeManager.switchTo(landerMode),
+  getSurfaceLabHref: () => {
+    const { x, y, z } = engine.getCamera().position;
+    const patch = new URLSearchParams({ x: String(x), z: String(z) });
+    const ground = chunkManager.getHeightAt(x, z);
+    if (ground !== null) patch.set('h', String(y - ground));
+    return `./surface-lab.html#${patch}`;
+  },
   requestRender: () => engine.requestRender(),
 });
 

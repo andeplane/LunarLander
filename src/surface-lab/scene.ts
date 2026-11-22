@@ -30,7 +30,7 @@ export async function createSurfaceScene(
   const materials = await createLabMaterials(renderer.capabilities.getMaxAnisotropy());
   const scene = new Scene();
   const camera = new PerspectiveCamera(46, 1, 0.015, 50000);
-  const surface = new Mesh(new PlaneGeometry(1, 1).rotateX(-Math.PI / 2), materials.game);
+  const surface = new Mesh(new PlaneGeometry(1, 1).rotateX(-Math.PI / 2), materials.reference);
   const sun = new DirectionalLight(0xffffff, 3.4);
   const sunDirection = materials.sunDirection.value;
   scene.add(surface, sun, new AmbientLight(0xffffff, 0.08));
@@ -42,6 +42,10 @@ export async function createSurfaceScene(
   let applyingView = false;
   let pendingFrame = 0;
   let materialTiming: AbortController | undefined;
+
+  function candidateMaterial() {
+    return view.variant === 'flight' ? materials.flight : materials.procedural;
+  }
 
   function render() {
     pendingFrame = 0;
@@ -56,18 +60,19 @@ export async function createSurfaceScene(
     sun.position.copy(sunDirection);
     materials.channel.value = CHANNELS.indexOf(view.channel);
     materials.relief.value = view.relief;
+    materials.flight.setParam('detailStrength', view.relief);
     materials.hybrid.value = view.variant === 'hybrid';
     // A moving piece of flat geometry covers the frustum. The shader samples
     // its world position, so dragging or resizing the plane cannot move a grain.
     const extent = view.height * 24 * Math.max(1, w / h);
     surface.scale.set(extent, 1, extent);
     surface.position.copy(controls.target);
-    function draw(x: number, width: number, isProcedural: boolean) {
+    function draw(x: number, width: number, showCandidate: boolean) {
       camera.aspect = width / h;
       camera.updateProjectionMatrix();
       renderer.setViewport(x, 0, width, h);
       renderer.setScissor(x, 0, width, h);
-      surface.material = isProcedural ? materials.procedural : materials.game;
+      surface.material = showCandidate ? candidateMaterial() : materials.reference;
       renderer.render(scene, camera);
     }
     renderer.setScissorTest(true);
@@ -125,8 +130,8 @@ export async function createSurfaceScene(
       square.updateProjectionMatrix();
       return timeMaterials(
         renderer,
-        (isProcedural) => {
-          surface.material = isProcedural ? materials.procedural : materials.game;
+        (showCandidate) => {
+          surface.material = showCandidate ? candidateMaterial() : materials.reference;
           renderer.render(scene, square);
         },
         materialTiming.signal

@@ -1,10 +1,11 @@
-import { MirroredRepeatWrapping, SRGBColorSpace, TextureLoader, Uniform, Vector3 } from 'three';
+import { MirroredRepeatWrapping, TextureLoader, Uniform, Vector3 } from 'three';
 import { MoonMaterial } from '../shaders/MoonMaterial';
 import grainUrl from './grain.png?url';
 import { proceduralRegolith } from './proceduralRegolith';
 
 export async function createLabMaterials(maxAnisotropy: number) {
-  const game = new MoonMaterial();
+  const reference = new MoonMaterial({ broadRelief: 'atlas' });
+  const flight = new MoonMaterial();
   const procedural = new MoonMaterial();
   const loader = new TextureLoader();
   const grain = await loader.loadAsync(grainUrl);
@@ -15,28 +16,9 @@ export async function createLabMaterials(maxAnisotropy: number) {
   const relief = new Uniform(1);
   const sunDirection = new Uniform(new Vector3());
 
-  // The released material loads a photo in main.ts. The terrain remake creates
-  // its own packed detail map. Let each checkout supply its actual baseline.
-  const settings = game.getParams();
-  if ('textureHighDetail' in settings) {
-    const texture = await loader.loadAsync(
-      `${import.meta.env.BASE_URL}textures/surface-high-detail.png`
-    );
-    texture.wrapS = texture.wrapT = MirroredRepeatWrapping;
-    texture.colorSpace = SRGBColorSpace;
-    texture.anisotropy = Math.min(maxAnisotropy, 16);
-    const textured = { ...settings, textureHighDetail: texture };
-    game.setParams(textured);
-  }
+  procedural.setParams({ enableColorVariation: false, enableDetail: false });
 
-  procedural.setParams({
-    enableColorVariation: false,
-    ...('enableDetail' in settings
-      ? { enableDetail: false }
-      : { enableTexture: false, enableMicroDetail: false }),
-  });
-
-  for (const material of [game, procedural]) {
+  for (const material of [reference, flight, procedural]) {
     material.setParam('enableCurvature', false);
     const isProcedural = material === procedural;
     const compileGame = material.onBeforeCompile.bind(material);
@@ -78,5 +60,5 @@ export async function createLabMaterials(maxAnisotropy: number) {
       );
     };
   }
-  return { game, procedural, channel, relief, sunDirection, hybrid };
+  return { reference, flight, procedural, channel, relief, sunDirection, hybrid };
 }

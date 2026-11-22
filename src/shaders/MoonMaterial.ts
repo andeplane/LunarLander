@@ -2,6 +2,7 @@ import { Color, type DataTexture, MeshStandardMaterial, ShaderChunk, type Textur
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 import { SUN_SHADOW_FRAGMENT_PARS, type SunShadowUniforms } from '../rendering/SunShadows';
 import { createRegolithDetailTexture, generateRegolithDetail, REGOLITH_SLOPE_RANGE } from './regolithDetail';
+import { regolithNoise } from './regolithNoise';
 
 /**
  * Shader parameters interface for MoonMaterial
@@ -49,6 +50,8 @@ export type MoonMaterialVariant = 'terrain' | 'rock';
 
 export interface MoonMaterialOptions {
   variant?: MoonMaterialVariant;
+  /** The lab can compare the previous 190 m detail-map layer with world-space soil. */
+  broadRelief?: 'world' | 'atlas';
   /** Detail map override (tests, or a custom map). Defaults to the shared generated one. */
   detailMap?: Texture;
 }
@@ -189,6 +192,29 @@ float moonMottle(vec2 p, float footprint) {
   return sum;
 }
 
+#if !defined(MOON_ROCK) && !defined(MOON_ATLAS_BROAD)
+${regolithNoise}
+
+// Broad slopes and albedo belong to this location on the Moon. The fine map
+// still supplies angular fragments and dust at its original close-up scales.
+vec3 moonBroadSoil(vec2 ground, float footprint) {
+  const mat2 turn = mat2(0.8, 0.6, -0.6, 0.8);
+  const vec2 bend = vec2(0.44, -0.31);
+  float broadWeight = 1.0 - smoothstep(2.7, 9.0, footprint);
+  if (broadWeight <= 0.0) return vec3(0.0);
+  vec3 broad = regolithNoise(ground / 22.5 + vec2(5.4, -8.6), 1823u);
+  vec3 field = vec3(broad.xy * 0.009, broad.z * 0.066) * broadWeight;
+  float fineWeight = 1.0 - smoothstep(0.60, 2.0, footprint);
+  if (fineWeight > 0.0) {
+    vec2 p = turn * ground / 5.0 + bend * broad.z;
+    vec3 fine = regolithNoise(p, 8147u);
+    vec2 slope = fine.xy * turn + dot(fine.xy, bend) * broad.xy * (5.0 / 22.5);
+    field += vec3(slope * 0.012, fine.z * 0.043) * fineWeight;
+  }
+  return field;
+}
+#endif
+
 /** One randomly placed and turned copy of the detail map, slopes turned back. */
 vec4 moonDetailTap(vec2 uv, vec2 dx, vec2 dy, vec2 vertex) {
   vec2 h = moonHash2(vertex);
@@ -224,7 +250,14 @@ vec4 moonDetail(vec2 uv, vec2 dx, vec2 dy) {
   vec4 sum = moonDetailTap(uv, dx, dy, v1) * w.x;
   if (w.y > 0.003) sum += moonDetailTap(uv, dx, dy, v2) * w.y;
   if (w.z > 0.003) sum += moonDetailTap(uv, dx, dy, v3) * w.z;
-  return sum * inversesqrt(dot(w, w));
+  vec4 corrected = sum * inversesqrt(dot(w, w));
+  #ifndef MOON_ATLAS_BROAD
+    // Height is unsigned and its mean varies with the generated map. Applying
+    // variance correction to that mean imprints the blend lattice on the soil.
+    float retained = w.x + (w.y > 0.003 ? w.y : 0.0) + (w.z > 0.003 ? w.z : 0.0);
+    corrected.w = sum.w / retained;
+  #endif
+  return corrected;
 }
 
 /**
@@ -309,7 +342,7 @@ ${SUN_SHADOW_FRAGMENT_PARS}
 #endif
 `;
 
-/** Terrain: the detail map projected top-down at three world scales. */
+/** Terrain: fine regolith detail and broader relief, all anchored in world metres. */
 const TERRAIN_SURFACE = /* glsl */ `
   vec2 groundPos = vWorldPosition.xz;
   // Footprint is metres of ground per pixel (geometric mean, so grazing
@@ -320,20 +353,28 @@ const TERRAIN_SURFACE = /* glsl */ `
   float footprint = sqrt(length(groundDx) * length(groundDy));
   float fineFade = 1.0 - smoothstep(0.045, 0.18, footprint);
   float mediumFade = 1.0 - smoothstep(0.36, 1.44, footprint);
-  float coarseFade = 1.0 - smoothstep(3.0, 12.0, footprint);
 
-  // Three scales of the same map, none of them repeating (see moonDetail):
-  // 2.9 m (grains, pebbles), 23 m (clods, craterlets), 190 m (soft craters)
+  // Keep the 2.9 m and 23 m material layers that carry grains, pebbles and clods.
   vec4 fine = vec4(0.0);
   vec4 medium = vec4(0.0);
-  vec4 coarse = vec4(0.0);
   if (fineFade > 0.0) fine = moonDetail(groundPos * 0.3448, groundDx * 0.3448, groundDy * 0.3448) * fineFade;
   if (mediumFade > 0.0) medium = moonDetail(groundPos * 0.04348 + vec2(0.37, 0.11), groundDx * 0.04348, groundDy * 0.04348) * mediumFade;
-  if (coarseFade > 0.0) coarse = moonDetail(groundPos * 0.005263 + vec2(0.71, 0.53), groundDx * 0.005263, groundDy * 0.005263) * coarseFade;
 
-  vec2 fineSlope = fine.xy;
-  vec2 mediumSlope = medium.xy;
-  vec2 coarseSlope = coarse.xy;
+  vec2 materialSlope = medium.xy * (0.45 * MOON_SLOPE_RANGE);
+  float tone = fine.z * 0.6 + medium.z * 0.38 + medium.w * 0.12;
+  float widestPixel = max(length(groundDx), length(groundDy));
+  #ifdef MOON_ATLAS_BROAD
+    float coarseFade = 1.0 - smoothstep(3.0, 12.0, footprint);
+    if (coarseFade > 0.0) {
+      vec4 coarse = moonDetail(groundPos * 0.005263 + vec2(0.71, 0.53), groundDx * 0.005263, groundDy * 0.005263) * coarseFade;
+      materialSlope += coarse.xy * (0.15 * MOON_SLOPE_RANGE);
+      tone += coarse.z * 0.35 + coarse.w * 0.1;
+    }
+  #else
+    vec3 soil = moonBroadSoil(groundPos, widestPixel);
+    materialSlope += soil.xy;
+    tone += soil.z;
+  #endif
   // A normal map cannot shadow itself: at grazing sun, metre-sized bumps
   // tilted past the terminator would turn into large black blotches where
   // the real surface is mostly lit with small shadows. Compress the part of
@@ -344,20 +385,17 @@ const TERRAIN_SURFACE = /* glsl */ `
   float sunGroundLength = max(length(sunGround), 1e-4);
   vec2 sunAlong = sunGround / sunGroundLength;
   // The widest pixel axis, so grazing views never alias the craterlets
-  vec3 craterlets = moonCraterField(groundPos, max(length(groundDx), length(groundDy))) * uCraterletStrength;
-  vec2 broadSlope = (mediumSlope * 0.45 + coarseSlope * 0.15) * (MOON_SLOPE_RANGE * uDetailStrength) + craterlets.xy * uDetailStrength;
+  vec3 craterlets = moonCraterField(groundPos, widestPixel) * uCraterletStrength;
+  vec2 broadSlope = (materialSlope + craterlets.xy) * uDetailStrength;
   float terminatorSlope = meshNdotL / sunGroundLength;
   broadSlope = moonLimitSlope(broadSlope, sunAlong, 0.5 * terminatorSlope + 0.02);
   // Magnified sun-facing edges would otherwise glow as broad bright smears
   broadSlope = moonLimitSlope(broadSlope, -sunAlong, 0.8 * terminatorSlope + 0.08);
   float grazing = mix(0.7, 1.0, smoothstep(0.03, 0.4, meshNdotL));
-  vec2 grainSlope = fineSlope * (0.8 * MOON_SLOPE_RANGE * uDetailStrength * grazing);
+  vec2 grainSlope = fine.xy * (0.8 * MOON_SLOPE_RANGE * uDetailStrength * grazing);
   vec2 slope = broadSlope + moonLimitSlope(grainSlope, sunAlong, 0.4 * terminatorSlope + 0.03);
   moonNormal = normalize(meshNormal - vec3(slope.x, 0.0, slope.y) * max(meshNormal.y, 0.3));
 
-  float tone = fine.z * 0.6 + medium.z * 0.38 + coarse.z * 0.35;
-  // Pits and hollows collect darker, more mature soil
-  tone += medium.w * 0.12 + coarse.w * 0.1;
   if (uEnableColorVariation > 0.5) {
     // Carries the surface where the detail scales have faded out
     tone += moonMottle(groundPos, footprint);
@@ -396,9 +434,8 @@ const ROCK_SURFACE = /* glsl */ `
  *
  * Works with regular meshes (terrain) and instanced meshes (rocks).
  *
- * - Albedo and fine relief come from one generated regolith detail map
- *   sampled at several scales (see regolithDetail.ts); mipmapping fades each
- *   scale with distance, so there is no shimmer and no distance logic.
+ * - A mipmapped regolith map supplies fine relief. Broader terrain slopes
+ *   and albedo come from world-space noise filtered by the pixel footprint.
  * - Lighting is three's standard pipeline with a regolith response
  *   (Lambert / Lommel-Seeliger blend plus opposition surge) folded into
  *   every directional light, and no specular term at all.
@@ -424,6 +461,8 @@ export class MoonMaterial extends MeshStandardMaterial {
     this.defines = { ...this.defines };
     if (this.variant === 'rock') {
       this.defines.MOON_ROCK = '';
+    } else if (options.broadRelief === 'atlas') {
+      this.defines.MOON_ATLAS_BROAD = '';
     }
 
     // Initialize default parameters

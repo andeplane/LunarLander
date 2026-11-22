@@ -1,5 +1,5 @@
 import { createSurfaceScene } from './scene';
-import { distanceLabel, type LabView, readView, viewHash } from './view';
+import { distanceLabel, type LabView, readView, VARIANT_NAMES, viewHash } from './view';
 
 function element<T extends HTMLElement>(id: string) {
   const node = document.getElementById(id);
@@ -34,9 +34,12 @@ function saveView() {
 function syncControls() {
   stage.dataset.mode = view.mode;
   variant.value = view.variant;
-  element('solo-label').textContent = view.variant === 'hybrid' ? 'Hybrid' : 'Procedural';
-  element('candidate-label').textContent =
-    view.variant === 'hybrid' ? 'Hybrid grain' : 'World-space procedural';
+  element('solo-label').textContent = VARIANT_NAMES[view.variant];
+  element('candidate-label').textContent = {
+    flight: 'Refined flight material',
+    hybrid: 'Hybrid grain',
+    procedural: 'World-space procedural',
+  }[view.variant];
   for (const button of modeButtons) button.checked = button.value === view.mode;
   for (const button of presets) {
     button.setAttribute(
@@ -126,7 +129,7 @@ measure.addEventListener('click', async () => {
   timing.textContent = 'Timing both materials…';
   try {
     const result = await scene.measure();
-    timing.textContent = `Game ${result.game.toFixed(2)} ms · ${view.variant === 'hybrid' ? 'Hybrid' : 'Procedural'} ${result.procedural.toFixed(2)} ms. ${result.method}, median at 512 × 512.`;
+    timing.textContent = `Original ${result.reference.toFixed(2)} ms · ${VARIANT_NAMES[view.variant]} ${result.candidate.toFixed(2)} ms. ${result.method}, median at 512 × 512.`;
   } catch (error) {
     if (!(error instanceof DOMException && error.name === 'AbortError')) {
       timing.textContent = error instanceof Error ? error.message : 'Timing unavailable.';

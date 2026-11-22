@@ -188,6 +188,14 @@ describe('MoonMaterial shader injection', () => {
     expect(rock.defines).toHaveProperty('MOON_ROCK');
   });
 
+  it('uses world-space broad relief on flight terrain and keeps the atlas reference available for the lab', () => {
+    const flight = createMaterial();
+    expect(flight.defines).not.toHaveProperty('MOON_ATLAS_BROAD');
+    expect(compile(flight).fragmentShader).toContain('moonBroadSoil(groundPos, widestPixel)');
+    expect(createMaterial({ broadRelief: 'atlas' }).defines).toHaveProperty('MOON_ATLAS_BROAD');
+    expect(createMaterial({ variant: 'rock', broadRelief: 'atlas' }).defines).not.toHaveProperty('MOON_ATLAS_BROAD');
+  });
+
   it('never samples the tiled detail map periodically on the terrain', () => {
     const shader = compile(createMaterial());
     const terrain = shader.fragmentShader.split('#ifdef MOON_ROCK')[0];

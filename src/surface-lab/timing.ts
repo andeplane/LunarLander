@@ -7,7 +7,7 @@ const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => r
 /** Times two warmed materials on the same fixed-size target and camera. */
 export async function timeMaterials(
   renderer: WebGLRenderer,
-  render: (procedural: boolean) => void,
+  render: (candidate: boolean) => void,
   signal: AbortSignal
 ) {
   const gl = renderer.getContext() as WebGL2RenderingContext;
@@ -18,22 +18,22 @@ export async function timeMaterials(
     /swiftshader|llvmpipe|softpipe|software/i.test(gl.getParameter(info.UNMASKED_RENDERER_WEBGL));
   const target = new WebGLRenderTarget(SIZE, SIZE);
   const pixel = new Uint8Array(4);
-  function draw(procedural: boolean, readBack: boolean) {
+  function draw(candidate: boolean, readBack: boolean) {
     renderer.setRenderTarget(target);
     try {
-      render(procedural);
+      render(candidate);
       if (readBack) renderer.readRenderTargetPixels(target, SIZE / 2, SIZE / 2, 1, 1, pixel);
     } finally {
       renderer.setRenderTarget(null);
     }
   }
-  async function sample(procedural: boolean) {
+  async function sample(candidate: boolean) {
     await frame();
     signal.throwIfAborted();
     if (gl.isContextLost()) throw new Error('WebGL context lost. Reload the lab to try again.');
     if (!timer) {
       const start = performance.now();
-      draw(procedural, true);
+      draw(candidate, true);
       return performance.now() - start;
     }
     const query = gl.createQuery();
@@ -41,7 +41,7 @@ export async function timeMaterials(
     try {
       gl.beginQuery(timer.TIME_ELAPSED_EXT, query);
       try {
-        draw(procedural, false);
+        draw(candidate, false);
       } finally {
         gl.endQuery(timer.TIME_ELAPSED_EXT);
       }
@@ -75,8 +75,8 @@ export async function timeMaterials(
     }
     const median = (values: number[]) => values.sort((a, b) => a - b)[Math.floor(SAMPLES / 2)];
     return {
-      game: median(times[0]),
-      procedural: median(times[1]),
+      reference: median(times[0]),
+      candidate: median(times[1]),
       method: timer ? (isSoftware ? 'Software renderer timer' : 'GPU timer') : 'Draw + readback',
     };
   } finally {

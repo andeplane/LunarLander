@@ -37,7 +37,7 @@ The development server will start at `http://localhost:3000` (or the next availa
 
 ### Surface lab
 
-Open [Surface lab](./surface-lab.html) on the development server to compare the checkout’s game material with two world-space experiments. **Hybrid grain** uses a high-pass extract of the existing surface image over procedural soil. **Procedural** computes the grain, slopes and impact marks from ground coordinates. Both views use the same camera, sun and flat ground. Drag to pan, scroll or pinch to zoom, or jump to an altitude preset. Switch to **Albedo** or **Normals** to isolate a pattern, and use **Copy view link** to revisit the same patch and settings.
+Choose **Surface lab** in the game menu to inspect the ground below the camera at your flight altitude, or open [the lab directly](./surface-lab.html) on the development server. The default comparison pairs the merged terrain remake with the refined flight material. Both retain the same up-close grains and embedded rocks. The refined material shades broader soil variations from ground coordinates. Two additional experiments are available. **Hybrid grain** uses a high-pass extract of the existing surface image over procedural soil. **Procedural** computes the grain, slopes and impact marks from ground coordinates. Both views use the same camera, sun and flat ground. Drag to pan, scroll or pinch to zoom, or jump to an altitude preset. Switch to **Albedo** or **Normals** to isolate a pattern, and use **Copy view link** to revisit the same patch and settings.
 
 To rebake the hybrid’s grain after editing the source photo, run `python scripts/bake_surface_lab_grain.py` with the packages in `scripts/requirements.txt`.
 

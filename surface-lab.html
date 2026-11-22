@@ -12,17 +12,17 @@
     <header>
       <div class="title"><img src="./favicon.svg" alt="" width="28" height="28" /><h1>Surface lab</h1></div>
       <fieldset class="mode-switch" aria-label="Material view">
-        <label><input type="radio" name="mode" value="game" /><span>Game</span></label>
+        <label><input type="radio" name="mode" value="game" /><span>Original</span></label>
         <label><input type="radio" name="mode" value="compare" checked /><span>Compare</span></label>
-        <label><input type="radio" name="mode" value="candidate" /><span id="solo-label">Hybrid</span></label>
+        <label><input type="radio" name="mode" value="candidate" /><span id="solo-label">Refined</span></label>
       </fieldset>
       <a class="back" href="./">Back to game</a>
     </header>
     <main>
       <div id="stage" data-mode="compare">
         <canvas id="ground" tabindex="0" aria-label="Lunar ground. Drag or use arrow keys to pan. Scroll or pinch to zoom."></canvas>
-        <div class="pane-caption game-caption">Game material</div>
-        <div id="candidate-label" class="pane-caption field-caption">Hybrid grain</div>
+        <div class="pane-caption game-caption">Original material</div>
+        <div id="candidate-label" class="pane-caption field-caption">Refined flight material</div>
         <div id="scale" aria-label="Ground scale at the centre of the view"><span id="scale-label"></span><i></i></div>
         <div id="stage-status" role="status">Preparing the terrain materials…</div>
       </div>
@@ -35,7 +35,7 @@
           </div>
         </div>
         <div class="selects">
-          <label for="variant">Candidate</label><select id="variant"><option value="hybrid">Hybrid grain</option><option value="procedural">Procedural</option></select>
+          <label for="variant">Candidate</label><select id="variant"><option value="flight">Refined</option><option value="hybrid">Hybrid grain</option><option value="procedural">Procedural</option></select>
           <label for="angle">Camera</label><select id="angle"><option value="overhead">Overhead</option><option value="oblique">Oblique</option></select>
           <label for="channel">Channel</label><select id="channel"><option value="lit">Sunlit</option><option value="albedo">Albedo</option><option value="normals">Normals</option></select>
         </div>

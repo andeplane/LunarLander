@@ -77,3 +77,10 @@
   font-size: 0.82rem;
   color: #aab3c2;
 }
+
+.menu-lab-link {
+  color: #c4cedc;
+  padding: 0.6rem 1rem;
+  font-size: 0.85rem;
+  text-underline-offset: 0.2em;
+}
