@@ -33,13 +33,16 @@ describe('generateRegolithDetail', () => {
     expect(detail.data.length).toBe(SIZE * SIZE * 4);
   });
 
-  it('keeps a sparse upward-only height mask of the stamped pebbles', () => {
-    const raised = detail.pebbleHeight.filter((h) => h > 0);
-    expect(detail.pebbleHeight.length).toBe(SIZE * SIZE);
-    expect(raised.length).toBeGreaterThan(0);
-    expect(raised.length).toBeLessThan(SIZE * SIZE / 2);
-    expect(Math.max(...raised)).toBeGreaterThan(40);
-    expect(generateRegolithDetail({ size: SIZE, seed: 7 }).pebbleHeight).toEqual(detail.pebbleHeight);
+  it('keeps the seeded outlines and elevation of the stamped pebbles', () => {
+    expect(detail.pebbles.length).toBeGreaterThan(0);
+    for (const p of detail.pebbles) {
+      expect(p.u).toBeGreaterThanOrEqual(0);
+      expect(p.u).toBeLessThan(1);
+      expect(p.height).toBeGreaterThan(0);
+      expect(p.outline).toHaveLength(6);
+      expect(Math.max(...p.outline)).toBeLessThanOrEqual(1);
+    }
+    expect(generateRegolithDetail({ size: SIZE, seed: 7 }).pebbles).toEqual(detail.pebbles);
   });
 
   it('is deterministic for a seed and differs between seeds', () => {

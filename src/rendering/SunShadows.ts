@@ -302,11 +302,11 @@ float sunShadowCascade1(vec3 worldPos, vec3 worldNormal) {
 float sunShadowVisibility(vec3 worldPos, vec3 worldNormal) {
   if (uSunShadowActive.x < 0.5) return sunShadowCascade1(worldPos, worldNormal);
   float nearTexel = uSunShadowTexel.x;
-  #ifdef MOON_PEBBLE_SURFACE
-    // The ordinary terrain bias is about 6 cm here and would clear most pebbles.
-    // Bring it back to full strength before the replacement mesh meets the terrain.
+  #ifndef MOON_ROCK
+    // Resolve contact on the ground around small stones. Restore the wider
+    // terrain bias with distance, where the nearest cascade mostly sees terrain.
     vec3 toEye = worldPos - cameraPosition;
-    nearTexel *= mix(0.15, 1.0, smoothstep(6.25, 23.04, dot(toEye, toEye)));
+    nearTexel *= mix(0.12, 1.0, smoothstep(36.0, 400.0, dot(toEye, toEye)));
   #endif
   vec3 coord = sunShadowCoord(uSunShadowMatrix[0], uSunShadowWarp[0], worldPos, worldNormal, nearTexel);
   float edge = sunShadowEdge(coord);

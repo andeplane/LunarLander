@@ -1,8 +1,14 @@
-import { Color, type DataTexture, MeshStandardMaterial, ShaderChunk, type Texture, Vector3, Vector4 } from 'three';
+import { Color, type DataTexture, MeshStandardMaterial, ShaderChunk, type Texture, Vector3 } from 'three';
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 import { SUN_SHADOW_FRAGMENT_PARS, type SunShadowUniforms } from '../rendering/SunShadows';
-import { createPebbleHeightTexture, createRegolithDetailTexture, generateRegolithDetail, REGOLITH_SLOPE_RANGE } from './regolithDetail';
-import { regolithTiling } from './regolithTiling';
+import {
+  createRegolithDetailTexture,
+  generateRegolithDetail,
+  type PebbleStamp,
+  REGOLITH_SLOPE_RANGE,
+} from './regolithDetail';
+import { pebbleSurfaceFragment } from './pebbleRelief';
+import { FINE_PEBBLE_FREQUENCY, MEDIUM_PEBBLE_FREQUENCY, regolithTiling } from './regolithTiling';
 import { regolithNoise } from './regolithNoise';
 
 /**
@@ -66,7 +72,6 @@ interface MoonMaterialUniforms {
   uPlanetRadius: { value: number };
   uSunDirection: { value: Vector3 };
   uDetailMap: { value: Texture };
-  uPebbleCover: { value: Vector4 };
   uDetailStrength: { value: number };
   uDetailContrast: { value: number };
   uCraterletStrength: { value: number };
@@ -81,7 +86,7 @@ interface MoonMaterialUniforms {
 const DETAIL_MAP_SIZE = 1024;
 const DETAIL_MAP_SEED = 1969;
 
-let sharedMaps: { detail: DataTexture; pebbles: DataTexture } | undefined;
+let sharedMaps: { detail: DataTexture; pebbles: PebbleStamp[] } | undefined;
 
 /**
  * The regolith detail map shared by every MoonMaterial. Generated on first
@@ -91,14 +96,14 @@ export function getSharedRegolithDetailMap(): DataTexture {
   return getSharedMaps().detail;
 }
 
-export function getSharedPebbleHeightMap(): DataTexture {
+export function getSharedPebbleStamps(): readonly PebbleStamp[] {
   return getSharedMaps().pebbles;
 }
 
 function getSharedMaps() {
   if (!sharedMaps) {
     const field = generateRegolithDetail({ size: DETAIL_MAP_SIZE, seed: DETAIL_MAP_SEED });
-    sharedMaps = { detail: createRegolithDetailTexture(field), pebbles: createPebbleHeightTexture(field) };
+    sharedMaps = { detail: createRegolithDetailTexture(field), pebbles: field.pebbles };
   }
   return sharedMaps;
 }
@@ -118,7 +123,6 @@ uniform float uEnableColorVariation;
 uniform float uBrightnessBoost;
 uniform vec3 uSunDirection;
 uniform sampler2D uDetailMap;
-uniform vec4 uPebbleCover;
 uniform float uDetailStrength;
 uniform float uDetailContrast;
 uniform float uCraterletStrength;
@@ -355,8 +359,8 @@ const TERRAIN_SURFACE = /* glsl */ `
   // Keep the 2.9 m and 23 m material layers that carry grains, pebbles and clods.
   vec4 fine = vec4(0.0);
   vec4 medium = vec4(0.0);
-  if (fineFade > 0.0) fine = moonDetail(groundPos * 0.3448, groundDx * 0.3448, groundDy * 0.3448) * fineFade;
-  if (mediumFade > 0.0) medium = moonDetail(groundPos * 0.04348 + vec2(0.37, 0.11), groundDx * 0.04348, groundDy * 0.04348) * mediumFade;
+  if (fineFade > 0.0) fine = moonDetail(groundPos * ${FINE_PEBBLE_FREQUENCY}, groundDx * ${FINE_PEBBLE_FREQUENCY}, groundDy * ${FINE_PEBBLE_FREQUENCY}) * fineFade;
+  if (mediumFade > 0.0) medium = moonDetail(groundPos * ${MEDIUM_PEBBLE_FREQUENCY} + vec2(0.37, 0.11), groundDx * ${MEDIUM_PEBBLE_FREQUENCY}, groundDy * ${MEDIUM_PEBBLE_FREQUENCY}) * mediumFade;
 
   vec2 materialSlope = medium.xy * (0.45 * MOON_SLOPE_RANGE);
   float tone = fine.z * 0.6 + medium.z * 0.38 + medium.w * 0.12;
@@ -495,7 +499,6 @@ export class MoonMaterial extends MeshStandardMaterial {
       uDetailStrength: { value: 1.0 },
       uDetailContrast: { value: 1.0 },
       uCraterletStrength: { value: 1.0 },
-      uPebbleCover: { value: new Vector4(0, 0, 0, 0) },
       uBackscatter: { value: 0.6 },
       uOppositionSurge: { value: 0.35 },
       uAmbientFill: { value: 0.08 },
@@ -573,15 +576,6 @@ export class MoonMaterial extends MeshStandardMaterial {
         ${shader.fragmentShader}
       `;
 
-      // The near mesh shades the entire area it replaces, including the soil
-      // between chips. Its last half-cell overlaps the original mesh at zero lift.
-      shader.fragmentShader = shader.fragmentShader.replace('#include <clipping_planes_fragment>', `
-        #include <clipping_planes_fragment>
-        #if !defined(MOON_PEBBLE_SURFACE) && !defined(MOON_ROCK)
-          if (uPebbleCover.z > 0.0 && all(lessThan(abs(vWorldPosition.xz - uPebbleCover.xy), uPebbleCover.zw))) discard;
-        #endif
-      `);
-
       // Albedo, detail normal and sun visibility. Everything declared here is
       // at main() scope and is used again by the later injections.
       shader.fragmentShader = shader.fragmentShader.replace(
@@ -595,6 +589,8 @@ export class MoonMaterial extends MeshStandardMaterial {
         if (uDetailStrength >= 0.0) {
           #ifdef MOON_ROCK
             ${ROCK_SURFACE}
+          #elif defined(MOON_PEBBLE_STONE)
+            ${pebbleSurfaceFragment}
           #else
             ${TERRAIN_SURFACE}
           #endif
@@ -642,6 +638,11 @@ export class MoonMaterial extends MeshStandardMaterial {
         ${lightsBegin}
         #if defined( RE_IndirectDiffuse )
           irradiance += vec3(1.0, 0.96, 0.9) * (uAmbientFill * uSunHorizonFade);
+          #ifdef MOON_PEBBLE_STONE
+            // Sunlit dust reflects a little light onto the neighbour-facing rock faces.
+            irradiance += vec3(1.0, 0.95, 0.88) * (max(uSunDirection.y, 0.0) * uSunHorizonFade)
+              * (0.30 - 0.18*max(meshNormal.y,0.0));
+          #endif
         #endif
         `
       );
@@ -723,11 +724,6 @@ export class MoonMaterial extends MeshStandardMaterial {
     if (!changed) return;
     Object.assign(this.params, params);
     this.updateUniforms();
-  }
-
-  /** World rectangle shaded by the close pebble mesh. Zero width restores the ground. */
-  setPebbleCover(x: number, z: number, halfX: number, halfZ: number): void {
-    this.shaderUniforms.uPebbleCover.value.set(x, z, halfX, halfZ);
   }
 
   /**

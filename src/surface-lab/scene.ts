@@ -10,6 +10,7 @@ import {
   WebGLRenderer,
 } from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
+import { SunShadows } from '../rendering/SunShadows';
 import { PebbleSurface } from '../terrain/PebbleSurface';
 import { createLabMaterials } from './materials';
 import { timeMaterials } from './timing';
@@ -30,13 +31,25 @@ export async function createSurfaceScene(
   renderer.toneMapping = ACESFilmicToneMapping;
   const materials = await createLabMaterials(renderer.capabilities.getMaxAnisotropy());
   const scene = new Scene();
-  const pebbles = new PebbleSurface(materials.flight, 400 / 1024, 400 / 1024, (_x, _z, out, i) => {
-    out[i] = 0;
-    out[i + 1] = 1;
-    out[i + 2] = 0;
-    out[i + 3] = 0;
-    return true;
+  const shadows = new SunShadows(renderer, {
+    mapSize: 1024,
+    baseHalfExtent: 10,
+    relief: [2, 4, 12],
+    terrainRefreshFrames: [1, 1, 1],
   });
+  materials.flight.setSunShadows(shadows.uniforms, shadows.options.mapSize);
+  let shadowRevision = 0;
+  const pebbles = new PebbleSurface(
+    materials.flight,
+    (_x, _z, out, i) => {
+      out[i] = 0;
+      out[i + 1] = 1;
+      out[i + 2] = 0;
+      out[i + 3] = 0;
+      return true;
+    },
+    invalidate
+  );
   scene.add(pebbles.root);
   let patchReady = false;
   const camera = new PerspectiveCamera(46, 1, 0.015, 50000);
@@ -83,8 +96,29 @@ export async function createSurfaceScene(
     materials.relief.value = view.relief;
     materials.flight.setParam('detailStrength', view.variant === 'pebbles' ? 1 : view.relief);
     materials.flight.setParam('pebbleHeight', view.variant === 'pebbles' ? view.relief : 1);
-    pebbles.update(camera.position, camera.position.y, 0, candidateMaterial() === materials.flight);
+    camera.aspect = (view.mode === 'compare' ? w / 2 : w) / h;
+    if (
+      pebbles.update(
+        camera.position,
+        camera.position.y,
+        0,
+        candidateMaterial() === materials.flight,
+        camera
+      )
+    )
+      shadowRevision++;
     patchReady = pebbles.root.visible;
+    const shadowState = {
+      cameraPosition: camera.position,
+      groundHeight: 0,
+      sunDirection,
+      sunVisible: true,
+      terrainRevision: 0,
+      nearCasterRevision: shadowRevision,
+      planetRadius: null,
+    };
+    // The lab renders on demand. Initialise all three depth samplers in the same frame.
+    for (let i = 0; i < 3 && shadows.plan(shadowState); i++) shadows.renderPending(scene);
     materials.hybrid.value = view.variant === 'hybrid';
     // A moving piece of flat geometry covers the frustum. The shader samples
     // its world position, so dragging or resizing the plane cannot move a grain.
@@ -141,6 +175,9 @@ export async function createSurfaceScene(
   });
   new ResizeObserver(invalidate).observe(canvas);
   updateCamera();
+  render();
+  await pebbles.ready();
+  render();
   return {
     updateCamera,
     invalidate,
@@ -151,6 +188,8 @@ export async function createSurfaceScene(
       materialTiming?.abort();
       materialTiming = new AbortController();
       if (pendingFrame) cancelAnimationFrame(pendingFrame);
+      render();
+      await pebbles.ready();
       render();
       const square = camera.clone();
       square.aspect = 1;

@@ -5,7 +5,6 @@ import {
   LinearMipmapLinearFilter,
   NoColorSpace,
   RepeatWrapping,
-  RedFormat,
   RGBAFormat,
   UnsignedByteType,
 } from 'three';
@@ -25,13 +24,23 @@ import {
  * Mipmapping fades every scale out with distance, which is what keeps the
  * surface free of shimmer without any distance logic in the shader.
  */
+export interface PebbleStamp {
+  u: number;
+  v: number;
+  radius: number;
+  height: number;
+  angle: number;
+  tone: number;
+  outline: number[];
+}
+
 export interface RegolithDetail {
   /** Texture edge length in texels. */
   size: number;
   /** RGBA8 pixels, row-major, `size * size * 4` bytes. */
   data: Uint8Array;
-  /** Isolated upward pebble relief, in fractions of MAX_PEBBLE_HEIGHT_UV. */
-  pebbleHeight: Uint8Array;
+  /** Centres, outlines and elevations of the angular marks, in texture coordinates. */
+  pebbles: PebbleStamp[];
 }
 
 export interface RegolithDetailOptions {
@@ -45,9 +54,6 @@ export const REGOLITH_SLOPE_RANGE = 1.5;
 
 /** Most sides a pebble outline can have. */
 const MAX_PEBBLE_FACETS = 7;
-
-/** Maximum stamped pebble height as a fraction of a full texture tile. */
-export const MAX_PEBBLE_HEIGHT_UV = (7 * 0.7) / 512;
 
 /** RMS slope of the fine granular (fbm) layer, before pits and pebbles. */
 const GRAIN_RMS_SLOPE = 0.2;
@@ -163,8 +169,7 @@ export function generateRegolithDetail(options: RegolithDetailOptions): Regolith
   const texels = size * size;
   const height = new Float32Array(texels);
   const albedo = new Float32Array(texels);
-  const pebbleHeight = new Uint8Array(texels);
-  const encodePebbleHeight = 255 / (size * MAX_PEBBLE_HEIGHT_UV);
+  const pebbles: PebbleStamp[] = [];
 
   // --- Granular base: fractal noise scaled to a fixed RMS slope -------------
   addTilingFbm(height, size, random, 4, 8, 0.62);
@@ -225,7 +230,30 @@ export function generateRegolithDetail(options: RegolithDetailOptions): Regolith
       facetY[f] = Math.sin(angle);
       facetReach[f] = 0.55 + random() * 0.45;
     }
-    stamp(size, random() * size, random() * size, radius, 1, (index, _t, dx, dy) => {
+    const cx = random() * size;
+    const cy = random() * size;
+    // Intersect six rays with the same half-planes used below. Keep the
+    // half-texel offset: pixel (0, 0) is sampled at (0.5, 0.5) on the GPU.
+    const outline = [];
+    for (let k = 0; k < 6; k++) {
+      const angle = turn + (k * Math.PI) / 3;
+      const dx = Math.cos(angle),
+        dy = Math.sin(angle);
+      let reach = 1;
+      for (let f = 0; f < facets; f++)
+        reach = Math.min(reach, facetReach[f] / Math.max(0.001, dx * facetX[f] + dy * facetY[f]));
+      outline.push(reach);
+    }
+    pebbles.push({
+      u: ((cx + 0.5) / size) % 1,
+      v: ((cy + 0.5) / size) % 1,
+      radius: radius / size,
+      height: bump / size,
+      angle: turn,
+      tone,
+      outline,
+    });
+    stamp(size, cx, cy, radius, 1, (index, _t, dx, dy) => {
       // Distance to the polygon edge: 0 at the centre, 1 on the outline
       let edge = 0;
       for (let f = 0; f < facets; f++) {
@@ -236,7 +264,6 @@ export function generateRegolithDetail(options: RegolithDetailOptions): Regolith
       const rise = Math.min((1 - edge) * 3, 1);
       const elevation = bump * rise * (1 - 0.25 * edge);
       height[index] += elevation;
-      pebbleHeight[index] = Math.max(pebbleHeight[index], Math.round(elevation * encodePebbleHeight));
       albedo[index] += tone * rise;
     });
   }
@@ -273,7 +300,7 @@ export function generateRegolithDetail(options: RegolithDetailOptions): Regolith
     data[i * 4 + 3] = Math.round(((height[i] - minHeight) / heightRange) * 255);
   }
 
-  return { size, data, pebbleHeight };
+  return { size, data, pebbles };
 }
 
 /**
@@ -288,17 +315,6 @@ export function createRegolithDetailTexture(detail: RegolithDetail, anisotropy =
   texture.generateMipmaps = true;
   texture.anisotropy = anisotropy;
   texture.colorSpace = NoColorSpace;
-  texture.needsUpdate = true;
-  return texture;
-}
-
-/** The same stamp positions as the packed material, without the soil and pits. */
-export function createPebbleHeightTexture(detail: RegolithDetail): DataTexture {
-  const texture = new DataTexture(detail.pebbleHeight, detail.size, detail.size, RedFormat);
-  texture.wrapS = texture.wrapT = RepeatWrapping;
-  texture.magFilter = LinearFilter;
-  texture.minFilter = LinearMipmapLinearFilter;
-  texture.generateMipmaps = true;
   texture.needsUpdate = true;
   return texture;
 }

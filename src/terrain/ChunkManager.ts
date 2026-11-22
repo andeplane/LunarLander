@@ -634,7 +634,11 @@ export class ChunkManager {
       const corner = this.pebbleGroundAtCamera;
       const ready = this.samplePebbleGround(cameraPosition.x, cameraPosition.z, corner, 0);
       const changed = this.pebbleSurface.update(
-        cameraPosition, cameraPosition.y - corner[3], this.terrainRevision, ready && !this.debugMode
+        cameraPosition,
+        cameraPosition.y - corner[3],
+        this.terrainRevision,
+        ready && !this.debugMode,
+        this.camera
       );
       if (changed) {
         this.pebbleShadowRevision++;
@@ -1038,35 +1042,51 @@ export class ChunkManager {
     return this.pebbleShadowRevision;
   }
 
-  /** Read the closest vertex of the visible fine mesh. The patch requests its lattice points exactly. */
+  /** Height and slope of the actual visible triangle, including a coarser neighbour during streaming. */
   private samplePebbleGround: PebbleGroundSampler = (x, z, out, offset) => {
     const { chunkWidth, chunkDepth, lodLevels } = this.config;
-    const gridX = Math.round(x / chunkWidth);
-    const gridZ = Math.round(z / chunkDepth);
+    const gridX = Math.round(x / chunkWidth),
+      gridZ = Math.round(z / chunkDepth);
     const chunk = this.chunks.get(`${gridX},${gridZ}`);
-    if (!chunk || chunk.currentLodLevel !== 0) return false;
-    const mesh = chunk.getTerrainMesh(0);
+    if (!chunk) return false;
+    const mesh = chunk.getTerrainMesh(chunk.currentLodLevel);
     if (!mesh) return false;
-    const resolution = lodLevels[0];
-    const column = Math.round(((x - gridX * chunkWidth) / chunkWidth + 0.5) * resolution);
-    const row = Math.round(((z - gridZ * chunkDepth) / chunkDepth + 0.5) * resolution);
-    const index = row * (resolution + 1) + column;
-    const normal = mesh.geometry.getAttribute('normal');
-    out[offset] = normal.getX(index);
-    out[offset + 1] = normal.getY(index);
-    out[offset + 2] = normal.getZ(index);
-    out[offset + 3] = mesh.geometry.getAttribute('position').getY(index);
+    const res = lodLevels[chunk.currentLodLevel];
+    const u = Math.max(0, Math.min(res, (x / chunkWidth - gridX + 0.5) * res));
+    const v = Math.max(0, Math.min(res, (z / chunkDepth - gridZ + 0.5) * res));
+    const ix = Math.min(res - 1, Math.floor(u)),
+      iz = Math.min(res - 1, Math.floor(v));
+    const fx = u - ix,
+      fz = v - iz,
+      a = iz * (res + 1) + ix;
+    const position = mesh.geometry.getAttribute('position');
+    const right = position.getY(a + 1),
+      below = position.getY(a + res + 1);
+    let riseX: number, riseZ: number, height: number;
+    if (fx + fz <= 1) {
+      const corner = position.getY(a);
+      riseX = right - corner;
+      riseZ = below - corner;
+      height = corner + fx * riseX + fz * riseZ;
+    } else {
+      const corner = position.getY(a + res + 2);
+      riseX = corner - below;
+      riseZ = corner - right;
+      height = corner - (1 - fx) * riseX - (1 - fz) * riseZ;
+    }
+    out[offset] = (-riseX * res) / chunkWidth;
+    out[offset + 1] = 1;
+    out[offset + 2] = (-riseZ * res) / chunkDepth;
+    out[offset + 3] = height;
     return true;
   };
 
   enablePebbleRelief(): void {
     if (this.pebbleSurface) return;
-    const { chunkWidth, chunkDepth, lodLevels } = this.config;
     this.pebbleSurface = new PebbleSurface(
       this.terrainGenerator.getMaterial(),
-      chunkWidth / lodLevels[0],
-      chunkDepth / lodLevels[0],
-      this.samplePebbleGround
+      this.samplePebbleGround,
+      this.requestRender
     );
     this.scene.add(this.pebbleSurface.root);
   }

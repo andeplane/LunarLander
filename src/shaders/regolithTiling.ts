@@ -1,4 +1,18 @@
-/** Shared by ground shading and pebble displacement so both address the same stamp. */
+/** Addresses used by both the material and the world-space chip meshes. */
+export const FINE_PEBBLE_FREQUENCY = 0.3448;
+export const MEDIUM_PEBBLE_FREQUENCY = 0.04348;
+
+export function patchTransform(x: number, z: number) {
+  let key = Math.imul(x, 0x8da6b343) ^ Math.imul(z, 0xd8163841);
+  key = Math.imul(key ^ (key >>> 16), 0x7feb352d);
+  key = Math.imul(key ^ (key >>> 15), 0x846ca68b);
+  key = (key ^ (key >>> 16)) >>> 0;
+  const a = (key & 65535) / 65536,
+    b = (key >>> 16) / 65536;
+  const angle = a * 2 * Math.PI;
+  return { angle, c: Math.cos(angle), s: Math.sin(angle), u: b, v: (a * 7.31 + b * 3.17) % 1 };
+}
+
 export const regolithTiling = /* glsl */ `
 vec2 moonHash2(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
@@ -7,7 +21,17 @@ vec2 moonHash2(vec2 p) {
 }
 
 vec2 moonPatchUV(vec2 uv, vec2 vertex, out mat2 rot) {
-  vec2 h = moonHash2(vertex);
+  #ifdef MOON_ATLAS_BROAD
+    vec2 h = moonHash2(vertex);
+  #else
+    // Integer mixing gives the CPU and GPU the same rotations, including at negative cells.
+    uvec2 cell = uvec2(ivec2(vertex));
+    uint key = cell.x * 0x8da6b343u ^ cell.y * 0xd8163841u;
+    key = (key ^ (key >> 16u)) * 0x7feb352du;
+    key = (key ^ (key >> 15u)) * 0x846ca68bu;
+    key ^= key >> 16u;
+    vec2 h = vec2(key & 65535u, key >> 16u) / 65536.0;
+  #endif
   float angle = h.x * 6.2831853;
   vec2 turn = vec2(cos(angle), sin(angle));
   rot = mat2(turn.x, turn.y, -turn.y, turn.x);
