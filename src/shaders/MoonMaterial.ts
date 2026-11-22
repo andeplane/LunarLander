@@ -1,3 +1,4 @@
+import { rockScreenVertex, rockViewUniforms } from '../environment/rockScreenLod';
 import { Color, type DataTexture, MeshStandardMaterial, ShaderChunk, type Texture, Vector3 } from 'three';
 import { DEFAULT_PLANET_RADIUS } from '../core/EngineSettings';
 import { SUN_SHADOW_FRAGMENT_PARS, type SunShadowUniforms } from '../rendering/SunShadows';
@@ -448,6 +449,7 @@ const ROCK_SURFACE = /* glsl */ `
 export class MoonMaterial extends MeshStandardMaterial {
   readonly variant: MoonMaterialVariant;
   private readonly shaderUniforms: MoonMaterialUniforms;
+  private readonly rockView = rockViewUniforms();
   private sunShadowUniforms: SunShadowUniforms | null = null;
   private params: MoonMaterialParams;
 
@@ -510,6 +512,13 @@ export class MoonMaterial extends MeshStandardMaterial {
 
     this.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, this.shaderUniforms);
+      if (this.variant === 'rock') {
+        Object.assign(shader.uniforms, this.rockView);
+        shader.vertexShader = rockScreenVertex + shader.vertexShader.replace(
+          '#include <begin_vertex>',
+          '#include <begin_vertex>\n#ifdef USE_INSTANCING\ntransformed *= rockScreenScale();\n#endif'
+        );
+      }
       if (this.sunShadowUniforms) {
         Object.assign(shader.uniforms, this.sunShadowUniforms);
       }
@@ -674,6 +683,12 @@ export class MoonMaterial extends MeshStandardMaterial {
         `
       );
     };
+  }
+
+  setRockCamera(eye: Vector3, forward: Vector3, focal: number) {
+    const uniforms = this.sunShadowUniforms ?? this.rockView;
+    uniforms.uRockEye.value.copy(eye);
+    uniforms.uRockView.value.set(forward.x, forward.y, forward.z, focal);
   }
 
   /**

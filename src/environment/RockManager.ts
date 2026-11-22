@@ -588,6 +588,7 @@ export class RockManager {
     for (let i = 0; i < count; i++) {
       maxDiameter = Math.max(maxDiameter, rockDiameter(matrices, i * 16));
     }
+    mesh.userData.maxRockDiameter = maxDiameter;
     const group: RockGroup = {
       mesh,
       shapeId: this.wrapShape(prototypeId),

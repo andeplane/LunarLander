@@ -21,9 +21,16 @@ export interface ChunkWorkerMessage {
   lodLevel: number;
   rockLibrarySize: number;
   rockConfig: RockGenerationConfig;
+  rockBand?: [number, number];
 }
 
 export type { RockPlacement };
+
+export interface RockBandResult {
+  gridKey: string;
+  rockBand: [number, number];
+  rockPlacements: RockPlacement[];
+}
 
 /**
  * Result from chunk worker including terrain and rock data
@@ -33,6 +40,8 @@ export interface ChunkWorkerResult {
   positions: Float32Array;
   normals: Float32Array;
   index: Uint32Array;
+
+  heightRange?: [number, number];
 
   // Rock placement data
   rockPlacements: RockPlacement[];
@@ -193,13 +202,16 @@ export function generateRockPlacements(
   lodLevel: number,
   _gridKey: string,
   rockLibrarySize: number,
-  rockConfig: RockGenerationConfig
+  rockConfig: RockGenerationConfig,
+  band?: [number, number]
 ): RockPlacement[] {
   // Setup height sampler ONCE for all rocks in this chunk
   setupHeightSampler(terrainArgs);
   const { resolution, width, depth, smoothLowerPlanes } = terrainArgs;
-  return placeRocks(terrainArgs, lodLevel, rockLibrarySize, rockConfig, (x, z) =>
-    sampleHeightFromVertices(positions, resolution, width, depth, x, z, smoothLowerPlanes)
+  return placeRocks(
+    terrainArgs, lodLevel, rockLibrarySize, rockConfig,
+    (x, z) => sampleHeightFromVertices(positions, resolution, width, depth, x, z, smoothLowerPlanes),
+    band
   );
 }
 
@@ -210,6 +222,15 @@ export function generateRockPlacements(
 export const handleChunkMessage = (m: MessageEvent<ChunkWorkerMessage>): void => {
   const { terrainArgs, gridKey, lodLevel, rockLibrarySize, rockConfig } = m.data;
 
+  if (m.data.rockBand) {
+    const placements = generateRockPlacements(
+      [], terrainArgs, 0, gridKey, rockLibrarySize, rockConfig, m.data.rockBand
+    );
+    const transfer = placements.flatMap(p => [p.matrices.buffer, p.colors.buffer]);
+    const result: RockBandResult = { gridKey, rockPlacements: placements, rockBand: m.data.rockBand };
+    postMessage(result, { transfer });
+    return;
+  }
   // Setup crater cache FIRST (before terrain generation)
   // This ensures both terrain and rock placement use the same craters
   setupCraterCache(terrainArgs);
@@ -219,7 +240,7 @@ export const handleChunkMessage = (m: MessageEvent<ChunkWorkerMessage>): void =>
   // one normals pass over the final cratered heights, skirt stripped.
   // A wall hung from the perimeter closes the slits between LODs.
   const vertexSpacing = Math.max(terrainArgs.width, terrainArgs.depth) / terrainArgs.resolution;
-  const { positions, normals } = buildChunkMesh(
+  const { positions, normals, heightRange } = buildChunkMesh(
     terrainArgs,
     cachedCraters,
     chunkSkirtDepth(vertexSpacing)
@@ -251,7 +272,7 @@ export const handleChunkMessage = (m: MessageEvent<ChunkWorkerMessage>): void =>
 
   // Generate rock placements using scientific lunar distribution
   // Rocks will now sit on the cratered terrain
-  const rockPlacements = generateRockPlacements(
+  const rockPlacements = rockLibrarySize === 0 ? [] : generateRockPlacements(
     positions,
     terrainArgs,
     lodLevel,
@@ -262,6 +283,7 @@ export const handleChunkMessage = (m: MessageEvent<ChunkWorkerMessage>): void =>
 
   // Build result
   const result: ChunkWorkerResult = {
+    heightRange,
     positions,
     normals,
     index,

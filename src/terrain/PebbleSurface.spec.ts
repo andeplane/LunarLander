@@ -62,10 +62,15 @@ describe('grounded pebble meshes', () => {
     camera.x = 4.02;
     patch.update(camera, 1.7, 0);
     expect(centres()).toEqual(before);
+    camera.y = 32;
     expect(patch.update(camera, 32, 0)).toBe(true);
+    expect(patch.root.visible).toBe(true);
+    camera.y = 800;
+    patch.update(camera, 800, 0, true, undefined, 720, -6, 6);
     expect(patch.root.visible).toBe(false);
     ground.setParam('pebbleHeight', 0);
-    expect(patch.update(camera, 1.7, 0)).toBe(false);
+    patch.update(camera, 1.7, 0);
+    expect(patch.root.visible).toBe(false);
     patch.dispose();
     ground.dispose();
   });
@@ -80,7 +85,8 @@ describe('grounded pebble meshes', () => {
     view.position.set(0, 1.4, 0);
     view.lookAt(0, 0, -2);
     function triangleCounts(viewportHeight: number) {
-      patch.update(view.position, 1.4, 0, true, view, viewportHeight);
+      view.updateMatrixWorld();
+      patch.update(view.position, view.position.y, 0, true, view, viewportHeight, 0, 0);
       const counts = new Map<string, number>();
       for (const mesh of patch.root.children as Mesh<InstancedBufferGeometry>[]) {
         if (!mesh.layers.isEnabled(0)) continue;
@@ -96,9 +102,18 @@ describe('grounded pebble meshes', () => {
     try {
       const small = triangleCounts(240);
       const large = triangleCounts(1600);
-      expect(new Set(large.keys())).toEqual(new Set(small.keys()));
+      expect(large.size).toBeGreaterThan(small.size);
+      expect([...small.keys()].every((key) => large.has(key))).toBe(true);
       expect([...large].some(([key, n]) => n > 1200 && n > (small.get(key) ?? 0))).toBe(true);
       expect(Math.min(...large.values())).toBeLessThan(100);
+      view.position.set(0, 45, 0);
+      view.lookAt(0, 0, -1);
+      const normal = triangleCounts(360);
+      view.zoom = 3;
+      view.updateProjectionMatrix();
+      const zoomed = triangleCounts(360);
+      expect(zoomed.size).toBeGreaterThan(0);
+      expect([...zoomed.keys()].some((key) => !normal.has(key))).toBe(true);
     } finally {
       patch.dispose();
       ground.dispose();

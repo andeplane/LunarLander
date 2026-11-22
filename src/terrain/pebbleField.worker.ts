@@ -3,7 +3,7 @@ import { PebbleField, type PebbleRequest } from './pebbleField';
 let field: PebbleField;
 self.onmessage = ({ data }: MessageEvent<PebbleRequest>) => {
   if (data.stamps) field = new PebbleField(data.stamps);
-  const result = field.window(data.x, data.z);
+  const result = field.window(data.view);
   const buffers = [result.stones.buffer];
   if (result.detailMap) buffers.push(result.detailMap.data.buffer);
   for (const mesh of result.shapes ?? [])

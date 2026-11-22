@@ -391,7 +391,8 @@ export function placeRocks(
   lodLevel: number,
   librarySize: number,
   config: RockGenerationConfig,
-  sampleHeight: RockHeightSampler
+  sampleHeight: RockHeightSampler,
+  band?: readonly [number, number]
 ): RockPlacement[] {
   const shapes = Math.max(1, Math.floor(librarySize));
   const lod = Math.max(0, Math.floor(lodLevel));
@@ -403,11 +404,11 @@ export function placeRocks(
   let count = 0;
 
   forEachRock(chunk, config, (x, z, diameter) => {
-    if (diameter < minDiameter) {
+    if (diameter < (band?.[0] ?? minDiameter) || (band && diameter >= band[1])) {
       return;
     }
     const sizeTier = sizeTierForDiameter(diameter);
-    const shape = rockShapeFor(sizeTier, lod, shapes, chunkHash, nextRandom());
+    const shape = rockShapeFor(sizeTier, band ? 0 : lod, shapes, chunkHash, nextRandom());
     const yaw = nextRandom() * Math.PI * 2;
     const tiltX = (nextRandom() - 0.5) * 2 * RANDOM_TILT;
     const tiltZ = (nextRandom() - 0.5) * 2 * RANDOM_TILT;
@@ -491,7 +492,9 @@ export function placeRocks(
     scratchColors[c] = brightness * (1 + warmth);
     scratchColors[c + 1] = brightness;
     scratchColors[c + 2] = brightness * (1 - warmth);
-    scratchKeys[count] = meshTierForLod(sizeTier, lod) * shapes + shape;
+    // The streamed catalogue keeps one cheap base mesh for each shape. Visible
+    // boulders are promoted by RockManager using their individual footprints.
+    scratchKeys[count] = meshTierForLod(sizeTier, band ? 3 : lod) * shapes + shape;
     count++;
   });
 

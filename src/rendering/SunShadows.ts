@@ -14,6 +14,7 @@ import {
   Vector3,
   WebGLRenderTarget,
 } from 'three';
+import { rockScreenVertex, rockViewUniforms } from '../environment/rockScreenLod';
 import { NEAR_SHADOW_CASTER_LAYER, SHADOW_CASTER_LAYER } from '../core/layers';
 
 /**
@@ -41,7 +42,7 @@ import { NEAR_SHADOW_CASTER_LAYER, SHADOW_CASTER_LAYER } from '../core/layers';
 
 export const SUN_SHADOW_CASCADES = 3;
 
-export interface SunShadowUniforms {
+export interface SunShadowUniforms extends ReturnType<typeof rockViewUniforms> {
   uSunShadowMap0: { value: DepthTexture };
   uSunShadowMap1: { value: DepthTexture };
   uSunShadowMap2: { value: DepthTexture };
@@ -220,9 +221,10 @@ interface CascadeState {
 
 const DEPTH_VERTEX_SHADER = /* glsl */ `
 uniform vec3 uWarp;
+${rockScreenVertex}
 void main() {
   #ifdef USE_INSTANCING
-    vec4 worldPosition = modelMatrix * instanceMatrix * vec4(position, 1.0);
+    vec4 worldPosition = modelMatrix * instanceMatrix * vec4(position * rockScreenScale(), 1.0);
   #else
     vec4 worldPosition = modelMatrix * vec4(position, 1.0);
   #endif
@@ -389,16 +391,18 @@ export class SunShadows {
     this.camera.layers.set(SHADOW_CASTER_LAYER);
     this.camera.matrixAutoUpdate = true;
 
+    const rockView = rockViewUniforms();
     this.depthMaterial = new ShaderMaterial({
       vertexShader: DEPTH_VERTEX_SHADER,
       fragmentShader: DEPTH_FRAGMENT_SHADER,
-      uniforms: { uWarp: { value: new Vector3() } },
+      uniforms: { uWarp: { value: new Vector3() }, ...rockView },
       side: BackSide,
       colorWrite: false,
     });
 
     const depthTextures = this.targets.map((target) => target.depthTexture as DepthTexture);
     this.uniforms = {
+      ...rockView,
       uSunShadowMap0: { value: depthTextures[0] },
       uSunShadowMap1: { value: depthTextures[1] },
       uSunShadowMap2: { value: depthTextures[2] },

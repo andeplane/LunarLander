@@ -28,6 +28,7 @@ export interface ChunkMesh {
   positions: Float32Array;
   /** Unit vertex normals matching `positions` */
   normals: Float32Array;
+  heightRange: [number, number];
 }
 
 /**
@@ -139,12 +140,16 @@ export function buildChunkMesh(
   const positions = new Float32Array(vertexCount * 3);
   const normals = new Float32Array(vertexCount * 3);
   let out = 0;
+  let low = Infinity, high = -Infinity;
   for (let j = 1; j <= side; j++) {
     const z = localZ[j];
     for (let i = 1; i <= side; i++) {
       const source = j * columns + i;
       positions[out] = localX[i];
-      positions[out + 1] = heights[source];
+      const y = heights[source];
+      positions[out + 1] = y;
+      low = Math.min(low, y);
+      high = Math.max(high, y);
       positions[out + 2] = z;
 
       const nx = accumulated[source * 3];
@@ -162,5 +167,5 @@ export function buildChunkMesh(
     writeSkirtVertices(positions, normals, resolution, hangingSkirtDepth);
   }
 
-  return { positions, normals };
+  return { positions, normals, heightRange: [low, high] };
 }

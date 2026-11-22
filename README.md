@@ -39,7 +39,7 @@ The development server will start at `http://localhost:3000` (or the next availa
 
 Choose **Surface lab** in the game menu to inspect the ground below the camera at your flight altitude, or open [the lab directly](./surface-lab.html) on the development server. The default comparison pairs the merged terrain remake with the refined flight material. Both retain the same up-close grains and embedded rocks. The refined material shades broader soil variations from ground coordinates. Two additional experiments are available. **Hybrid grain** uses a high-pass extract of the existing surface image over procedural soil. **Procedural** computes the grain, slopes and impact marks from ground coordinates. Both views use the same camera, sun and flat ground. Drag to pan, scroll or pinch to zoom, or jump to an altitude preset. Switch to **Albedo** or **Normals** to isolate a pattern, and use **Copy view link** to revisit the same patch and settings.
 
-Choose **Pebbles** and the **Grazing** camera to compare the same ground with flat and raised stones. The height slider lifts the stones at the positions printed in the surface texture. Zero shows their shaded footprints. The flight renderer and lab share the same fractured shapes, mineral texture and sun shadows. A stone's diameter on screen determines which of three mesh resolutions it uses. The smallest fragments settle back into the texture within a few metres. The largest keep a silhouette out to 24 metres.
+Choose **Pebbles** and the **Grazing** camera to compare the same ground with flat and raised stones. The height slider lifts the stones at the positions printed in the surface texture. Zero shows their shaded footprints. The flight renderer and lab share the same fractured shapes, mineral texture and sun shadows. A pebble keeps its full relief above nine rendered pixels across. As it shrinks from nine to 3.5 pixels, it blends into the matching mark in the soil. The camera’s field of view, zoom and render resolution determine the handoff.
 
 To rebake the hybrid’s grain after editing the source photo, run `python scripts/bake_surface_lab_grain.py` with the packages in `scripts/requirements.txt`.
 
@@ -127,7 +127,7 @@ Inspired by the gl-rock scraping algorithm, rocks are procedurally generated wit
 Based on Rüsch et al. 2024 lunar rock distribution research:
 
 - **Power-Law Distribution**: N(>D) = A × D^-2.5 matches real lunar rock size-frequency data
-- **LOD-Aware Minimum Diameter**: Smaller rocks only appear at higher detail levels
+- **Screen-space visibility**: Flight streams boulders by projected diameter and keeps their world positions and shapes across terrain LOD changes. Each boulder eases out between three and 1.25 rendered pixels across.
 - **Slope-Aware Placement**: Rocks prefer flatter surfaces with search radius for optimal positioning
 - **Stable Axis Alignment**: Rocks orient their stable axis (principal moment of inertia) with surface normal
 - **Realistic Burial Depth**: 40-60% of rock is buried below surface for natural appearance

@@ -104,6 +104,7 @@ export class TerrainGenerator {
       : this.material;
 
     const mesh = new Mesh(geometry, material);
+    mesh.userData.heightRange = result.heightRange;
     // Terrain casts sun shadows (see SunShadows); debug wireframes do not
     if (!debugMode) {
       mesh.layers.enable(SHADOW_CASTER_LAYER);

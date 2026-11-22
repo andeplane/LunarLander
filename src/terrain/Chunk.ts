@@ -24,6 +24,10 @@ export class Chunk {
   readonly lod: LOD;
   readonly builtLevels: Set<number> = new Set();
   currentLodLevel: number = 0;
+  /** Screen-sized boulders belong to the world chunk for its entire lifetime. */
+  readonly boulders: InstancedMesh[] = [];
+  rockFloor = Infinity;
+  pebbleGroundId?: number;
 
   private terrainMeshes: (Mesh | null)[];
   // Multiple rock meshes per LOD level (one per prototype)
@@ -132,6 +136,12 @@ export class Chunk {
     Chunk.markStatic(mesh);
 
     // Add rocks directly to LOD object
+    this.lod.add(mesh);
+  }
+
+  addBoulderMesh(mesh: InstancedMesh): void {
+    this.boulders.push(mesh);
+    Chunk.markStatic(mesh);
     this.lod.add(mesh);
   }
 
@@ -277,6 +287,13 @@ export class Chunk {
     for (let lodLevel = 0; lodLevel < this.rockMeshes.length; lodLevel++) {
       this.clearRockMeshes(lodLevel);
     }
+
+    for (const mesh of this.boulders) {
+      this.lod.remove(mesh);
+      disposeDebugMaterial(mesh.material);
+      mesh.dispose();
+    }
+    this.boulders.length = 0;
 
     // Clear arrays
     this.terrainMeshes = [];

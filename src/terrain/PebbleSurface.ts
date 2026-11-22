@@ -21,6 +21,7 @@ import {
 import { NEAR_SHADOW_CASTER_LAYER } from '../core/layers';
 import { getSharedPebbleStamps, type MoonMaterial } from '../shaders/MoonMaterial';
 import { pebbleReliefVertex } from '../shaders/pebbleRelief';
+import { MEDIUM_PEBBLE_FREQUENCY } from '../shaders/regolithTiling';
 import { createRegolithDetailTexture } from '../shaders/regolithDetail';
 import {
   type ChipPrototype,
@@ -31,7 +32,16 @@ import {
   PebbleField,
   type PebbleWindow,
 } from './pebbleField';
-import { PEBBLE_REACH, PEBBLE_TILE_SIZE } from './pebblePlacement';
+import {
+  coversPebbleView,
+  paddedPebbleView,
+  pebbleInWindow,
+  pebbleView,
+  PEBBLE_ARRIVAL_SECONDS,
+  PEBBLE_TEXTURE_PX,
+  PEBBLE_TILE_SIZE,
+  type PebbleView,
+} from './pebbleLod';
 
 /** Write terrain normal XYZ (any positive length) followed by the visible triangle's Y. */
 export type PebbleGroundSampler = (
@@ -73,6 +83,14 @@ interface StoneBatch {
 
 export class PebbleSurface {
   readonly root = new Group();
+  private readonly maxRadius =
+    getSharedPebbleStamps().reduce((r, s) => Math.max(r, s.radius), 0) / MEDIUM_PEBBLE_FREQUENCY;
+
+  /** Conservative horizontal reach of any mark, including streaming and shadow margins. */
+  groundReach(focal: number, corner: number) {
+    return 12 + (2 * focal * this.maxRadius * corner * 1.3) / PEBBLE_TEXTURE_PX;
+  }
+
   private readonly eye = new Vector3();
   private readonly shadowEye = new Vector3();
   private readonly strength = { value: 1 };
@@ -105,15 +123,23 @@ export class PebbleSurface {
   private readonly caster: ShaderMaterial;
   private active = false;
   private revision = -1;
-  private tileX = NaN;
-  private tileZ = NaN;
+  private window?: PebbleView;
+  private readonly projection = { value: 720 };
+  private readonly time = { value: 0 };
+  private fadingUntil = 0;
 
   constructor(
     private readonly groundMaterial: MoonMaterial,
     private readonly sample: PebbleGroundSampler,
     private readonly requestRender: () => void = () => {}
   ) {
-    const uniforms = { uPebbleEye: { value: this.eye }, uPebbleStrength: this.strength };
+    const uniforms = {
+      uPebbleEye: { value: this.eye },
+      uPebbleForward: { value: this.forward },
+      uPebbleProjection: this.projection,
+      uPebbleStrength: this.strength,
+      uPebbleTime: this.time,
+    };
     this.material.defines = { ...groundMaterial.defines, MOON_PEBBLE_STONE: '' };
     this.material.onBeforeCompile = (shader, renderer) => {
       groundMaterial.onBeforeCompile(shader, renderer);
@@ -170,9 +196,10 @@ export class PebbleSurface {
     return batch;
   }
 
-  /** One request in flight. Fast panning coalesces all intervening windows into the latest one. */
+  /** Keep one worker request in flight and coalesce intervening views. */
   private requestWindow() {
-    if (this.pending || this.disposed) return;
+    const requested = this.window;
+    if (this.pending || this.disposed || !requested) return;
     this.pending = new Promise<void>((resolve) => {
       this.finishRequest = resolve;
     });
@@ -185,20 +212,18 @@ export class PebbleSurface {
       }
       this.finishRequest?.();
       this.pending = null;
-      if (result.x !== this.tileX || result.z !== this.tileZ) {
-        this.requestWindow();
-        return;
-      }
-      this.field = result.stones;
-      this.levels = new Uint8Array(this.field.length / FIELD_STRIDE);
+      // Keep the overlapping part of a late reply during fast flight. Waiting for
+      // an exact match could starve a moving camera of stones indefinitely.
+      this.acceptField(result.stones);
       this.dirty = true;
       this.requestRender();
+      if (requested !== this.window) this.requestWindow();
     };
     const useFallback = () => {
       this.worker?.terminate();
       this.worker = undefined;
       this.fallback ??= new PebbleField(getSharedPebbleStamps());
-      receive(this.fallback.window(this.tileX, this.tileZ));
+      receive(this.fallback.window(requested));
     };
     if (typeof Worker === 'undefined' || this.fallback) {
       useFallback();
@@ -212,13 +237,33 @@ export class PebbleSurface {
       this.worker.onmessage = ({ data }: MessageEvent<PebbleWindow>) => receive(data);
       this.worker.onerror = useFallback;
       this.worker.postMessage({
-        x: this.tileX,
-        z: this.tileZ,
+        view: requested,
         stamps: first ? getSharedPebbleStamps() : undefined,
       });
     } catch {
       useFallback();
     }
+  }
+
+  private acceptField(next: Float32Array) {
+    const old = this.field,
+      levels = new Uint8Array(next.length / FIELD_STRIDE);
+    // The worker knows which slots in the last reply belonged to this same
+    // world tile and stamp. Carry over samples, birth times and tier hysteresis.
+    for (let i = 0; i < next.length; i += FIELD_STRIDE) {
+      const prev = next[i + 7] * FIELD_STRIDE;
+      if (prev < 0) {
+        next[i + 7] = -1;
+      } else {
+        next[i + 1] = old[prev + 1];
+        next[i + 7] = old[prev + 7];
+        next[i + 8] = old[prev + 8];
+        next[i + 9] = old[prev + 9];
+        levels[i / FIELD_STRIDE] = this.levels[prev / FIELD_STRIDE];
+      }
+    }
+    this.field = next;
+    this.levels = levels;
   }
 
   /** The lab awaits the current camera window before recording a timing or revealing its initial view. */
@@ -230,7 +275,8 @@ export class PebbleSurface {
     camera: Vector3,
     view: PerspectiveCamera | undefined,
     projection: number,
-    moveStep: number
+    moveStep: number,
+    groundChanged: boolean
   ) {
     if (view) {
       this.viewProjection.multiplyMatrices(view.projectionMatrix, view.matrixWorldInverse);
@@ -241,35 +287,44 @@ export class PebbleSurface {
     for (let at = 0; at < field.length; at += FIELD_STRIDE) {
       const x = field[at],
         z = field[at + 2],
-        radius = field[at + 3],
-        reach = field[at + 7];
+        radius = field[at + 3];
       const dx = x - camera.x,
         dz = z - camera.z;
-      if (dx * dx + dz * dz > (reach + 1) ** 2 || !this.sample(x, z, this.ground, 0)) continue;
-      const dy = this.ground[3] - camera.y,
+      if (groundChanged || !Number.isFinite(field[at + 1])) {
+        if (!this.sample(x, z, this.ground, 0)) {
+          field[at + 1] = NaN;
+          continue;
+        }
+        field[at + 1] = this.ground[3];
+        field[at + 8] = -this.ground[0] / this.ground[1];
+        field[at + 9] = -this.ground[2] / this.ground[1];
+      }
+      const dy = field[at + 1] - camera.y,
         distance = Math.hypot(dx, dy, dz);
-      if (distance > reach + 1) continue;
+      const width = radius * Math.max(field[at + 12], field[at + 13]);
+      const cameraDepth = dx * this.forward.x + dy * this.forward.y + dz * this.forward.z;
+      const depth = view && cameraDepth > 0 ? cameraDepth : distance;
+      const pixels = (width * projection) / Math.max(depth, 0.001);
+      // The shader finishes the blend before an instance leaves this padded draw list.
+      if (width * projection < PEBBLE_TEXTURE_PX * (depth - moveStep - 0.11 * distance)) continue;
       // Keep a wider fringe for cast shadows. Only stones that can enter the picture
       // before the next update need a close-up mesh.
       const motionMargin = moveStep + 0.11 * distance;
       if (view) {
-        this.bounds.center.set(x, this.ground[3], z);
+        this.bounds.center.set(x, field[at + 1], z);
         this.bounds.radius = 1.45 + 8 * radius + motionMargin;
         if (!this.frustum.intersectsSphere(this.bounds)) continue;
       }
-      field[at + 1] = this.ground[3];
-      field[at + 8] = -this.ground[0] / this.ground[1];
-      field[at + 9] = -this.ground[2] / this.ground[1];
+      if (field[at + 7] < 0) {
+        field[at + 7] = this.time.value;
+        this.fadingUntil = this.time.value + PEBBLE_ARRIVAL_SECONDS;
+      }
       const i = at / FIELD_STRIDE;
-      const width = radius * Math.max(field[at + 12], field[at + 13]);
-      const depth = view
-        ? dx * this.forward.x + dy * this.forward.y + dz * this.forward.z
-        : distance;
-      const pixels = (width * projection) / Math.max(depth, distance * 0.6, 0.001);
       const previous = this.levels[i];
-      const medium = pixels > (previous >= 1 ? 16 : 21);
-      const close = pixels > (previous === 2 ? 59 : 76);
-      let level = close ? 2 : Number(medium);
+      const coarse = pixels > (previous >= 1 ? 9 : 12);
+      const medium = pixels > (previous >= 2 ? 16 : 21);
+      const close = pixels > (previous === 3 ? 59 : 76);
+      let level = close ? 3 : medium ? 2 : Number(coarse);
       if (level > 0 && view) {
         this.bounds.radius = 1.5 * radius + motionMargin;
         if (!this.frustum.intersectsSphere(this.bounds)) level--;
@@ -309,29 +364,21 @@ export class PebbleSurface {
     revision: number,
     enabled = true,
     view?: Camera | null,
-    viewportHeight = 720
+    viewportHeight = 720,
+    minGround = -Infinity,
+    maxGround = Infinity
   ) {
     const wasActive = this.active;
+    const wasVisible = this.root.visible;
     const newStrength = this.groundMaterial.getParam('pebbleHeight');
     const strengthChanged = newStrength !== this.strength.value;
     this.strength.value = newStrength;
     this.eye.copy(camera);
-    this.active =
-      enabled &&
-      this.groundMaterial.getParam('enableDetail') &&
-      newStrength > 0 &&
-      Math.abs(altitude) < PEBBLE_REACH + 1;
+    this.time.value = performance.now() * 0.001;
+    this.active = enabled && this.groundMaterial.getParam('enableDetail') && newStrength > 0;
     if (!this.active) {
       this.root.visible = false;
       return wasActive;
-    }
-    const tx = Math.floor(camera.x / PEBBLE_TILE_SIZE),
-      tz = Math.floor(camera.z / PEBBLE_TILE_SIZE);
-    const moved = tx !== this.tileX || tz !== this.tileZ;
-    if (moved) {
-      this.tileX = tx;
-      this.tileZ = tz;
-      this.requestWindow();
     }
     const perspective = (view as PerspectiveCamera | undefined)?.isPerspectiveCamera
       ? (view as PerspectiveCamera)
@@ -341,6 +388,26 @@ export class PebbleSurface {
       perspective.getWorldDirection(this.forward);
       const tanHalfFov = Math.tan((perspective.fov * Math.PI) / 360) / perspective.zoom;
       projection = viewportHeight / tanHalfFov;
+    } else {
+      this.forward.set(0, 0, 0);
+    }
+    this.projection.value = projection;
+    const footprint = pebbleView(
+      Math.floor(camera.x / PEBBLE_TILE_SIZE),
+      Math.floor(camera.z / PEBBLE_TILE_SIZE),
+      projection,
+      perspective,
+      minGround - camera.y,
+      maxGround - camera.y
+    );
+    if (!pebbleInWindow(footprint, 0, 0, this.maxRadius, 8)) {
+      this.root.visible = this.active = false;
+      return wasVisible;
+    }
+    const moved = !this.window || !coversPebbleView(this.window, footprint);
+    if (moved) {
+      this.window = paddedPebbleView(footprint);
+      this.requestWindow();
     }
     const aspect = perspective?.aspect ?? 0;
     const moveStep = Math.min(0.65, Math.max(0.14, Math.abs(altitude) * 0.2));
@@ -356,16 +423,20 @@ export class PebbleSurface {
 
     if (rebuild) {
       this.dirty = false;
+      this.upload(camera, perspective, projection, moveStep, revision !== this.revision);
       this.revision = revision;
-      this.upload(camera, perspective, projection, moveStep);
       this.previousProjection = projection;
       this.previousAspect = aspect;
       this.previousEye.copy(camera);
       this.previousForward.copy(this.forward);
     }
     this.root.visible = this.instanceCount > 0;
+    if (!this.root.visible && !wasVisible) return false;
     const changed =
-      rebuild || strengthChanged || this.shadowEye.distanceToSquared(camera) > 0.25 ** 2;
+      rebuild ||
+      strengthChanged ||
+      (this.instanceCount > 0 && this.time.value <= this.fadingUntil) ||
+      this.shadowEye.distanceToSquared(camera) > 0.25 ** 2;
     if (changed) this.shadowEye.copy(camera);
     return changed;
   }

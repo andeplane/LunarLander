@@ -1,16 +1,12 @@
 import { RockBuilder } from '../environment/RockBuilder';
 import { hashToUnit, rockHeightRatio } from '../environment/rockPrototypes';
 import { generateStoneDetail, type PebbleStamp } from '../shaders/regolithDetail';
-import {
-  FINE_PEBBLE_REACH,
-  PEBBLE_REACH,
-  PEBBLE_TILE_SIZE,
-  PebbleAtlas,
-  type PlacedPebble,
-} from './pebblePlacement';
+import { FINE_PEBBLE_FREQUENCY, MEDIUM_PEBBLE_FREQUENCY } from '../shaders/regolithTiling';
+import { PEBBLE_TILE_SIZE, pebbleInWindow, type PebbleView } from './pebbleLod';
+import { PebbleAtlas, type PlacedPebble } from './pebblePlacement';
 
 export const PEBBLE_SHAPES = 8;
-export const PEBBLE_DETAILS = [1, 4, 11] as const;
+export const PEBBLE_DETAILS = [0, 1, 4, 11] as const;
 // Four interleaved instance attributes, followed by a CPU-only shape index.
 export const INSTANCE_STRIDE = 15;
 export const FIELD_STRIDE = INSTANCE_STRIDE + 1;
@@ -36,80 +32,154 @@ function prototype(key: number) {
 export type ChipPrototype = ReturnType<typeof prototype>;
 
 export interface PebbleWindow {
-  x: number;
-  z: number;
   stones: Float32Array;
   shapes?: ChipPrototype[];
   detailMap?: ReturnType<typeof generateStoneDetail>;
 }
 
 export interface PebbleRequest {
-  x: number;
-  z: number;
+  view: PebbleView;
   /** Sent once, when opening the worker. */
   stamps?: readonly PebbleStamp[];
 }
 
-/** The worker keeps overlapping world tiles and transfers only a packed draw list to the renderer. */
+function pack(stones: PlacedPebble[]) {
+  const data = new Float32Array(stones.length * FIELD_STRIDE);
+  for (let i = 0; i < stones.length; i++) {
+    const p = stones[i],
+      at = i * FIELD_STRIDE;
+    data[at] = p.x;
+    data[at + 2] = p.z;
+    data[at + 3] = p.radius;
+    data[at + 4] = p.height;
+    data[at + 5] = Math.cos(p.angle);
+    data[at + 6] = Math.sin(p.angle);
+    data[at + 1] = NaN; // The renderer samples the displayed terrain.
+    data[at + 10] = Math.min(1, Math.max(0, p.stamp.tone * 2.2 + 0.55));
+    data[at + 11] = p.burial;
+    const r = p.stamp.outline;
+    data[at + 12] = (r[0] + r[3]) * 0.5;
+    data[at + 13] = (r[1] + r[2] + r[4] + r[5]) * 0.25;
+    // Adjacent marks have similar atlas coordinates. Choose the actual fragment
+    // and its mineral exposure independently at each world-space position.
+    const seed = Math.imul(Math.round(p.x * 512), 0x8da6b343) ^ Math.round(p.z * 512);
+    const variety = hashToUnit(seed) * PEBBLE_SHAPES;
+    const shape = Math.floor(variety);
+    data[at + 14] = variety - shape;
+    data[at + INSTANCE_STRIDE] = shape;
+  }
+  return data;
+}
+
+interface CachedTile {
+  stones: Float32Array;
+  // Previous draw-list slot plus one, zero if the stone was outside that window.
+  slots: Uint32Array;
+}
+
+interface StoneBand {
+  atlas: PebbleAtlas;
+  fine: boolean;
+  maxRadius: number;
+  tileSize: number;
+  tiles: Map<string, CachedTile>;
+}
+
+/** Cache immutable placements in size bands. Only the larger marks need distant tiles. */
 export class PebbleField {
-  private readonly atlas: PebbleAtlas;
-  private readonly tiles = new Map<string, PlacedPebble[]>();
+  private readonly bands: StoneBand[] = [];
   private builtShapes = false;
 
   constructor(stamps: readonly PebbleStamp[]) {
-    this.atlas = new PebbleAtlas(stamps);
+    for (const fine of [true, false]) {
+      const frequency = fine ? FINE_PEBBLE_FREQUENCY : MEDIUM_PEBBLE_FREQUENCY;
+      let lower = 0;
+      for (const upper of [0.0048, 0.008, Infinity]) {
+        const group = stamps.filter(
+          (s) => s.radius >= lower && s.radius < upper && (!fine || s.radius / frequency >= 0.017)
+        );
+        lower = upper;
+        if (!group.length) continue;
+        this.bands.push({
+          atlas: new PebbleAtlas(group),
+          fine,
+          tileSize: fine ? 2 : 10,
+          maxRadius: Math.max(...group.map((s) => s.radius)) / frequency,
+          tiles: new Map(),
+        });
+      }
+    }
   }
 
-  window(tx: number, tz: number): PebbleWindow {
-    const cx = (tx + 0.5) * PEBBLE_TILE_SIZE,
-      cz = (tz + 0.5) * PEBBLE_TILE_SIZE;
-    const pad = PEBBLE_TILE_SIZE * Math.SQRT1_2;
-    const keep = new Set<string>(),
-      nearby: PlacedPebble[] = [];
-    for (const fine of [false, true]) {
-      const reach = fine ? FINE_PEBBLE_REACH : PEBBLE_REACH;
-      const rings = Math.ceil((reach + PEBBLE_TILE_SIZE) / PEBBLE_TILE_SIZE);
-      for (let z = tz - rings; z <= tz + rings; z++)
-        for (let x = tx - rings; x <= tx + rings; x++) {
-          if (Math.hypot(x - tx, z - tz) * PEBBLE_TILE_SIZE > reach + 2 * pad) continue;
-          const key = `${x},${z},${Number(fine)}`;
-          keep.add(key);
-          let stones = this.tiles.get(key);
-          if (!stones) {
-            stones = this.atlas.tile(x, z, fine);
-            this.tiles.set(key, stones);
+  window(view: PebbleView): PebbleWindow {
+    const cx = (view.x + 0.5) * PEBBLE_TILE_SIZE,
+      cz = (view.z + 0.5) * PEBBLE_TILE_SIZE;
+    const s = view.support;
+    const pad = PEBBLE_TILE_SIZE * 1.5;
+    // At a downward (or upward) angle the ground can end the search well before
+    // the maximum optical distance, particularly under magnification.
+    const groundLimit =
+      view.up < 0
+        ? (view.floor - pad) / view.up
+        : view.down < 0
+          ? (view.ceiling + pad) / -view.down
+          : Infinity;
+    const chunks: { tile: Float32Array; indices: number[]; previous: Uint32Array }[] = [];
+    let count = 0;
+    for (const band of this.bands) {
+      const { tileSize, tiles } = band;
+      if (!pebbleInWindow(view, 0, 0, band.maxRadius, pad)) {
+        tiles.clear();
+        continue;
+      }
+      const radius = Math.min(band.maxRadius, Math.max(0, groundLimit));
+      const keep = new Map<string, CachedTile>();
+      for (
+        let z = Math.floor((cz - radius * s[3] - pad) / tileSize);
+        z <= Math.floor((cz + radius * s[1] + pad) / tileSize);
+        z++
+      ) {
+        for (
+          let x = Math.floor((cx - radius * s[2] - pad) / tileSize);
+          x <= Math.floor((cx + radius * s[0] + pad) / tileSize);
+          x++
+        ) {
+          const dx = (x + 0.5) * tileSize - cx,
+            dz = (z + 0.5) * tileSize - cz;
+          if (!pebbleInWindow(view, dx, dz, radius, pad + tileSize * Math.SQRT1_2)) continue;
+          const key = `${x},${z}`;
+          const cached = tiles.get(key);
+          const tile = cached?.stones ?? pack(band.atlas.tile(x, z, band.fine, tileSize));
+          const slots = new Uint32Array(tile.length / FIELD_STRIDE);
+          keep.set(key, { stones: tile, slots });
+          const indices: number[] = [];
+          for (let at = 0; at < tile.length; at += FIELD_STRIDE) {
+            const width = tile[at + 3] * Math.max(tile[at + 12], tile[at + 13]);
+            if (
+              pebbleInWindow(view, tile[at] - cx, tile[at + 2] - cz, Math.min(width, radius), pad)
+            ) {
+              slots[at / FIELD_STRIDE] = count + indices.length + 1;
+              indices.push(at);
+            }
           }
-          for (const stone of stones)
-            if (Math.hypot(stone.x - cx, stone.z - cz) < stone.reach + pad) nearby.push(stone);
+          if (indices.length) {
+            chunks.push({ tile, indices, previous: cached?.slots ?? new Uint32Array(0) });
+            count += indices.length;
+          }
         }
+      }
+      band.tiles = keep;
     }
-    for (const key of this.tiles.keys()) if (!keep.has(key)) this.tiles.delete(key);
-    const data = new Float32Array(nearby.length * FIELD_STRIDE);
-    for (let i = 0; i < nearby.length; i++) {
-      const p = nearby[i],
-        at = i * FIELD_STRIDE;
-      data[at] = p.x;
-      data[at + 2] = p.z;
-      data[at + 3] = p.radius;
-      data[at + 4] = p.height;
-      data[at + 5] = Math.cos(p.angle);
-      data[at + 6] = Math.sin(p.angle);
-      data[at + 7] = p.reach;
-      data[at + 10] = Math.min(1, Math.max(0, p.stamp.tone * 2.2 + 0.55));
-      data[at + 11] = p.burial;
-      const r = p.stamp.outline;
-      data[at + 12] = (r[0] + r[3]) * 0.5;
-      data[at + 13] = (r[1] + r[2] + r[4] + r[5]) * 0.25;
-      // Adjacent marks have similar atlas coordinates. Choose the actual fragment
-      // and its mineral exposure independently at each world-space position.
-      const seed = Math.imul(Math.round(p.x * 512), 0x8da6b343) ^ Math.round(p.z * 512);
-      const variety = hashToUnit(seed) * PEBBLE_SHAPES;
-      const shape = Math.floor(variety);
-      data[at + 14] = variety - shape;
-      data[at + INSTANCE_STRIDE] = shape;
-    }
-    const result: PebbleWindow = { x: tx, z: tz, stones: data };
-    if (!this.builtShapes) {
+    const data = new Float32Array(count * FIELD_STRIDE);
+    let out = 0;
+    for (const { tile, indices, previous } of chunks)
+      for (const at of indices) {
+        for (let j = 0; j < FIELD_STRIDE; j++) data[out + j] = tile[at + j];
+        data[out + 7] = (previous[at / FIELD_STRIDE] ?? 0) - 1;
+        out += FIELD_STRIDE;
+      }
+    const result: PebbleWindow = { stones: data };
+    if (count > 0 && !this.builtShapes) {
       result.shapes = Array.from({ length: PEBBLE_SHAPES * PEBBLE_DETAILS.length }, (_, i) =>
         prototype(i)
       );

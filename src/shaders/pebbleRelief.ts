@@ -1,10 +1,15 @@
+import { PEBBLE_ARRIVAL_SECONDS, PEBBLE_FULL_PX, PEBBLE_TEXTURE_PX } from '../terrain/pebbleLod';
+
 /** Shared vertex positions for the visible stone and its sun silhouette. */
 export const pebbleReliefVertex = /* glsl */ `
   attribute vec4 chipGround; // world base XYZ and outline radius
-  attribute vec4 chipForm;   // height, cos / sin of bearing, visibility range
+  attribute vec4 chipForm;   // height, cos / sin of bearing, time first drawn
   attribute vec4 chipBed;    // local terrain slope, albedo, buried fraction
   attribute vec3 chipProfile; // horizontal half-extents and mineral exposure
   uniform vec3 uPebbleEye;
+  uniform vec3 uPebbleForward;
+  uniform float uPebbleProjection;
+  uniform float uPebbleTime;
   uniform float uPebbleStrength;
   varying vec3 vChipSurface;
 
@@ -12,10 +17,14 @@ export const pebbleReliefVertex = /* glsl */ `
     mat2 turn = mat2(chipForm.y, chipForm.z, -chipForm.z, chipForm.y);
     vec2 axes = chipGround.w * chipProfile.xy;
     vec2 delta = turn * (position.xz * axes);
-    float range = distance(chipGround.xyz, uPebbleEye);
-    float relief = 1.0 - smoothstep(chipForm.w*0.68, chipForm.w, range);
+    vec3 offset = chipGround.xyz - uPebbleEye;
+    float depth = dot(offset, uPebbleForward);
+    float pixels = max(axes.x, axes.y) * uPebbleProjection / max(0.001, depth > 0.0 ? depth : length(offset));
+    float relief = smoothstep(${PEBBLE_TEXTURE_PX.toFixed(1)}, ${PEBBLE_FULL_PX.toFixed(1)}, pixels)
+      * smoothstep(0.0, ${PEBBLE_ARRIVAL_SECONDS.toFixed(2)}, uPebbleTime - chipForm.w);
+    delta *= smoothstep(0.0, 0.5, relief);
     float yScale = chipForm.x * uPebbleStrength * relief;
-    float exposed = position.y * yScale - chipForm.x * chipBed.w;
+    float exposed = position.y * yScale - chipForm.x * (chipBed.w * relief + (1.0 - relief) * 0.04);
     // Inverse-transpose of the nonuniform scale, bearing and terrain shear.
     float ny = normal.y / max(yScale, chipGround.w*0.015);
     vec2 nxz = turn * (normal.xz / axes) - chipBed.xy*ny;

@@ -1,11 +1,12 @@
+import { ROCK_HIDDEN_PX, ROCK_PREFETCH_PX } from '../environment/rockScreenLod';
 import { PebbleSurface, type PebbleGroundSampler } from './PebbleSurface';
 import type { SunShadowUniforms } from '../rendering/SunShadows';
-import { type Scene, Vector3, type Camera, type PerspectiveCamera, MeshBasicMaterial, Color } from 'three';
+import { type Scene, Vector3, type Camera, type PerspectiveCamera, type InstancedMesh, MeshBasicMaterial, Color } from 'three';
 import { Chunk } from './Chunk';
 import type { TerrainGenerator } from './TerrainGenerator';
 import type { RockManager } from '../environment/RockManager';
 import type { TerrainArgs } from './terrain';
-import type { ChunkWorkerResult } from './ChunkWorker';
+import type { ChunkWorkerResult, RockBandResult } from './ChunkWorker';
 import type { RockGenerationConfig, CraterGenerationConfig } from '../types';
 import {
   getNeighborKeys,
@@ -59,10 +60,14 @@ const NEAREST_CHUNKS_HIGH_PRIORITY = 25;
  */
 const FINER_LOD_PREFETCH_CHUNKS = 9;
 
-/**
- * State for a single chunk worker
- */
+interface RockBandRequest {
+  chunk: Chunk;
+  range: [number, number];
+}
+
+/** One worker can build a terrain mesh or extend a boulder catalogue. */
 interface WorkerState {
+  rockRequest?: RockBandRequest;
   worker: Worker;
   busy: boolean;
   isHighPriority: boolean;
@@ -81,6 +86,8 @@ export class ChunkManager {
   private scene: Scene;
   private config: ChunkConfig;
   private terrainGenerator: TerrainGenerator;
+  private streamBoulders = false;
+  private nextRockBand?: RockBandRequest;
   private rockManager: RockManager;
   private rockGenerationConfig: RockGenerationConfig;
   private baseTerrainArgs: Omit<TerrainArgs, 'resolution' | 'posX' | 'posZ'>;
@@ -97,6 +104,9 @@ export class ChunkManager {
   private terrainRevision: number = 0;
   private pebbleSurface?: PebbleSurface;
   private pebbleShadowRevision = 0;
+  private pebbleGroundRevision = 0;
+  private minPebbleGround = Infinity;
+  private maxPebbleGround = -Infinity;
   private readonly pebbleGroundAtCamera = new Float32Array(4);
   /** Coarse terrain from the edge of the chunk disc out to the horizon */
   private farTerrain: FarTerrain;
@@ -189,6 +199,15 @@ export class ChunkManager {
    */
   setCamera(camera: Camera): void {
     this.camera = camera;
+    if (!this.streamBoulders && (camera as PerspectiveCamera).isPerspectiveCamera) {
+      this.streamBoulders = true;
+      // Callers may attach a view after the first terrain results have arrived.
+      for (const chunk of this.chunks.values()) {
+        for (const level of chunk.builtLevels) chunk.clearRockMeshes(level);
+      }
+      this.terrainRevision++;
+      this.requestRender();
+    }
   }
 
   /**
@@ -203,7 +222,8 @@ export class ChunkManager {
     const finerResolution = this.config.lodLevels[finerLodIndex];
     const edgeLength = this.config.chunkWidth / (finerResolution - 1);
 
-    const fov = (this.camera as PerspectiveCamera)?.fov ?? 70;
+    const view = this.camera as PerspectiveCamera | null;
+    const fov = view?.isPerspectiveCamera ? view.getEffectiveFOV() : 70;
     const fovRadians = (fov * Math.PI) / 180;
     const screenHeight = window.innerHeight;
     const tanHalfFov = Math.tan(fovRadians / 2);
@@ -229,7 +249,7 @@ export class ChunkManager {
         { type: 'module' }
       );
 
-      worker.onmessage = (e: MessageEvent<ChunkWorkerResult>) => {
+      worker.onmessage = (e: MessageEvent<ChunkWorkerResult | RockBandResult>) => {
         this.handleWorkerResult(e.data, i);
       };
 
@@ -244,7 +264,25 @@ export class ChunkManager {
   /**
    * Handle chunk data from worker
    */
-  private handleWorkerResult(result: ChunkWorkerResult, workerIndex: number): void {
+  private handleWorkerResult(result: ChunkWorkerResult | RockBandResult, workerIndex: number): void {
+    const worker = this.workers[workerIndex];
+    if ('rockBand' in result) {
+      const chunk = worker.rockRequest?.chunk;
+      worker.rockRequest = undefined;
+      worker.busy = false;
+      // A chunk can leave the streaming region and be recreated under the same key.
+      if (chunk && this.chunks.get(result.gridKey) === chunk) {
+        chunk.rockFloor = result.rockBand[0];
+        for (const mesh of this.rockManager.createRockMeshes(result.rockPlacements)) {
+          chunk.addBoulderMesh(mesh);
+          if (this.debugMode) this.setRockMaterial(mesh, chunk.gridKey);
+        }
+        if (result.rockPlacements.length) this.terrainRevision++;
+      }
+      this.requestRender();
+      this.dispatchNext();
+      return;
+    }
     const { gridKey, lodLevel } = result;
 
     // Worker is no longer busy
@@ -282,7 +320,7 @@ export class ChunkManager {
     chunk.clearRockMeshes(lodLevel);
 
     // Create rock meshes via RockManager (if placements exist)
-    if (result.rockPlacements && result.rockPlacements.length > 0) {
+    if (!this.streamBoulders && result.rockPlacements && result.rockPlacements.length > 0) {
       const rockMeshes = this.rockManager.createRockMeshes(result.rockPlacements);
       for (const rockMesh of rockMeshes) {
         chunk.addRockMesh(rockMesh, lodLevel);
@@ -344,28 +382,22 @@ export class ChunkManager {
       }
     }
 
-    // Update all existing rock meshes
-    for (const [gridKey, chunk] of this.chunks.entries()) {
-      for (let lodLevel = 0; lodLevel < chunk.getLodLevelCount(); lodLevel++) {
-        const rockMeshes = chunk.getRockMeshes(lodLevel);
-        for (const rockMesh of rockMeshes) {
-          const oldMaterial = rockMesh.material;
-
-          // Only dispose debug materials (MeshBasicMaterial), never the shared MoonMaterial
-          if (oldMaterial instanceof MeshBasicMaterial) {
-            oldMaterial.dispose();
-          }
-
-          // Create new material
-          rockMesh.material = this.debugMode
-            ? new MeshBasicMaterial({ wireframe: true, color: this.generateChunkColor(gridKey) })
-            : this.rockManager.getMaterial();
-        }
+    for (const [gridKey, chunk] of this.chunks) {
+      for (const mesh of chunk.boulders) this.setRockMaterial(mesh, gridKey);
+      for (let level = 0; level < chunk.getLodLevelCount(); level++) {
+        for (const mesh of chunk.getRockMeshes(level)) this.setRockMaterial(mesh, gridKey);
       }
     }
 
     console.log(`Debug wireframe mode: ${this.debugMode ? 'ON' : 'OFF'}`);
     this.requestRender();
+  }
+
+  private setRockMaterial(mesh: InstancedMesh, gridKey: string) {
+    if (mesh.material instanceof MeshBasicMaterial) mesh.material.dispose();
+    mesh.material = this.debugMode
+      ? new MeshBasicMaterial({ wireframe: true, color: this.generateChunkColor(gridKey) })
+      : this.rockManager.getMaterial();
   }
 
   /**
@@ -458,6 +490,24 @@ export class ChunkManager {
         continue;
       }
 
+      if (this.nextRockBand) {
+        const request = this.nextRockBand;
+        this.nextRockBand = undefined;
+        if (this.chunks.get(request.chunk.gridKey) === request.chunk) {
+          workerState.busy = true;
+          workerState.rockRequest = request;
+          const pos = request.chunk.lod.position;
+          workerState.worker.postMessage({
+            gridKey: request.chunk.gridKey,
+            lodLevel: 0,
+            rockBand: request.range,
+            rockLibrarySize: this.rockManager.getLibrarySize(),
+            rockConfig: this.rockGenerationConfig,
+            terrainArgs: { ...this.baseTerrainArgs, posX: pos.x, posZ: pos.z, resolution: 128 },
+          });
+          continue;
+        }
+      }
       const request = this.takeNextValidRequest(workerState.isHighPriority);
 
       if (request) {
@@ -469,7 +519,7 @@ export class ChunkManager {
           terrainArgs: request.terrainArgs,
           gridKey: request.gridKey,
           lodLevel: request.lodLevel,
-          rockLibrarySize: this.rockManager.getLibrarySize(),
+          rockLibrarySize: this.streamBoulders ? 0 : this.rockManager.getLibrarySize(),
           rockConfig: this.rockGenerationConfig,
         };
 
@@ -567,7 +617,8 @@ export class ChunkManager {
 
     this.requestQueue.pruneStale(nearbySet);
 
-    const fov = (this.camera as PerspectiveCamera)?.fov ?? 70;
+    const view = this.camera as PerspectiveCamera | null;
+    const fov = view?.isPerspectiveCamera ? view.getEffectiveFOV() : 70;
     const fovRadians = (fov * Math.PI) / 180;
     const screenHeight = window.innerHeight;
 
@@ -626,8 +677,17 @@ export class ChunkManager {
 
     this.dispatchNext();
 
-    const chunkLodLevels = this.updateChunkVisibility(cameraPosition, fovRadians, screenHeight);
-    this.updateRockVisibility(cameraPosition, fovRadians, screenHeight);
+    const focal = viewportHeight / (2 * Math.tan(fovRadians / 2));
+    const corner = view?.isPerspectiveCamera
+      ? Math.hypot(1, 1 / view.projectionMatrix.elements[0], 1 / view.projectionMatrix.elements[5]) : 1;
+    const reach = this.pebbleSurface?.groundReach(focal, corner) ?? 0;
+    const chunkLodLevels = this.updateChunkVisibility(cameraPosition, fovRadians, screenHeight, reach);
+    if (this.streamBoulders) {
+      this.rockManager.getMaterial().setRockCamera(cameraPosition, this.cameraForward, focal);
+      this.prepareRockBand(cameraPosition, focal, corner);
+      this.dispatchNext();
+    }
+    this.updateRockVisibility(cameraPosition, fovRadians, viewportHeight);
     this.updateEdgeStitching(chunkLodLevels);
     if (this.pebbleSurface) {
       // Use the displayed surface at the camera rather than the lower-resolution collision mesh.
@@ -635,11 +695,13 @@ export class ChunkManager {
       const ready = this.samplePebbleGround(cameraPosition.x, cameraPosition.z, corner, 0);
       const changed = this.pebbleSurface.update(
         cameraPosition,
-        cameraPosition.y - corner[3],
-        this.terrainRevision,
-        ready && !this.debugMode,
+        cameraPosition.y - (ready ? corner[3] : this.cameraTerrainY),
+        this.pebbleGroundRevision,
+        !this.debugMode,
         this.camera,
-        viewportHeight
+        viewportHeight,
+        this.minPebbleGround,
+        this.maxPebbleGround
       );
       if (changed) {
         this.pebbleShadowRevision++;
@@ -660,7 +722,7 @@ export class ChunkManager {
 
     // Redraw the rocks right around the camera from finer meshes, once the
     // chunk meshes' visibility and unloading are final for this frame
-    if (this.rockManager.updateNearDetail(cameraPosition, fovRadians, screenHeight)) {
+    if (this.rockManager.updateNearDetail(cameraPosition, fovRadians, viewportHeight)) {
       this.requestRender();
     }
   }
@@ -699,9 +761,12 @@ export class ChunkManager {
   private updateChunkVisibility(
     cameraPosition: Vector3,
     fovRadians: number,
-    screenHeight: number
+    screenHeight: number,
+    pebbleReach: number
   ): Map<string, number> {
     const chunkLodLevels = new Map<string, number>();
+    this.minPebbleGround = Infinity;
+    this.maxPebbleGround = -Infinity;
 
     for (const [gridKey, chunk] of this.chunks.entries()) {
       const desiredLod = this.getLodLevelForChunkOptimized(
@@ -714,6 +779,21 @@ export class ChunkManager {
       const actualLod = chunk.findBestAvailableLod(desiredLod);
       if (chunk.currentLodLevel !== actualLod) this.terrainRevision++;
       chunk.setLodLevel(actualLod);
+      const mesh = chunk.getTerrainMesh(actualLod);
+      const near =
+        pebbleReach > 0 &&
+        Math.abs(cameraPosition.x - chunk.lod.position.x) <= pebbleReach + this.config.chunkWidth / 2 &&
+        Math.abs(cameraPosition.z - chunk.lod.position.z) <= pebbleReach + this.config.chunkDepth / 2;
+      const groundId = near ? mesh?.id : undefined;
+      if (chunk.pebbleGroundId !== groundId) {
+        chunk.pebbleGroundId = groundId;
+        this.pebbleGroundRevision++;
+      }
+      if (near && mesh) {
+        const bounds = mesh.userData.heightRange;
+        this.minPebbleGround = Math.min(this.minPebbleGround, bounds?.[0] ?? -Infinity);
+        this.maxPebbleGround = Math.max(this.maxPebbleGround, bounds?.[1] ?? Infinity);
+      }
       chunkLodLevels.set(gridKey, actualLod);
     }
 
@@ -721,17 +801,60 @@ export class ChunkManager {
   }
 
   /**
-   * Update rock visibility based on bounding sphere screen space size.
-   * Rocks are shown when their bounding sphere diameter is >= 4 pixels (LodDetailLevel.Balanced).
+   * Extend the nearest incomplete catalogue before its missing rocks become visible.
+   * The corner ray bounds magnification everywhere in the viewport.
+   */
+  private prepareRockBand(eye: Vector3, focal: number, corner: number) {
+    if (this.nextRockBand || this.workers.some(w => w.rockRequest)) return;
+    const { minDiameter, maxDiameter, lodMinDiameterScale } = this.rockGenerationConfig;
+    let closest = Infinity;
+    for (const chunk of this.chunks.values()) {
+      if (chunk.rockFloor <= minDiameter) continue;
+      const mesh = chunk.getTerrainMesh(chunk.currentLodLevel);
+      if (!mesh) continue;
+      const { x, z } = chunk.lod.position;
+      const heights = mesh.userData.heightRange;
+      const distance = Math.hypot(
+        Math.max(0, Math.abs(eye.x - x) - this.config.chunkWidth / 2),
+        heights ? Math.max(0, heights[0] - eye.y, eye.y - heights[1]) : 0,
+        Math.max(0, Math.abs(eye.z - z) - this.config.chunkDepth / 2)
+      );
+      if (distance >= closest) continue;
+      // Placement can stretch the footprint by up to 12% and a boulder can
+      // straddle its chunk boundary. Both corrections favour early streaming.
+      const cutoff = (distance - maxDiameter) * ROCK_PREFETCH_PX / (corner * focal * 1.12);
+      if (cutoff >= Math.min(chunk.rockFloor, maxDiameter)) continue;
+      let floor = minDiameter;
+      for (const scale of lodMinDiameterScale) {
+        const size = scale * minDiameter;
+        if (size <= cutoff) floor = Math.max(floor, size);
+      }
+      if (floor >= chunk.rockFloor) continue;
+      closest = distance;
+      this.nextRockBand = { chunk, range: [floor, chunk.rockFloor] };
+    }
+  }
+
+  /**
+   * Skip a catalogue batch only after its largest possible footprint is below the fade cutoff.
+   * The vertex shader handles each instance within a visible batch.
    */
   private updateRockVisibility(
     cameraPosition: Vector3,
     fovRadians: number,
     screenHeight: number
   ): void {
-    const minScreenSize = this.config.lodDetailLevel; // LodDetailLevel.Balanced = 4 pixels
+    const minScreenSize = this.config.lodDetailLevel;
+    const focal = screenHeight / (2 * Math.tan(fovRadians / 2));
 
     for (const chunk of this.chunks.values()) {
+      for (const mesh of chunk.boulders) {
+        const sphere = mesh.boundingSphere;
+        if (!sphere) continue;
+        this.rockWorldCenter.copy(sphere.center).add(chunk.lod.position).sub(cameraPosition);
+        const depth = this.rockWorldCenter.dot(this.cameraForward) - sphere.radius;
+        mesh.visible = mesh.userData.maxRockDiameter * focal >= ROCK_HIDDEN_PX * depth;
+      }
       // Only the active LOD level's rocks can be visible; Chunk.setLodLevel()
       // has already hidden every other level's rock meshes.
       for (const rockMesh of chunk.getRockMeshes(chunk.currentLodLevel)) {
@@ -851,6 +974,7 @@ export class ChunkManager {
     const chunk = this.chunks.get(gridKey);
     if (!chunk) return;
 
+    if (chunk.pebbleGroundId !== undefined) this.pebbleGroundRevision++;
     chunk.removeFromScene(this.scene);
     chunk.dispose();
     this.terrainRevision++;
@@ -951,7 +1075,8 @@ export class ChunkManager {
       return;
     }
 
-    const fov = (this.camera as PerspectiveCamera)?.fov ?? 70;
+    const view = this.camera as PerspectiveCamera | null;
+    const fov = view?.isPerspectiveCamera ? view.getEffectiveFOV() : 70;
     const fovRadians = (fov * Math.PI) / 180;
     const screenHeight = window.innerHeight;
 

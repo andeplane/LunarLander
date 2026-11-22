@@ -82,7 +82,7 @@ const rockGeneration: RockGenerationConfig = {
   maxDiameter: 12.0,          // Largest boulders (meters)
   densityConstant: 0.00048,   // N(>1m) per m² averaged over fields and plains
   powerLawExponent: -2.1,     // Size-frequency exponent (shallower than the -2.5 of block fields: keeps house-size boulders in view)
-  // LOD scaling - rocks smaller than minDiameter * scale are hidden at that LOD
+  // Diameter bands streamed ahead of the camera as their rocks grow on screen.
   lodMinDiameterScale: [1.0, 1.5, 2.5, 4.5, 9.0, 18.0, 40.0],
 };
 

@@ -89,7 +89,9 @@ export async function createSurfaceScene(
         0,
         candidateMaterial() === materials.flight,
         viewCamera,
-        viewportHeight
+        viewportHeight,
+        0,
+        0
       )
     )
       shadowRevision++;

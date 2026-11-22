@@ -460,6 +460,22 @@ describe(placeRocks.name, () => {
     }
   });
 
+  it('streams disjoint sizes without changing the identities, poses or tints used by gameplay', () => {
+    const chunk = chunkAt(2, -1);
+    const all = instances(placeRocks(chunk, 0, LIBRARY_SIZE, config, flat));
+    const bands = [
+      [1.5, Infinity],
+      [0.6, 1.5],
+      [config.minDiameter, 0.6],
+    ] as const;
+    const streamed = bands.flatMap((band) =>
+      instances(placeRocks(chunk, 0, LIBRARY_SIZE, config, flat, band))
+    );
+    const identities = (list: Instance[]) =>
+      list.map(({ tier: _tier, ...physical }) => JSON.stringify(physical)).sort();
+    expect(identities(streamed)).toEqual(identities(all));
+  });
+
   it('shows the same rocks at the same place on coarser LODs, minus the small ones', () => {
     const chunk = chunkAt(2, -1);
     const rocks = population(chunk);

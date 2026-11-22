@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { Vector3, Mesh, BufferGeometry, BoxGeometry, InstancedMesh, MeshBasicMaterial, Group } from 'three';
+import { PerspectiveCamera, Vector3, Mesh, BufferGeometry, BoxGeometry, InstancedMesh, MeshBasicMaterial, Group } from 'three';
 import { ChunkManager, type ChunkConfig } from './ChunkManager';
 import type { TerrainGenerator } from './TerrainGenerator';
 import type { RockManager } from '../environment/RockManager';
-import type { ChunkWorkerResult, RockPlacement } from './ChunkWorker';
+import type { ChunkWorkerResult, RockBandResult, RockPlacement } from './ChunkWorker';
 import type { RockGenerationConfig, CraterGenerationConfig } from '../types';
 import { LodDetailLevel } from './LodUtils';
 
@@ -14,6 +14,7 @@ interface PostedMessage {
   gridKey: string;
   lodLevel: number;
   terrainArgs: { resolution: number };
+  rockBand?: [number, number];
 }
 
 /**
@@ -23,7 +24,7 @@ interface PostedMessage {
 class FakeWorker {
   static instances: FakeWorker[] = [];
 
-  onmessage: ((e: MessageEvent<ChunkWorkerResult>) => void) | null = null;
+  onmessage: ((e: MessageEvent<ChunkWorkerResult | RockBandResult>) => void) | null = null;
   posted: PostedMessage[] = [];
   pending: PostedMessage[] = [];
 
@@ -40,8 +41,8 @@ class FakeWorker {
     // no-op
   }
 
-  emitResult(result: ChunkWorkerResult): void {
-    this.onmessage?.({ data: result } as MessageEvent<ChunkWorkerResult>);
+  emitResult(result: ChunkWorkerResult | RockBandResult): void {
+    this.onmessage?.({ data: result } as MessageEvent<ChunkWorkerResult | RockBandResult>);
   }
 }
 
@@ -106,11 +107,13 @@ describe(ChunkManager.name, () => {
     const fakeMaterial = {
       getParam: vi.fn(() => 0),
       setParam: vi.fn(),
+      setRockCamera: vi.fn(),
     };
 
     terrainGenerator = {
       createTerrainMesh: vi.fn((result: ChunkWorkerResult) => {
         const mesh = new Mesh(new BufferGeometry(), new MeshBasicMaterial());
+        mesh.userData.heightRange = [0, 0];
         terrainMeshesByKey.set(`${result.gridKey}:${result.lodLevel}`, mesh);
         return mesh;
       }),
@@ -367,6 +370,48 @@ describe(ChunkManager.name, () => {
   });
 
   describe('rock meshes', () => {
+    it('streams boulders on zoom and keeps them through a terrain switch and eviction', () => {
+      const manager = createManager({ renderDistance: 0, workerCount: 1, lodLevels: [64, 32, 16] });
+      const camera = new PerspectiveCamera(70, 1, 0.1, 10000);
+      camera.position.set(0, 3000, 0);
+      camera.lookAt(0, 0, 0);
+      manager.setCamera(camera);
+      const update = () => manager.update(camera.position, 360);
+      update();
+      drainWorkers();
+      update();
+      const worker = FakeWorker.instances[0];
+      expect(worker.posted.some(message => message.rockBand)).toBe(false);
+
+      camera.zoom = 8;
+      camera.updateProjectionMatrix();
+      update();
+      let job = worker.pending.shift();
+      while (job && !job.rockBand) {
+        worker.emitResult(makeResult(job.gridKey, job.lodLevel, job.terrainArgs.resolution));
+        job = worker.pending.shift();
+      }
+      expect(job?.rockBand).toEqual([rockConfig.minDiameter, Infinity]);
+      if (!job?.rockBand) throw Error('missing rock band');
+      const placement = { prototypeId: 0, tier: 4, matrices: new Float32Array(16), colors: new Float32Array(3) };
+      worker.emitResult({ gridKey: job.gridKey, rockBand: job.rockBand, rockPlacements: [placement] });
+      const chunk = manager.getChunk(job.gridKey);
+      const mesh = chunk?.boulders[0];
+      expect(mesh).toBeDefined();
+      if (!mesh) throw Error('missing boulder mesh');
+      const dispose = vi.spyOn(mesh, 'dispose');
+      for (const level of [0, 2, 1]) chunk?.setLodLevel(level);
+      chunk?.removeLodLevel(1);
+      expect(mesh?.parent).toBe(chunk?.lod);
+      expect(dispose).not.toHaveBeenCalled();
+
+      camera.position.x = 100000;
+      update();
+      expect(dispose).toHaveBeenCalledTimes(1);
+      expect(manager.getChunk(job.gridKey)).toBeUndefined();
+      manager.dispose();
+    });
+
     it('does not duplicate rock meshes when a LOD result is applied twice', () => {
       const manager = createManager();
       manager.update(new Vector3(0, 50, 0));

@@ -7,9 +7,7 @@ import {
   patchTransform,
 } from '../shaders/regolithTiling';
 
-export const PEBBLE_TILE_SIZE = 4;
-export const PEBBLE_REACH = 24;
-export const FINE_PEBBLE_REACH = 5.4;
+import { PEBBLE_TILE_SIZE } from './pebbleLod';
 
 export interface PlacedPebble {
   x: number;
@@ -18,7 +16,6 @@ export interface PlacedPebble {
   height: number;
   burial: number;
   angle: number;
-  reach: number;
   stamp: PebbleStamp;
 }
 
@@ -56,15 +53,15 @@ export class PebbleAtlas {
       this.bins[Math.floor(stamp.v * BINS) * BINS + Math.floor(stamp.u * BINS)].push(stamp);
   }
 
-  tile(tx: number, tz: number, fine: boolean): PlacedPebble[] {
+  tile(tx: number, tz: number, fine: boolean, tileSize = PEBBLE_TILE_SIZE): PlacedPebble[] {
     const frequency = fine ? FINE_PEBBLE_FREQUENCY : MEDIUM_PEBBLE_FREQUENCY;
     const offsetU = fine ? 0 : 0.37,
       offsetV = fine ? 0 : 0.11;
-    const x0 = tx * PEBBLE_TILE_SIZE,
-      z0 = tz * PEBBLE_TILE_SIZE;
-    const x1 = x0 + PEBBLE_TILE_SIZE,
-      z1 = z0 + PEBBLE_TILE_SIZE;
-    const extent = PEBBLE_TILE_SIZE * frequency;
+    const x0 = tx * tileSize,
+      z0 = tz * tileSize;
+    const x1 = x0 + tileSize,
+      z1 = z0 + tileSize;
+    const extent = tileSize * frequency;
     const u0 = x0 * frequency + offsetU,
       v0 = z0 * frequency + offsetV;
     const output: PlacedPebble[] = [];
@@ -129,9 +126,6 @@ export class PebbleAtlas {
                   (0.86 + 0.94 * ((stamp.u * 17.19) % 1)) *
                   weight ** 0.75,
                 angle: stamp.angle - t.angle,
-                reach: fine
-                  ? Math.min(FINE_PEBBLE_REACH, 0.7 + radius * 105)
-                  : Math.min(PEBBLE_REACH, 5 + radius * 65),
                 stamp,
               });
             }
