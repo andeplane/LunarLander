@@ -46,7 +46,7 @@ export const pebbleSurfaceFragment = /* glsl */ `
   vec3 bump = vec3(0.0,sideX.g-0.5,sideX.r-0.5)*planes.x
     + vec3(top.r-0.5,0.0,top.g-0.5)*planes.y + vec3(sideZ.r-0.5,sideZ.g-0.5,0.0)*planes.z;
   bump -= meshNormal * dot(bump, meshNormal);
-  moonNormal = normalize(meshNormal - bump * (2.0 * MOON_SLOPE_RANGE * mix(0.39, 0.91, exposure)));
+  moonNormal = normalize(meshNormal - bump * (2.0 * MOON_SLOPE_RANGE * uRockBump * mix(0.39, 0.91, exposure)));
   float dust = smoothstep(0.18, 0.96, meshNormal.y) * (0.64 - 0.29*exposure + 0.12*(1.0-grit.a));
   vec3 stone = mix(MOON_ROCK_COLOR*0.95, MOON_SOIL_COLOR*1.12, dust);
   moonAlbedo = stone * (0.81 + 0.46*vChipSurface.x) * (1.0 + (grit.b-0.5)*mix(0.74,1.25,exposure))

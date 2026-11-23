@@ -54,6 +54,7 @@ export class Engine {
   private wasPaused: boolean = false;
   
   // Post-processing
+  private renderScale = 1;
   private composer: EffectComposer;
   private bloomPass: UnrealBloomPass;
   private outputPass: OutputPass;
@@ -126,6 +127,8 @@ export class Engine {
       { type: THREE.HalfFloatType, samples: COMPOSER_MSAA_SAMPLES }
     );
     this.composer = new EffectComposer(this.renderer, composerTarget);
+    // The custom target already uses drawing-buffer pixels.
+    this.composer.setPixelRatio(1);
     
     // Render pass - renders the scene
     const renderPass = new RenderPass(this.scene, this.camera);
@@ -568,6 +571,12 @@ export class Engine {
     this.needsRender = false;
   }
 
+  setRenderScale(scale: number): void {
+    if (scale === this.renderScale) return;
+    this.renderScale = scale;
+    this.handleResize();
+  }
+
   /**
    * Handle window resize.
    * Arrow function property so the listener can be removed in dispose().
@@ -578,11 +587,10 @@ export class Engine {
 
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    const ratio = Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO) * this.renderScale;
+    if (this.renderer.getPixelRatio() !== ratio) this.renderer.setPixelRatio(ratio);
     this.renderer.setSize(width, height);
-    this.composer.setSize(width, height);
-
-    // Update bloom pass resolution
-    this.bloomPass.resolution.set(width, height);
+    this.composer.setSize(this.renderer.domElement.width, this.renderer.domElement.height);
 
     // Force re-render after resize
     this.needsRender = true;

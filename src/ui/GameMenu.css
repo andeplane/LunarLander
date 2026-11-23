@@ -98,6 +98,15 @@
   accent-color: #bad5ef;
   cursor: pointer;
 }
+.video-setting + .video-setting {
+  border-top: 1px solid #343d47;
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+}
+.video-setting select {
+  min-width: 7.4rem;
+}
+.video-setting p,
 #setting-detail {
   margin: 0.5rem 0 0;
   color: #bcc7d2;

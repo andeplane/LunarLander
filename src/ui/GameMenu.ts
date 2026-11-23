@@ -1,4 +1,9 @@
-import type { PlayerSettings, ShadowQuality } from '../core/PlayerSettings';
+import {
+  groundTextures,
+  rockBumps,
+  renderScales,
+  type PlayerSettings,
+} from '../core/PlayerSettings';
 import './GameMenu.css';
 
 interface MenuActions {
@@ -6,7 +11,7 @@ interface MenuActions {
   setPaused(paused: boolean): void;
   resume(): void;
   mainMenu(): void;
-  shadowQuality(quality: ShadowQuality): void;
+  applyVideo(): void;
   isMuted(): boolean;
   mute(muted: boolean): void;
 }
@@ -124,17 +129,39 @@ export class GameMenu {
       if (selected) tab.focus();
     }
     if (name === 'Video') {
-      panel.innerHTML = `<label class="setting-row"><span>Rover shadow quality</span>
-        <select aria-describedby="setting-detail"><option value="performance">Performance</option>
-        <option value="balanced">Balanced</option><option value="high">High</option></select></label>
-        <p id="setting-detail">Higher quality gives cockpit and ground shadows finer edges.</p>`;
-      const select = this.control<HTMLSelectElement>('select');
-      select.value = this.settings.shadowQuality;
-      select.onchange = () => {
-        this.settings.shadowQuality = select.value as ShadowQuality;
-        this.actions.shadowQuality(this.settings.shadowQuality);
-        this.settings.save();
-      };
+      panel.replaceChildren();
+      this.videoChoice(
+        panel,
+        'Ground texture detail',
+        'Adds clumps and fine dust grains to the lunar soil.',
+        'groundTexture',
+        groundTextures
+      );
+      this.videoChoice(
+        panel,
+        'Rock bump strength',
+        'Adjusts how strongly light picks out the grain on stones.',
+        'rockBump',
+        rockBumps
+      );
+      this.videoChoice(
+        panel,
+        'Rover shadow quality',
+        'Higher quality gives cockpit and ground shadows finer edges.',
+        'shadowQuality',
+        [
+          { value: 'performance', label: 'Performance' },
+          { value: 'balanced', label: 'Balanced' },
+          { value: 'high', label: 'High' },
+        ]
+      );
+      this.videoChoice(
+        panel,
+        'Render scale',
+        'Lower the 3D resolution for smoother play.',
+        'renderScale',
+        renderScales
+      );
       return;
     }
     const general = name === 'General';
@@ -151,6 +178,36 @@ export class GameMenu {
         this.actions.mute(input.checked);
       }
     };
+  }
+
+  private videoChoice<K extends 'groundTexture' | 'rockBump' | 'shadowQuality' | 'renderScale'>(
+    panel: HTMLElement,
+    title: string,
+    hint: string,
+    key: K,
+    choices: readonly { value: PlayerSettings[K]; label: string }[]
+  ): void {
+    const group = document.createElement('div');
+    group.className = 'video-setting';
+    const row = document.createElement('label');
+    row.className = 'setting-row';
+    const label = document.createElement('span');
+    label.textContent = title;
+    const select = document.createElement('select');
+    const detail = document.createElement('p');
+    detail.id = `setting-${key}`;
+    detail.textContent = hint;
+    select.setAttribute('aria-describedby', detail.id);
+    for (const choice of choices) select.add(new Option(choice.label, String(choice.value)));
+    select.value = String(this.settings[key]);
+    select.onchange = () => {
+      this.settings[key] = choices[select.selectedIndex].value;
+      this.actions.applyVideo();
+      this.settings.save();
+    };
+    row.append(label, select);
+    group.append(row, detail);
+    panel.append(group);
   }
 
   private back(): void {

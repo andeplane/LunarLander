@@ -29,6 +29,10 @@ export interface MoonMaterialParams {
 
   /** Regolith detail map (grain, pebbles, craterlets) on or off. */
   enableDetail: boolean;
+  /** Additional sampled terrain layers: 0 = broad soil, 1 = clumps, 2 = clumps and grains. */
+  groundTextureLayers: number;
+  /** Multiplier for the surface normals of stones, including close-up chips. */
+  rockBump: number;
   /** Strength of the detail normals (1 = as authored). */
   detailStrength: number;
   /** Physical height multiplier of nearby chips. Zero keeps their original ground shading. */
@@ -74,6 +78,8 @@ interface MoonMaterialUniforms {
   uPlanetRadius: { value: number };
   uSunDirection: { value: Vector3 };
   uDetailMap: { value: Texture };
+  uGroundTextureLayers: { value: number };
+  uRockBump: { value: number };
   uDetailStrength: { value: number };
   uDetailContrast: { value: number };
   uCraterletStrength: { value: number };
@@ -132,6 +138,8 @@ uniform float uEnableColorVariation;
 uniform float uBrightnessBoost;
 uniform vec3 uSunDirection;
 uniform sampler2D uDetailMap;
+uniform float uGroundTextureLayers;
+uniform float uRockBump;
 uniform float uDetailStrength;
 uniform float uDetailContrast;
 uniform float uCraterletStrength;
@@ -368,8 +376,8 @@ const TERRAIN_SURFACE = /* glsl */ `
   // Keep the 2.9 m and 23 m material layers that carry grains, pebbles and clods.
   vec4 fine = vec4(0.0);
   vec4 medium = vec4(0.0);
-  if (fineFade > 0.0) fine = moonDetail(groundPos * ${FINE_PEBBLE_FREQUENCY}, groundDx * ${FINE_PEBBLE_FREQUENCY}, groundDy * ${FINE_PEBBLE_FREQUENCY}) * fineFade;
-  if (mediumFade > 0.0) medium = moonDetail(groundPos * ${MEDIUM_PEBBLE_FREQUENCY} + vec2(0.37, 0.11), groundDx * ${MEDIUM_PEBBLE_FREQUENCY}, groundDy * ${MEDIUM_PEBBLE_FREQUENCY}) * mediumFade;
+  if (uGroundTextureLayers > 1.5 && fineFade > 0.0) fine = moonDetail(groundPos * ${FINE_PEBBLE_FREQUENCY}, groundDx * ${FINE_PEBBLE_FREQUENCY}, groundDy * ${FINE_PEBBLE_FREQUENCY}) * fineFade;
+  if (uGroundTextureLayers > 0.5 && mediumFade > 0.0) medium = moonDetail(groundPos * ${MEDIUM_PEBBLE_FREQUENCY} + vec2(0.37, 0.11), groundDx * ${MEDIUM_PEBBLE_FREQUENCY}, groundDy * ${MEDIUM_PEBBLE_FREQUENCY}) * mediumFade;
 
   vec2 materialSlope = medium.xy * (0.45 * MOON_SLOPE_RANGE);
   float tone = fine.z * 0.6 + medium.z * 0.38 + medium.w * 0.12;
@@ -431,7 +439,7 @@ const ROCK_SURFACE = /* glsl */ `
     vec3(slopeY.x, 0.0, slopeY.y) * weights.y +
     vec3(slopeZ.x, slopeZ.y, 0.0) * weights.z;
   bump -= meshNormal * dot(bump, meshNormal);
-  moonNormal = normalize(meshNormal - bump * (MOON_SLOPE_RANGE * uDetailStrength * 0.7));
+  moonNormal = normalize(meshNormal - bump * (MOON_SLOPE_RANGE * uDetailStrength * uRockBump * 0.7));
 
   float tone = dot(weights, vec3(sideX.b, top.b, sideZ.b)) - 0.5;
   float cavity = 1.0 - dot(weights, vec3(sideX.a, top.a, sideZ.a));
@@ -485,6 +493,8 @@ export class MoonMaterial extends MeshStandardMaterial {
       enableCurvature: true,
       planetRadius: DEFAULT_PLANET_RADIUS,
       enableDetail: true,
+      groundTextureLayers: 2,
+      rockBump: 1,
       detailStrength: 1.0,
       pebbleHeight: 1.0,
       detailContrast: 1.0,
@@ -510,6 +520,8 @@ export class MoonMaterial extends MeshStandardMaterial {
         value: options.detailMap ??
           (this.variant === 'rock' ? getSharedStoneDetailMap() : getSharedRegolithDetailMap()),
       },
+      uGroundTextureLayers: { value: 2 },
+      uRockBump: { value: 1 },
       uDetailStrength: { value: 1.0 },
       uDetailContrast: { value: 1.0 },
       uCraterletStrength: { value: 1.0 },
@@ -787,6 +799,8 @@ export class MoonMaterial extends MeshStandardMaterial {
     uniforms.uBrightnessBoost.value = params.brightnessBoost;
     uniforms.uEnableCurvature.value = params.enableCurvature ? 1.0 : 0.0;
     uniforms.uPlanetRadius.value = params.planetRadius;
+    uniforms.uGroundTextureLayers.value = params.groundTextureLayers;
+    uniforms.uRockBump.value = params.rockBump;
     // A negative strength switches the detail branch off entirely
     uniforms.uDetailStrength.value = params.enableDetail ? params.detailStrength : -1.0;
     uniforms.uDetailContrast.value = params.detailContrast;

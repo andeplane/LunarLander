@@ -179,7 +179,17 @@ engine.setModeManager(modeManager);
 
 const settings = new PlayerSettings();
 const audio = new LanderAudio();
-engine.getSunShadows().setRoverShadowQuality(settings.shadowQuality);
+function applyVideoSettings(): void {
+  terrainGenerator.getMaterial().setParams({
+    groundTextureLayers: settings.groundTexture,
+    rockBump: settings.rockBump,
+  });
+  rockManager.getMaterial().setParam('rockBump', settings.rockBump);
+  engine.getSunShadows().setRoverShadowQuality(settings.shadowQuality);
+  engine.setRenderScale(settings.renderScale);
+  engine.requestRender();
+}
+applyVideoSettings();
 const gameMenu = new GameMenu(settings, {
   canPause: () => modeManager.getActiveMode() !== null && modeManager.getActiveMode() !== menuMode,
   setPaused: paused => {
@@ -192,10 +202,7 @@ const gameMenu = new GameMenu(settings, {
     if (modeManager.getActiveMode() === roverMode) roverMode.refreshCameraHint();
   },
   mainMenu: () => modeManager.switchTo(menuMode),
-  shadowQuality: quality => {
-    engine.getSunShadows().setRoverShadowQuality(quality);
-    engine.requestRender();
-  },
+  applyVideo: applyVideoSettings,
   isMuted: () => audio.isMuted(),
   mute: muted => audio.setMuted(muted),
 });

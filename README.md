@@ -139,7 +139,7 @@ Based on Rüsch et al. 2024 lunar rock distribution research:
 - [`src/environment/RockBuilder.ts`](src/environment/RockBuilder.ts) - Rock geometry generation
 - [`src/environment/RockManager.ts`](src/environment/RockManager.ts) - Rock placement and instancing
 
-Open **Settings** from the main menu or press **Esc** during play. General controls rover cockpit mouse look, Video adjusts rover shadow quality, and Audio mutes lander sound. Choose **Continue** to resume where you paused.
+Open **Settings** from the main menu or press **Esc** during play. General controls rover cockpit mouse look, Video adjusts ground texture detail, rock bump strength, rover shadow quality and 3D render scale, and Audio mutes lander sound. Choose **Continue** to resume where you paused.
 
 ### Drive the Rover
 
