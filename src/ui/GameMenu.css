@@ -1,0 +1,120 @@
+.game-dialog {
+  box-sizing: border-box;
+  margin: auto;
+  width: min(27rem, calc(100% - 2rem));
+  max-height: calc(100dvh - 2rem);
+  padding: clamp(1.25rem, 4vw, 2rem);
+  border: 1px solid #535c67;
+  border-radius: 12px;
+  background: #161b21;
+  color: #f4f6f8;
+  color-scheme: dark;
+  font:
+    1rem / 1.45 Inter,
+    system-ui,
+    sans-serif;
+}
+.game-dialog::backdrop {
+  background: rgb(7 10 14 / 70%);
+}
+.game-dialog h2 {
+  margin: 0 0 1.5rem;
+  font-size: 1.65rem;
+  font-weight: 600;
+}
+.game-dialog button,
+.game-dialog select,
+.menu-settings {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.game-dialog button,
+.game-dialog select {
+  padding: 0.6rem 0.85rem;
+  border: 1px solid #505a65;
+  border-radius: 6px;
+  background: #252c34;
+}
+.game-dialog button:hover,
+.game-dialog select:hover {
+  background: #343e49;
+}
+.game-dialog :focus-visible,
+.menu-settings:focus-visible {
+  outline: 2px solid #b9d7fa;
+  outline-offset: 3px;
+}
+.pause-actions {
+  display: grid;
+  gap: 0.65rem;
+}
+.pause-actions button {
+  text-align: left;
+  min-height: 44px;
+}
+.pause-actions .primary {
+  background: #d8e4f0;
+  color: #131921;
+  border-color: transparent;
+}
+.pause-actions .primary:hover {
+  background: #f3f7fc;
+}
+.settings-tabs {
+  display: flex;
+  border-bottom: 1px solid #434c57;
+}
+.settings-tabs button {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #bfc8d2;
+}
+.settings-tabs [aria-selected="true"] {
+  color: #fff;
+  box-shadow: inset 0 -2px #bbd4ed;
+}
+#settings-panel {
+  padding: 1.5rem 0;
+  min-height: 6.5rem;
+}
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  font-weight: 550;
+}
+.setting-row select {
+  max-width: 52%;
+  font-weight: 400;
+}
+.setting-row input {
+  width: 1.25rem;
+  height: 1.25rem;
+  accent-color: #bad5ef;
+  cursor: pointer;
+}
+#setting-detail {
+  margin: 0.5rem 0 0;
+  color: #bcc7d2;
+  font-size: 0.875rem;
+}
+.settings-back {
+  min-width: 5rem;
+}
+.menu-settings {
+  margin-top: 0.35rem;
+  background: transparent;
+  border: 0;
+  padding: 0.5rem 1rem;
+  color: #edf2f8;
+  font-weight: 550;
+}
+.menu-settings:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}

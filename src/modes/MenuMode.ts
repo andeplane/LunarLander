@@ -10,6 +10,7 @@ import './MenuMode.css';
 export class MenuMode implements GameMode {
   private camera: PerspectiveCamera;
   private overlay: HTMLDivElement | null = null;
+  private onSettings: () => void;
   private onSelectExplore: () => void;
   private onSelectRover: () => void;
   private onSelectLander: () => void;
@@ -24,6 +25,7 @@ export class MenuMode implements GameMode {
   constructor(
     camera: PerspectiveCamera,
     callbacks: {
+      onSettings: () => void;
       onSelectExplore: () => void;
       onSelectRover: () => void;
       onSelectLander: () => void;
@@ -32,6 +34,7 @@ export class MenuMode implements GameMode {
     }
   ) {
     this.camera = camera;
+    this.onSettings = callbacks.onSettings;
     this.onSelectExplore = callbacks.onSelectExplore;
     this.onSelectRover = callbacks.onSelectRover;
     this.onSelectLander = callbacks.onSelectLander;
@@ -91,12 +94,18 @@ export class MenuMode implements GameMode {
     roverBtn.innerHTML = '<span class="menu-button-name">Drive the Rover</span><span class="menu-button-desc">Cross the lunar surface in the Apollo LRV</span>';
     roverBtn.addEventListener('click', this.onSelectRover);
 
+    const settings = document.createElement('button');
+    settings.className = 'menu-settings';
+    settings.textContent = 'Settings';
+    settings.addEventListener('click', this.onSettings);
+
     buttons.appendChild(exploreBtn);
     buttons.appendChild(landerBtn);
     buttons.appendChild(roverBtn);
     overlay.appendChild(title);
     overlay.appendChild(subtitle);
     overlay.appendChild(buttons);
+    overlay.appendChild(settings);
     const labLink = document.createElement('a');
     labLink.className = 'menu-lab-link';
     labLink.textContent = 'Surface lab';

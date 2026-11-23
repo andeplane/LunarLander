@@ -19,6 +19,7 @@ import {
   Vector3,
   WebGLRenderTarget,
 } from 'three';
+import { DEFAULT_SHADOW_QUALITY, roverShadowSizes, type ShadowQuality } from '../core/PlayerSettings';
 import { rockScreenVertex, rockViewUniforms } from '../environment/rockScreenLod';
 import { NEAR_SHADOW_CASTER_LAYER, SHADOW_CASTER_LAYER } from '../core/layers';
 
@@ -51,6 +52,7 @@ export interface SunShadowUniforms extends ReturnType<typeof rockViewUniforms> {
   uMovingShadowMap: { value: DepthTexture };
   uMovingShadowMatrix: { value: Matrix4 };
   uMovingShadowActive: { value: number };
+  uMovingShadowTexelUV: { value: number };
   uSunShadowMap0: { value: DepthTexture };
   uSunShadowMap1: { value: DepthTexture };
   uSunShadowMap2: { value: DepthTexture };
@@ -256,6 +258,7 @@ export const SUN_SHADOW_FRAGMENT_PARS = /* glsl */ `
 uniform highp sampler2DShadow uMovingShadowMap;
 uniform mat4 uMovingShadowMatrix;
 uniform float uMovingShadowActive;
+uniform float uMovingShadowTexelUV;
 uniform highp sampler2DShadow uSunShadowMap0;
 uniform highp sampler2DShadow uSunShadowMap1;
 uniform highp sampler2DShadow uSunShadowMap2;
@@ -275,8 +278,8 @@ vec3 sunShadowCoord(mat4 shadowMatrix, vec3 warp, vec3 worldPos, vec3 worldNorma
 }
 
 // 4 hardware-filtered compare taps: a 3x3 texel tent filter
-float sunShadowPcf(highp sampler2DShadow shadowMap, vec3 coord) {
-  vec2 o = vec2(SUN_SHADOW_TEXEL_UV * 0.75);
+float sunShadowPcf(highp sampler2DShadow shadowMap, vec3 coord, float texelUV) {
+  vec2 o = vec2(texelUV * 0.75);
   return 0.25 * (
     texture(shadowMap, vec3(coord.xy + vec2(-o.x, -o.y), coord.z)) +
     texture(shadowMap, vec3(coord.xy + vec2(o.x, -o.y), coord.z)) +
@@ -296,7 +299,7 @@ float sunShadowCascade2(vec3 worldPos, vec3 worldNormal) {
   vec3 coord = sunShadowCoord(uSunShadowMatrix[2], uSunShadowWarp[2], worldPos, worldNormal, uSunShadowTexel.z);
   float edge = sunShadowEdge(coord);
   if (edge >= 1.0) return 1.0;
-  return mix(sunShadowPcf(uSunShadowMap2, coord), 1.0, smoothstep(0.85, 1.0, edge));
+  return mix(sunShadowPcf(uSunShadowMap2, coord, SUN_SHADOW_TEXEL_UV), 1.0, smoothstep(0.85, 1.0, edge));
 }
 
 float sunShadowCascade1(vec3 worldPos, vec3 worldNormal) {
@@ -304,7 +307,7 @@ float sunShadowCascade1(vec3 worldPos, vec3 worldNormal) {
   vec3 coord = sunShadowCoord(uSunShadowMatrix[1], uSunShadowWarp[1], worldPos, worldNormal, uSunShadowTexel.y);
   float edge = sunShadowEdge(coord);
   if (edge >= 1.0) return sunShadowCascade2(worldPos, worldNormal);
-  float visibility = sunShadowPcf(uSunShadowMap1, coord);
+  float visibility = sunShadowPcf(uSunShadowMap1, coord, SUN_SHADOW_TEXEL_UV);
   if (edge > 0.85) {
     visibility = mix(visibility, sunShadowCascade2(worldPos, worldNormal), smoothstep(0.85, 1.0, edge));
   }
@@ -324,7 +327,7 @@ float terrainShadowVisibility(vec3 worldPos, vec3 worldNormal) {
   vec3 coord = sunShadowCoord(uSunShadowMatrix[0], uSunShadowWarp[0], worldPos, worldNormal, nearTexel);
   float edge = sunShadowEdge(coord);
   if (edge >= 1.0) return sunShadowCascade1(worldPos, worldNormal);
-  float visibility = sunShadowPcf(uSunShadowMap0, coord);
+  float visibility = sunShadowPcf(uSunShadowMap0, coord, SUN_SHADOW_TEXEL_UV);
   if (edge > 0.85) {
     visibility = mix(visibility, sunShadowCascade1(worldPos, worldNormal), smoothstep(0.85, 1.0, edge));
   }
@@ -335,9 +338,10 @@ float sunShadowVisibility(vec3 worldPos, vec3 worldNormal) {
   float terrain = terrainShadowVisibility(worldPos, worldNormal);
   if (uMovingShadowActive < 0.5 || terrain <= 0.0) return terrain;
   // Half a vehicle-map texel of normal offset protects thin, two-sided parts.
-  vec3 coord = (uMovingShadowMatrix * vec4(worldPos + worldNormal * 0.005, 1.0)).xyz;
+  vec3 coord = (uMovingShadowMatrix * vec4(worldPos + worldNormal * (2.6 * uMovingShadowTexelUV), 1.0)).xyz;
   if (any(lessThanEqual(coord, vec3(0.0))) || any(greaterThanEqual(coord, vec3(1.0)))) return terrain;
-  return min(terrain, texture(uMovingShadowMap, vec3(coord.xy, coord.z - 0.00002)));
+  coord.z -= (2.6 / 128.0) * uMovingShadowTexelUV; // half a texel in the 128 m depth range
+  return min(terrain, sunShadowPcf(uMovingShadowMap, coord, uMovingShadowTexelUV));
 }
 `;
 
@@ -354,14 +358,15 @@ function shadowTarget(size: number): WebGLRenderTarget {
 // The camera translates with the chassis. A mark on a slowly moving panel
 // stays on the same shadow texel; wheel and suspension poses still update.
 class MovingShadow {
-  readonly target = shadowTarget(512);
+  readonly target: WebGLRenderTarget;
   readonly camera = new OrthographicCamera(-2.6, 2.6, 2.6, -2.6, 0.1, 128);
   private readonly scene = new Scene();
   private readonly focus = new Vector3();
   private readonly meshes: { source: Mesh; depth: Mesh }[] = [];
   private readonly materials = new Map<MeshStandardMaterial, MeshDepthMaterial>();
 
-  constructor(private readonly root: Object3D) {
+  constructor(private readonly root: Object3D, size: number) {
+    this.target = shadowTarget(size);
     root.traverse(source => {
       if (!(source instanceof Mesh)) return;
       const surface = source.material as MeshStandardMaterial;
@@ -444,9 +449,20 @@ export class SunShadows {
   private readonly movingSun = new Vector3();
   private renderCount = 0;
 
+  private movingMapSize: number = roverShadowSizes[DEFAULT_SHADOW_QUALITY];
+
+  setRoverShadowQuality(quality: ShadowQuality): void {
+    const size = roverShadowSizes[quality];
+    if (size === this.movingMapSize) return;
+    this.movingMapSize = size;
+    this.uniforms.uMovingShadowTexelUV.value = 1 / size;
+    this.uniforms.uMovingShadowActive.value = 0;
+    this.movingShadow?.target.setSize(size, size);
+  }
+
   setMovingCaster(root: Object3D | null): void {
     this.movingShadow?.dispose();
-    this.movingShadow = root ? new MovingShadow(root) : null;
+    this.movingShadow = root ? new MovingShadow(root, this.movingMapSize) : null;
     this.movingPassPending = false;
     this.uniforms.uMovingShadowActive.value = 0;
     this.uniforms.uMovingShadowMap.value = this.movingShadow?.target.depthTexture ?? this.uniforms.uSunShadowMap0.value;
@@ -491,6 +507,7 @@ export class SunShadows {
       uMovingShadowMap: { value: depthTextures[0] },
       uMovingShadowMatrix: { value: new Matrix4() },
       uMovingShadowActive: { value: 0 },
+      uMovingShadowTexelUV: { value: 1 / this.movingMapSize },
       uSunShadowMap0: { value: depthTextures[0] },
       uSunShadowMap1: { value: depthTextures[1] },
       uSunShadowMap2: { value: depthTextures[2] },

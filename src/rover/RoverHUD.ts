@@ -71,8 +71,9 @@ export class RoverHUD {
     for (const value of this.pointers.values()) if (value === action) return true;
     return false;
   }
-  setCamera(cab: boolean) {
+  setCamera(cab: boolean, mouseLook: boolean) {
     this.root.classList.toggle('driver-view', cab);
+    this.lookHint.hidden = cab && !mouseLook;
     this.lookHint.textContent = cab ? 'Move mouse to look' : 'Drag to orbit';
     this.camera.textContent = cab ? 'Chase view' : 'Driver view';
   }

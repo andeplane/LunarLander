@@ -1,5 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { MathUtils, type PerspectiveCamera, Quaternion, type Scene, Vector2, Vector3 } from 'three';
+import type { PlayerSettings } from '../core/PlayerSettings';
 import type { InputManager } from '../core/InputManager';
 import type { RockManager } from '../environment/RockManager';
 import type { PhysicsWorld } from '../physics/PhysicsWorld';
@@ -23,7 +24,8 @@ interface RoverOptions {
   input: InputManager;
   chunks: ChunkManager;
   rocks: RockManager;
-  onExit: () => void;
+  onPause: () => void;
+  settings: PlayerSettings;
   requestRender: () => void;
 }
 
@@ -70,7 +72,7 @@ export class RoverMode implements GameMode {
     this.hud = new RoverHUD(
       this.toggleCamera,
       this.recover,
-      this.o.onExit,
+      this.o.onPause,
       input.getIsTouchDevice()
     );
     this.hud.status.textContent = this.physicsFailed
@@ -97,7 +99,7 @@ export class RoverMode implements GameMode {
   };
   private onMove = (e: PointerEvent) => {
     if (this.cab) {
-      if (e.pointerType !== 'mouse') return;
+      if (!this.o.settings.cockpitLook || e.pointerType !== 'mouse') return;
       const { left, top, width, height } = this.o.canvas.getBoundingClientRect();
       if (width && height) {
         this.lookTarget.set(
@@ -132,9 +134,13 @@ export class RoverMode implements GameMode {
     this.azimuth = 0.38;
     this.elevation = 0.22;
     this.touchedOrbit = false;
-    this.hud?.setCamera(this.cab);
+    this.refreshCameraHint();
     this.model?.setDriverView(this.cab);
   };
+
+  refreshCameraHint(): void {
+    this.hud?.setCamera(this.cab, this.o.settings.cockpitLook);
+  }
 
   private ground(x: number, z: number) {
     return this.o.chunks.sampleVisibleGround(x, z, this.sample, 0) ? this.sample[3] : null;
@@ -201,10 +207,6 @@ export class RoverMode implements GameMode {
 
   update(dt: number) {
     const { input, scene, chunks } = this.o;
-    if (input.isKeyJustPressed('escape')) {
-      this.o.onExit();
-      return;
-    }
     const hud = this.hud;
     if (!hud || !this.physics) return;
     if (!this.body) {
@@ -250,6 +252,7 @@ export class RoverMode implements GameMode {
     const cam = this.o.camera;
     if (this.cab) {
       this.cameraGoal.set(-0.33, 1.12, 0.08).applyQuaternion(b.rotation).add(b.position);
+      if (!this.o.settings.cockpitLook) this.centerLook();
       this.lookAngles.lerp(this.lookTarget, 1 - Math.exp(-10 * dt));
       const yaw = this.lookAngles.x;
       const pitch = CAB_REST_PITCH + this.lookAngles.y;

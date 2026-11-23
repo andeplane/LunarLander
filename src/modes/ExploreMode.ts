@@ -30,7 +30,7 @@ const DESKTOP_CONTROLS: ReadonlyArray<readonly [string, string]> = [
   ['Shift', 'Speed boost'],
   ['Scroll', 'Adjust speed'],
   ['Space', 'Shoot ball'],
-  ['Esc', 'Release mouse'],
+  ['Esc', 'Pause'],
 ];
 
 const TOUCH_CONTROLS: ReadonlyArray<readonly [string, string]> = [
@@ -48,7 +48,7 @@ export class ExploreMode implements GameMode {
   private canvas: HTMLCanvasElement;
   private ballManager: BallManager | null = null;
   private requestRender: () => void;
-  private onExitToMenu: () => void;
+  private onPause: () => void;
 
   /** Saved pose so returning from another mode restores the view exactly. */
   private savedPosition: Vector3 | null = null;
@@ -68,7 +68,7 @@ export class ExploreMode implements GameMode {
     touchControls: TouchControls | null;
     canvas: HTMLCanvasElement;
     requestRender: () => void;
-    onExitToMenu: () => void;
+    onPause: () => void;
   }) {
     this.camera = args.camera;
     this.flightController = args.flightController;
@@ -76,7 +76,7 @@ export class ExploreMode implements GameMode {
     this.touchControls = args.touchControls;
     this.canvas = args.canvas;
     this.requestRender = args.requestRender;
-    this.onExitToMenu = args.onExitToMenu;
+    this.onPause = args.onPause;
     this.pointerLockHint = this.buildPointerLockHint();
     this.onboarding = this.buildOnboarding();
     this.menuButton = this.buildMenuButton();
@@ -161,6 +161,10 @@ export class ExploreMode implements GameMode {
     this.menuButton.classList.toggle('hidden', visible || document.pointerLockElement !== null);
   }
 
+  resumeMouseLook(): void {
+    if (!this.onboardingVisible) this.inputManager.requestPointerLock();
+  }
+
   private startFlying(): void {
     this.setOnboardingVisible(false);
     // The dismissing click/keypress is a user gesture — acquire mouse look
@@ -232,7 +236,7 @@ export class ExploreMode implements GameMode {
     button.type = 'button';
     button.className = 'explore-menu-button hidden';
     button.textContent = '☰ Menu';
-    button.addEventListener('click', () => this.onExitToMenu());
+    button.addEventListener('click', () => this.onPause());
     return button;
   }
 
@@ -259,6 +263,7 @@ export class ExploreMode implements GameMode {
       }, 2500);
     } else {
       this.hideHint();
+      if (!this.onboardingVisible) this.onPause();
     }
   };
 
@@ -272,7 +277,7 @@ export class ExploreMode implements GameMode {
 
   private buildPointerLockHint(): HTMLDivElement {
     const hint = document.createElement('div');
-    hint.textContent = '🖱️ Press ESC to release mouse';
+    hint.textContent = 'Press Esc to pause';
     Object.assign(hint.style, {
       position: 'fixed',
       top: '20px',

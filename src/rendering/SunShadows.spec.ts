@@ -242,6 +242,23 @@ describe('SunShadows', () => {
     shadows.dispose();
   });
 
+  it('resizes the live rover target and uses the selected resolution on the next drive', () => {
+    const { shadows, scene, renderer } = setup();
+    shadows.setMovingCaster(new Mesh());
+    for (const [quality, size] of [['high', 2048], ['balanced', 1024], ['performance', 512]] as const) {
+      shadows.setRoverShadowQuality(quality);
+      shadows.plan(makeState());
+      renderer.passes.length = 0;
+      shadows.renderPending(scene);
+      expect(renderer.passes[0].target?.width).toBe(size);
+      expect(shadows.uniforms.uMovingShadowTexelUV.value).toBe(1 / size);
+    }
+    shadows.setMovingCaster(null);
+    shadows.setMovingCaster(new Mesh());
+    expect(shadows.uniforms.uMovingShadowMap.value.image.width).toBe(512);
+    shadows.dispose();
+  });
+
   it('maps the focus to the centre of the shadow map', () => {
     const { shadows, scene } = setup();
     const state = makeState({ cameraPosition: new Vector3(120, 9, -45), groundHeight: 7 });

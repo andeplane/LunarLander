@@ -1,3 +1,6 @@
+import { GameMenu } from './ui/GameMenu';
+import { PlayerSettings } from './core/PlayerSettings';
+import { LanderAudio } from './lander/LanderAudio';
 import './style.css';
 import { Engine } from './core/Engine';
 import { InputManager } from './core/InputManager';
@@ -174,6 +177,29 @@ const modeManager = new ModeManager(inputManager, (mode) => {
 });
 engine.setModeManager(modeManager);
 
+const settings = new PlayerSettings();
+const audio = new LanderAudio();
+engine.getSunShadows().setRoverShadowQuality(settings.shadowQuality);
+const gameMenu = new GameMenu(settings, {
+  canPause: () => modeManager.getActiveMode() !== null && modeManager.getActiveMode() !== menuMode,
+  setPaused: paused => {
+    modeManager.setPaused(paused);
+    inputManager.resetAll();
+    audio.setPaused(paused);
+  },
+  resume: () => {
+    if (modeManager.getActiveMode() === exploreMode) exploreMode.resumeMouseLook();
+    if (modeManager.getActiveMode() === roverMode) roverMode.refreshCameraHint();
+  },
+  mainMenu: () => modeManager.switchTo(menuMode),
+  shadowQuality: quality => {
+    engine.getSunShadows().setRoverShadowQuality(quality);
+    engine.requestRender();
+  },
+  isMuted: () => audio.isMuted(),
+  mute: muted => audio.setMuted(muted),
+});
+
 const exploreMode = new ExploreMode({
   camera: engine.getCamera(),
   flightController,
@@ -181,7 +207,7 @@ const exploreMode = new ExploreMode({
   touchControls,
   canvas,
   requestRender: () => engine.requestRender(),
-  onExitToMenu: () => modeManager.switchTo(menuMode),
+  onPause: () => gameMenu.pause(),
 });
 
 const landerMode = new LanderMode({
@@ -193,7 +219,8 @@ const landerMode = new LanderMode({
   rockLibrarySize: 30, // must match the RockManager prototype count above
   requestRender: () => engine.requestRender(),
   onExitToMenu: () => modeManager.switchTo(menuMode),
-  setPaused: (paused) => modeManager.setPaused(paused),
+  onPause: () => gameMenu.pause(),
+  audio,
 });
 
 const roverMode = new RoverMode({
@@ -204,11 +231,13 @@ const roverMode = new RoverMode({
   chunks: chunkManager,
   rocks: rockManager,
   shadows: engine.getSunShadows(),
-  onExit: () => modeManager.switchTo(menuMode),
+  onPause: () => gameMenu.pause(),
+  settings,
   requestRender: () => engine.requestRender(),
 });
 
 const menuMode = new MenuMode(engine.getCamera(), {
+  onSettings: () => gameMenu.showSettings(),
   onSelectExplore: () => modeManager.switchTo(exploreMode),
   onSelectRover: () => modeManager.switchTo(roverMode),
   onSelectLander: () => modeManager.switchTo(landerMode),
@@ -450,7 +479,7 @@ if (isTouchDevice()) {
   console.log('  Shift - Hold for speed boost (3x faster)');
   console.log('  Mouse - Look around');
   console.log('  Scroll - Adjust speed');
-  console.log('  Escape - Release mouse');
+  console.log('  Escape - Pause');
   console.log('  O - Toggle debug wireframe (shows LOD chunks)');
   console.log('  Space - Shoot ball (Explore mode)');
 }

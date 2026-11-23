@@ -17,7 +17,7 @@ import { createHeightSampler, type TerrainHeightSampler } from '../terrain/heigh
 import { LanderBody, type LanderStepSample } from '../lander/LanderBody';
 import { LanderControls } from '../lander/LanderControls';
 import { LanderVisuals } from '../lander/LanderVisuals';
-import { LanderAudio } from '../lander/LanderAudio';
+import type { LanderAudio } from '../lander/LanderAudio';
 import { MissionMarkers } from '../lander/MissionMarkers';
 import { LanderHUD } from '../lander/LanderHUD';
 import { LanderScreens } from '../lander/LanderScreens';
@@ -58,7 +58,7 @@ export class LanderMode implements GameMode {
   private chunkManager: ChunkManager;
   private requestRender: () => void;
   private onExitToMenu: () => void;
-  private setPaused: (paused: boolean) => void;
+  private onPause: () => void;
   private rockConfig: RockGenerationConfig;
   private rockLibrarySize: number;
 
@@ -69,7 +69,7 @@ export class LanderMode implements GameMode {
   private controls: LanderControls;
   private body: LanderBody | null = null;
   private visuals: LanderVisuals | null = null;
-  private readonly audio = new LanderAudio();
+  private readonly audio: LanderAudio;
   /** Leg contact seen on the previous physics step (touchdown thud edge). */
   private legsWereDown = false;
   private markers: MissionMarkers | null = null;
@@ -100,7 +100,6 @@ export class LanderMode implements GameMode {
   private lastPointerY = 0;
 
   // Touchdown grading window (ADR-0004 §2)
-  private ignoreEscapeOnce = false;
   private windowOpen = false;
   private worstVSpeed = 0;
   private worstDrift = 0;
@@ -139,12 +138,6 @@ export class LanderMode implements GameMode {
     slopeWarning: false,
   };
   private readonly pitchRoll = { pitch: 0, roll: 0 };
-
-  private readonly onPauseKeydown = (e: KeyboardEvent): void => {
-    if (e.key === 'Escape') {
-      this.resumeFromPause();
-    }
-  };
 
   /** Space is full thrust while flying — never page scroll / button click. */
   private readonly onFlightKeydown = (e: KeyboardEvent): void => {
@@ -222,7 +215,8 @@ export class LanderMode implements GameMode {
     rockLibrarySize: number;
     requestRender: () => void;
     onExitToMenu: () => void;
-    setPaused: (paused: boolean) => void;
+    onPause: () => void;
+    audio: LanderAudio;
   }) {
     this.camera = args.camera;
     this.scene = args.scene;
@@ -232,7 +226,8 @@ export class LanderMode implements GameMode {
     this.rockLibrarySize = args.rockLibrarySize;
     this.requestRender = args.requestRender;
     this.onExitToMenu = args.onExitToMenu;
-    this.setPaused = args.setPaused;
+    this.onPause = args.onPause;
+    this.audio = args.audio;
     this.controls = new LanderControls(args.inputManager);
   }
 
@@ -270,8 +265,6 @@ export class LanderMode implements GameMode {
 
   exit(): void {
     this.active = false;
-    this.setPaused(false);
-    window.removeEventListener('keydown', this.onPauseKeydown);
     window.removeEventListener('keydown', this.onFlightKeydown);
     window.removeEventListener('pointerdown', this.onPointerDown);
     window.removeEventListener('pointermove', this.onPointerMove);
@@ -308,30 +301,9 @@ export class LanderMode implements GameMode {
 
     this.controls.captureFrameInput();
 
-    // Esc opens the pause overlay (flying) or exits (briefing/debrief).
-    // The Escape that RESUMED from pause is still "just pressed" on the
-    // first unpaused frame — it must not immediately re-pause.
-    if (this.ignoreEscapeOnce) {
-      this.ignoreEscapeOnce = false;
-    } else if (this.inputManager.isKeyJustPressed('escape')) {
-      if (this.phase === 'flying') {
-        this.pauseGame();
-        return;
-      }
-      if (this.phase === 'select') {
-        this.onExitToMenu();
-        return;
-      }
-      if (this.phase === 'crashed') {
-        this.finishCrash();
-      }
-      this.showMissionSelect();
-      return;
-    }
-
     // Touch pause button (no Esc on phones): only meaningful while flying
     if (this.controls.consumePause() && this.phase === 'flying') {
-      this.pauseGame();
+      this.onPause();
       return;
     }
 
@@ -399,12 +371,6 @@ export class LanderMode implements GameMode {
         onSelectMission: (index) => this.startMission(index),
         onSelectMenu: () => this.onExitToMenu(),
         onLaunch: () => this.launch(),
-        onResume: () => this.resumeFromPause(),
-        onRestart: () => {
-          this.resumeFromPause();
-          this.startMission(this.missionIndex);
-        },
-        onBackToMenu: () => this.onExitToMenu(),
         onRetry: () => this.startMission(this.missionIndex),
         onNextMission: () => this.startMission(this.missionIndex + 1),
         onDebriefMenu: () => this.showMissionSelect(),
@@ -589,21 +555,6 @@ export class LanderMode implements GameMode {
     // LAUNCH is a click/Enter: the gesture browsers need to start audio
     this.audio.unlock();
     this.body.launch();
-  }
-
-  private pauseGame(): void {
-    this.setPaused(true);
-    this.audio.setPaused(true);
-    this.screens?.showPause();
-    window.addEventListener('keydown', this.onPauseKeydown);
-  }
-
-  private resumeFromPause(): void {
-    window.removeEventListener('keydown', this.onPauseKeydown);
-    this.screens?.hideAll();
-    this.ignoreEscapeOnce = true;
-    this.setPaused(false);
-    this.audio.setPaused(false);
   }
 
   // ---- Touchdown grading (runs on the fixed physics step) ----

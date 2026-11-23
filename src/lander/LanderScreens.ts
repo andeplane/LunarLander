@@ -13,15 +13,12 @@ export interface LanderScreenCallbacks {
   onSelectMission(index: number): void; // mission select → briefing
   onSelectMenu(): void; // mission select → main menu
   onLaunch(): void; // briefing → flying
-  onResume(): void;
-  onRestart(): void;
-  onBackToMenu(): void; // pause
   onRetry(): void;
   onNextMission(): void;
   onDebriefMenu(): void; // debrief → mission select
 }
 
-type ScreenName = 'select' | 'briefing' | 'pause' | 'debrief';
+type ScreenName = 'select' | 'briefing' | 'debrief';
 
 /** Missions shown on the selector beyond the first locked one. */
 const SELECT_LOCKED_PREVIEW = 3;
@@ -108,7 +105,6 @@ export class LanderScreens {
   private readonly selectScreen: HTMLDivElement;
   private readonly selectGrid: HTMLDivElement;
   private readonly briefingScreen: HTMLDivElement;
-  private readonly pauseScreen: HTMLDivElement;
   private readonly debriefScreen: HTMLDivElement;
 
   private readonly briefingTitle: HTMLElement;
@@ -138,7 +134,7 @@ export class LanderScreens {
     this.selectGrid = div('select-grid', selectPanel);
     const selectButtons = div('screen-buttons', selectPanel);
     button('screen-button', selectButtons, 'Menu', () => this.callbacks.onSelectMenu());
-    div('screen-hint', selectPanel, 'Esc for menu');
+    div('screen-hint', selectPanel, 'Esc to pause');
 
     // --- Briefing ---
     this.briefingScreen = div('lander-screen screen-briefing hidden', this.root);
@@ -163,17 +159,7 @@ export class LanderScreens {
     this.launchButton = button('screen-button primary launch-button', briefingPanel, 'LAUNCH', () => {
       if (this.terrainReady) this.callbacks.onLaunch();
     });
-    div('screen-hint', briefingPanel, 'Enter to launch · Esc for missions');
-
-    // --- Pause ---
-    this.pauseScreen = div('lander-screen screen-pause hidden', this.root);
-    const pausePanel = div('screen-panel', this.pauseScreen);
-    div('screen-title', pausePanel, 'PAUSED');
-    const pauseButtons = div('screen-buttons', pausePanel);
-    button('screen-button primary', pauseButtons, 'Resume', () => this.callbacks.onResume());
-    button('screen-button', pauseButtons, 'Restart Mission', () => this.callbacks.onRestart());
-    button('screen-button', pauseButtons, 'Back to Menu', () => this.callbacks.onBackToMenu());
-    div('screen-hint', pausePanel, isTouchDevice() ? 'Tap Resume to continue' : 'Esc to resume');
+    div('screen-hint', briefingPanel, 'Enter to launch · Esc to pause');
 
     // --- Debrief ---
     this.debriefScreen = div('lander-screen screen-debrief hidden', this.root);
@@ -242,10 +228,6 @@ export class LanderScreens {
     this.setLaunchReady(!opts.preparingTerrain);
   }
 
-  showPause(): void {
-    this.setActive('pause');
-  }
-
   showDebrief(data: DebriefData): void {
     this.populateDebrief(data);
     // After a crash the natural action is Retry; after a landing, advance
@@ -288,7 +270,6 @@ export class LanderScreens {
     (document.activeElement as HTMLElement | null)?.blur?.();
     this.selectScreen.classList.toggle('hidden', name !== 'select');
     this.briefingScreen.classList.toggle('hidden', name !== 'briefing');
-    this.pauseScreen.classList.toggle('hidden', name !== 'pause');
     this.debriefScreen.classList.toggle('hidden', name !== 'debrief');
     if (name !== null) {
       // Adding the same listener reference twice is a no-op
@@ -313,7 +294,6 @@ export class LanderScreens {
         this.callbacks.onRetry();
       }
     }
-    // Pause: Esc is owned by LanderMode's input handling; hint only.
   }
 
   private populateDebrief(data: DebriefData): void {
