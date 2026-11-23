@@ -7,6 +7,7 @@ export class RoverHUD {
   private readonly distance: HTMLElement;
   private readonly heading: HTMLElement;
   readonly status: HTMLElement;
+  private readonly lookHint: HTMLElement;
   private readonly camera: HTMLButtonElement;
   private readonly clear = () => this.pointers.clear();
 
@@ -29,6 +30,7 @@ export class RoverHUD {
       if (!el) throw new Error(`Missing rover control ${selector}`);
       return el;
     };
+    this.lookHint = q('.rover-keys span');
     this.speed = q('.rover-speed strong');
     [this.distance, this.heading] = this.root.querySelectorAll<HTMLElement>('.rover-readings b');
     this.status = q('.rover-status');
@@ -71,6 +73,7 @@ export class RoverHUD {
   }
   setCamera(cab: boolean) {
     this.root.classList.toggle('driver-view', cab);
+    this.lookHint.textContent = cab ? 'Move mouse to look' : 'Drag to orbit';
     this.camera.textContent = cab ? 'Chase view' : 'Driver view';
   }
   update(speed: number, distance: number, bearing: number) {

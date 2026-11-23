@@ -141,7 +141,7 @@ Based on Rüsch et al. 2024 lunar rock distribution research:
 
 ### Drive the Rover
 
-Use **W/S** to drive forward or reverse, **A/D** to steer and **Space** to brake. The arrow keys also work. Drag the chase view to orbit, press **C** to switch seatside/chase views, **R** to recover upright nearby and **Esc** to return to the menu. Touch devices have separate steering and pedal buttons.
+Use **W/S** to drive forward or reverse, **A/D** to steer and **Space** to brake. The arrow keys also work. Press **C** to switch between chase and driver views. Drag to orbit in chase view. In driver view, move the mouse to look up to 15° left, right, up or down. Move it back to the center to look ahead. Press **R** to recover upright nearby and **Esc** to return to the menu. Touch devices have separate steering and pedal buttons.
 
 The original articulated model uses Apollo wheelbase, track and tire dimensions. Four driven wheels, counter-steering axles and independent spring-damper suspension act on a loaded rigid chassis in lunar gravity. The model includes a suited driver, wire wheels, thermal blankets and a working instrument panel. ImageGen supplied the cloth, foil, fender and alloy surface textures. [NASA Apollo 17 press kit](https://www.nasa.gov/wp-content/uploads/static/apollo50th/pdf/A17_PressKit.pdf)
 

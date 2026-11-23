@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { MathUtils, type PerspectiveCamera, Quaternion, type Scene, Vector3 } from 'three';
+import { MathUtils, type PerspectiveCamera, Quaternion, type Scene, Vector2, Vector3 } from 'three';
 import type { InputManager } from '../core/InputManager';
 import type { RockManager } from '../environment/RockManager';
 import type { PhysicsWorld } from '../physics/PhysicsWorld';
@@ -11,6 +11,9 @@ import { RoverRocks } from '../rover/RoverRocks';
 import { RoverTrail } from '../rover/RoverTrail';
 import type { ChunkManager } from '../terrain/ChunkManager';
 import type { GameMode } from './ModeManager';
+
+const CAB_LOOK_LIMIT = MathUtils.degToRad(15);
+const CAB_REST_PITCH = Math.atan2(-1.38, 8.08);
 
 interface RoverOptions {
   camera: PerspectiveCamera;
@@ -41,6 +44,8 @@ export class RoverMode implements GameMode {
   private readonly sample = new Float32Array(4);
   private readonly ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
   private cab = false;
+  private readonly lookAngles = new Vector2();
+  private readonly lookTarget = new Vector2();
   private cameraSnap = true;
   private azimuth = 2.2;
   private elevation = 0.22;
@@ -80,6 +85,8 @@ export class RoverMode implements GameMode {
     canvas.style.touchAction = 'none';
     canvas.addEventListener('pointerdown', this.onDown);
     canvas.addEventListener('pointermove', this.onMove);
+    canvas.addEventListener('pointerleave', this.centerLook);
+    window.addEventListener('blur', this.centerLook);
     canvas.addEventListener('lostpointercapture', this.onUp);
   }
 
@@ -89,6 +96,17 @@ export class RoverMode implements GameMode {
     this.drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
   };
   private onMove = (e: PointerEvent) => {
+    if (this.cab) {
+      if (e.pointerType !== 'mouse') return;
+      const { left, top, width, height } = this.o.canvas.getBoundingClientRect();
+      if (width && height) {
+        this.lookTarget.set(
+          MathUtils.clamp((2 * (e.clientX - left)) / width - 1, -1, 1) * CAB_LOOK_LIMIT,
+          MathUtils.clamp(1 - (2 * (e.clientY - top)) / height, -1, 1) * CAB_LOOK_LIMIT
+        );
+      }
+      return;
+    }
     if (this.drag?.id !== e.pointerId || !this.drag) return;
     this.azimuth -= (e.clientX - this.drag.x) * 0.008;
     this.elevation = MathUtils.clamp(
@@ -103,8 +121,13 @@ export class RoverMode implements GameMode {
   private onUp = () => {
     this.drag = undefined;
   };
+  private centerLook = () => {
+    this.lookTarget.set(0, 0);
+  };
   private toggleCamera = () => {
     this.cab = !this.cab;
+    this.centerLook();
+    this.lookAngles.set(0, 0);
     this.cameraSnap = true;
     this.azimuth = 0.38;
     this.elevation = 0.22;
@@ -227,7 +250,13 @@ export class RoverMode implements GameMode {
     const cam = this.o.camera;
     if (this.cab) {
       this.cameraGoal.set(-0.33, 1.12, 0.08).applyQuaternion(b.rotation).add(b.position);
-      this.cameraTarget.set(-0.33, -0.26, -8).applyQuaternion(b.rotation).add(b.position);
+      this.lookAngles.lerp(this.lookTarget, 1 - Math.exp(-10 * dt));
+      const yaw = this.lookAngles.x;
+      const pitch = CAB_REST_PITCH + this.lookAngles.y;
+      this.cameraTarget
+        .set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch))
+        .applyQuaternion(b.rotation)
+        .add(this.cameraGoal);
     } else {
       if (!this.drag && !this.touchedOrbit && Math.abs(b.speed) > 0.35)
         this.azimuth = MathUtils.damp(this.azimuth, 0.21, 1.25, dt);
@@ -267,6 +296,8 @@ export class RoverMode implements GameMode {
     this.drag = undefined;
     canvas.removeEventListener('pointerdown', this.onDown);
     canvas.removeEventListener('pointermove', this.onMove);
+    canvas.removeEventListener('pointerleave', this.centerLook);
+    window.removeEventListener('blur', this.centerLook);
     canvas.removeEventListener('lostpointercapture', this.onUp);
     canvas.style.removeProperty('touch-action');
     if (this.body) {
