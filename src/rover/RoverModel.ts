@@ -27,7 +27,6 @@ import {
 } from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
-import { NEAR_SHADOW_CASTER_LAYER } from '../core/layers';
 import { SUN_SHADOW_FRAGMENT_PARS, type SunShadows } from '../rendering/SunShadows';
 import { REST_LENGTH, type RoverBody, WHEEL_RADIUS, WHEELS } from './RoverBody';
 import { RoverPanel } from './RoverPanel';
@@ -103,7 +102,6 @@ class Parts {
       for (const part of parts) part.dispose();
       if (!geo) throw new Error('Incompatible rover geometry');
       const mesh = new Mesh(geo, mat);
-      mesh.layers.enable(NEAR_SHADOW_CASTER_LAYER);
       group.add(mesh);
     }
     return group;
@@ -567,7 +565,6 @@ export class RoverModel {
       this.root.add(pivot);
       const arms = Array.from({ length: 4 }, () => {
         const arm = new Mesh(armGeometry, m.alloy);
-        arm.layers.enable(NEAR_SHADOW_CASTER_LAYER);
         this.root.add(arm);
         return arm;
       });

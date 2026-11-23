@@ -1,13 +1,18 @@
 import {
   BackSide,
   type Camera,
+  DoubleSide,
+  Mesh,
+  MeshDepthMaterial,
+  type MeshStandardMaterial,
+  type Object3D,
   DepthTexture,
   LessEqualCompare,
   LinearFilter,
   Matrix4,
   OrthographicCamera,
   RedFormat,
-  type Scene,
+  Scene,
   ShaderMaterial,
   UnsignedByteType,
   UnsignedIntType,
@@ -43,6 +48,9 @@ import { NEAR_SHADOW_CASTER_LAYER, SHADOW_CASTER_LAYER } from '../core/layers';
 export const SUN_SHADOW_CASCADES = 3;
 
 export interface SunShadowUniforms extends ReturnType<typeof rockViewUniforms> {
+  uMovingShadowMap: { value: DepthTexture };
+  uMovingShadowMatrix: { value: Matrix4 };
+  uMovingShadowActive: { value: number };
   uSunShadowMap0: { value: DepthTexture };
   uSunShadowMap1: { value: DepthTexture };
   uSunShadowMap2: { value: DepthTexture };
@@ -245,6 +253,9 @@ void main() {
  * Requires the `SUN_SHADOW_MAP_SIZE` define (the shadow map edge length in texels).
  */
 export const SUN_SHADOW_FRAGMENT_PARS = /* glsl */ `
+uniform highp sampler2DShadow uMovingShadowMap;
+uniform mat4 uMovingShadowMatrix;
+uniform float uMovingShadowActive;
 uniform highp sampler2DShadow uSunShadowMap0;
 uniform highp sampler2DShadow uSunShadowMap1;
 uniform highp sampler2DShadow uSunShadowMap2;
@@ -301,7 +312,7 @@ float sunShadowCascade1(vec3 worldPos, vec3 worldNormal) {
 }
 
 /** Fraction of sunlight reaching a surface point: 0 = fully shadowed, 1 = lit. */
-float sunShadowVisibility(vec3 worldPos, vec3 worldNormal) {
+float terrainShadowVisibility(vec3 worldPos, vec3 worldNormal) {
   if (uSunShadowActive.x < 0.5) return sunShadowCascade1(worldPos, worldNormal);
   float nearTexel = uSunShadowTexel.x;
   #ifndef MOON_ROCK
@@ -319,7 +330,84 @@ float sunShadowVisibility(vec3 worldPos, vec3 worldNormal) {
   }
   return visibility;
 }
+
+float sunShadowVisibility(vec3 worldPos, vec3 worldNormal) {
+  float terrain = terrainShadowVisibility(worldPos, worldNormal);
+  if (uMovingShadowActive < 0.5 || terrain <= 0.0) return terrain;
+  // Half a vehicle-map texel of normal offset protects thin, two-sided parts.
+  vec3 coord = (uMovingShadowMatrix * vec4(worldPos + worldNormal * 0.005, 1.0)).xyz;
+  if (any(lessThanEqual(coord, vec3(0.0))) || any(greaterThanEqual(coord, vec3(1.0)))) return terrain;
+  return min(terrain, texture(uMovingShadowMap, vec3(coord.xy, coord.z - 0.00002)));
+}
 `;
+
+function shadowTarget(size: number): WebGLRenderTarget {
+  const depthTexture = new DepthTexture(size, size, UnsignedIntType);
+  depthTexture.compareFunction = LessEqualCompare;
+  depthTexture.magFilter = depthTexture.minFilter = LinearFilter;
+  return new WebGLRenderTarget(size, size, {
+    depthTexture, depthBuffer: true, stencilBuffer: false, format: RedFormat,
+    type: UnsignedByteType, generateMipmaps: false,
+  });
+}
+
+// The camera translates with the chassis. A mark on a slowly moving panel
+// stays on the same shadow texel; wheel and suspension poses still update.
+class MovingShadow {
+  readonly target = shadowTarget(512);
+  readonly camera = new OrthographicCamera(-2.6, 2.6, 2.6, -2.6, 0.1, 128);
+  private readonly scene = new Scene();
+  private readonly focus = new Vector3();
+  private readonly meshes: { source: Mesh; depth: Mesh }[] = [];
+  private readonly materials = new Map<MeshStandardMaterial, MeshDepthMaterial>();
+
+  constructor(private readonly root: Object3D) {
+    root.traverse(source => {
+      if (!(source instanceof Mesh)) return;
+      const surface = source.material as MeshStandardMaterial;
+      let material = this.materials.get(surface);
+      if (!material) {
+        material = new MeshDepthMaterial({
+          side: DoubleSide, colorWrite: false,
+          alphaMap: surface.alphaMap, alphaTest: surface.alphaTest,
+        });
+        this.materials.set(surface, material);
+      }
+      const depth = new Mesh(source.geometry, material);
+      depth.matrixAutoUpdate = false;
+      this.scene.add(depth);
+      this.meshes.push({ source, depth });
+    });
+  }
+
+  render(renderer: ShadowPassRenderer, sun: Vector3): void {
+    this.root.updateWorldMatrix(true, true);
+    this.focus.setFromMatrixPosition(this.root.matrixWorld);
+    this.focus.y += 0.55;
+    this.camera.position.copy(this.focus).addScaledVector(sun, 5);
+    this.camera.up.set(0, 1, 0);
+    if (Math.abs(sun.y) > 0.9999) this.camera.up.set(0, 0, 1);
+    this.camera.lookAt(this.focus);
+    this.camera.updateMatrixWorld();
+    for (const { source, depth } of this.meshes) {
+      depth.matrix.copy(source.matrixWorld);
+      depth.matrixWorldNeedsUpdate = true;
+    }
+    const previous = renderer.getRenderTarget();
+    try {
+      renderer.setRenderTarget(this.target);
+      renderer.clear();
+      renderer.render(this.scene, this.camera);
+    } finally {
+      renderer.setRenderTarget(previous);
+    }
+  }
+
+  dispose(): void {
+    this.target.dispose();
+    for (const material of this.materials.values()) material.dispose();
+  }
+}
 
 export class SunShadows {
   readonly uniforms: SunShadowUniforms;
@@ -351,11 +439,17 @@ export class SunShadows {
   private pendingState: SunShadowFrameState | null = null;
   private pendingHalfExtent = 0;
   private renderedNearCasterRevision = -1;
-  private movingCasterDirty = false;
+  private movingShadow: MovingShadow | null = null;
+  private movingPassPending = false;
+  private readonly movingSun = new Vector3();
   private renderCount = 0;
 
-  invalidateMovingCaster(): void {
-    this.movingCasterDirty = true;
+  setMovingCaster(root: Object3D | null): void {
+    this.movingShadow?.dispose();
+    this.movingShadow = root ? new MovingShadow(root) : null;
+    this.movingPassPending = false;
+    this.uniforms.uMovingShadowActive.value = 0;
+    this.uniforms.uMovingShadowMap.value = this.movingShadow?.target.depthTexture ?? this.uniforms.uSunShadowMap0.value;
   }
 
   constructor(renderer: ShadowPassRenderer, options: Partial<SunShadowOptions> = {}) {
@@ -364,21 +458,7 @@ export class SunShadows {
     const { mapSize, lightDistance } = this.options;
 
     for (let i = 0; i < SUN_SHADOW_CASCADES; i++) {
-      const depthTexture = new DepthTexture(mapSize, mapSize, UnsignedIntType);
-      depthTexture.compareFunction = LessEqualCompare;
-      depthTexture.magFilter = LinearFilter;
-      depthTexture.minFilter = LinearFilter;
-      // A depth-only framebuffer is not expressible through WebGLRenderTarget;
-      // a single-channel colour attachment is the cheapest complete one.
-      const target = new WebGLRenderTarget(mapSize, mapSize, {
-        depthTexture,
-        depthBuffer: true,
-        stencilBuffer: false,
-        format: RedFormat,
-        type: UnsignedByteType,
-        generateMipmaps: false,
-      });
-      this.targets.push(target);
+      this.targets.push(shadowTarget(mapSize));
       this.cascades.push({
         valid: false,
         halfExtent: 0,
@@ -408,6 +488,9 @@ export class SunShadows {
     const depthTextures = this.targets.map((target) => target.depthTexture as DepthTexture);
     this.uniforms = {
       ...rockView,
+      uMovingShadowMap: { value: depthTextures[0] },
+      uMovingShadowMatrix: { value: new Matrix4() },
+      uMovingShadowActive: { value: 0 },
       uSunShadowMap0: { value: depthTextures[0] },
       uSunShadowMap1: { value: depthTextures[1] },
       uSunShadowMap2: { value: depthTextures[2] },
@@ -431,6 +514,9 @@ export class SunShadows {
     this.frameIndex++;
     this.pendingCascade = -1;
     this.pendingState = null;
+    this.movingPassPending = this.movingShadow !== null && state.sunVisible;
+    if (this.movingPassPending) this.movingSun.copy(state.sunDirection);
+    else this.uniforms.uMovingShadowActive.value = 0;
     if (!state.sunVisible) return false;
 
     const { options } = this;
@@ -464,12 +550,10 @@ export class SunShadows {
       const refreshDue =
         geometryChanged &&
         this.frameIndex - cascade.renderedFrame >= options.terrainRefreshFrames[i];
-      const vehicleDue = i === 0 && this.movingCasterDirty &&
-        this.frameIndex - cascade.renderedFrame >= 3;
-      if ((refreshDue || vehicleDue) && chosen < 0) chosen = i;
+      if (refreshDue && chosen < 0) chosen = i;
     }
 
-    if (chosen < 0) return false;
+    if (chosen < 0) return this.movingPassPending;
     this.pendingCascade = chosen;
     this.pendingState = state;
     this.pendingHalfExtent = extents[chosen];
@@ -485,7 +569,16 @@ export class SunShadows {
     const state = this.pendingState;
     this.pendingCascade = -1;
     this.pendingState = null;
-    if (index < 0 || !state) return false;
+    const moving = this.movingShadow;
+    const drawMoving = this.movingPassPending && moving !== null;
+    this.movingPassPending = false;
+    if (drawMoving) {
+      moving.render(this.renderer, this.movingSun);
+      this.uniforms.uMovingShadowMatrix.value.copy(this.biasMatrix)
+        .multiply(moving.camera.projectionMatrix).multiply(moving.camera.matrixWorldInverse);
+      this.uniforms.uMovingShadowActive.value = 1;
+    }
+    if (index < 0 || !state) return drawMoving;
 
     const { options } = this;
     const cascade = this.cascades[index];
@@ -544,7 +637,6 @@ export class SunShadows {
     cascade.revision = state.terrainRevision;
     if (index === 0) {
       this.renderedNearCasterRevision = state.nearCasterRevision;
-      this.movingCasterDirty = false;
     }
     cascade.renderedFrame = this.frameIndex;
     cascade.cameraX = state.cameraPosition.x;
@@ -562,6 +654,7 @@ export class SunShadows {
   }
 
   dispose(): void {
+    this.setMovingCaster(null);
     for (const target of this.targets) {
       target.depthTexture?.dispose();
       target.dispose();

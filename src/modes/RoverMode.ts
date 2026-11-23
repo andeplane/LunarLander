@@ -47,8 +47,6 @@ export class RoverMode implements GameMode {
   private drag?: { id: number; x: number; y: number };
   private touchedOrbit = false;
   private hudTime = 0;
-  private readonly previousShadowPosition = new Vector3(Infinity, 0, 0);
-  private readonly previousShadowRotation = new Quaternion();
   constructor(private readonly o: RoverOptions) {}
 
   setPhysics(physics: PhysicsWorld) {
@@ -78,7 +76,6 @@ export class RoverMode implements GameMode {
     this.touchedOrbit = false;
     this.azimuth = 2.2;
     this.elevation = 0.22;
-    this.previousShadowPosition.x = Infinity;
     this.hudTime = 0;
     canvas.style.touchAction = 'none';
     canvas.addEventListener('pointerdown', this.onDown);
@@ -198,6 +195,7 @@ export class RoverMode implements GameMode {
       this.model = new RoverModel(this.o.shadows);
       this.trail = new RoverTrail(chunks.sampleVisibleGround);
       scene.add(this.model.root, this.trail.root);
+      this.o.shadows.setMovingCaster(this.model.root);
       hud.status.textContent = '';
     }
     const b = this.body;
@@ -221,14 +219,6 @@ export class RoverMode implements GameMode {
       hud.update(b.speed, b.distance, MathUtils.radToDeg(bearing));
       this.model?.panel.update(b.speed, MathUtils.radToDeg(bearing), b.distance);
       this.hudTime = 0.1;
-    }
-    if (
-      this.previousShadowPosition.distanceToSquared(b.position) > 0.012 ||
-      this.previousShadowRotation.angleTo(b.rotation) > 0.025
-    ) {
-      this.o.shadows.invalidateMovingCaster();
-      this.previousShadowPosition.copy(b.position);
-      this.previousShadowRotation.copy(b.rotation);
     }
     this.o.requestRender();
   }
@@ -284,6 +274,7 @@ export class RoverMode implements GameMode {
       this.body.dispose();
     }
     this.obstacles?.dispose();
+    this.o.shadows.setMovingCaster(null);
     this.model?.dispose();
     this.trail?.dispose();
     this.trail = undefined;
@@ -292,7 +283,6 @@ export class RoverMode implements GameMode {
     this.obstacles = undefined;
     this.model = undefined;
     this.hud = undefined;
-    this.o.shadows.invalidateMovingCaster();
     camera.position.copy(this.savedPosition);
     camera.quaternion.copy(this.savedRotation);
     this.o.requestRender();

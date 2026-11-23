@@ -1,4 +1,4 @@
-import { type Camera, InstancedMesh, Matrix4, Mesh, type OrthographicCamera, Scene, Vector3, type WebGLRenderTarget } from 'three';
+import { type Camera, Group, InstancedMesh, Matrix4, Mesh, type OrthographicCamera, Scene, Vector3, type WebGLRenderTarget } from 'three';
 import { describe, expect, it } from 'vitest';
 import { NEAR_SHADOW_CASTER_LAYER, SHADOW_CASTER_LAYER } from '../core/layers';
 import {
@@ -215,6 +215,31 @@ describe('SunShadows', () => {
     shadows.plan(makeState());
     shadows.renderPending(scene);
     expect(renderer.passes[1].camera.layers.isEnabled(NEAR_SHADOW_CASTER_LAYER)).toBe(false);
+  });
+
+  it('tracks submillimetre caster motion every frame while terrain shadows stay cached', () => {
+    const { shadows, renderer, scene } = setup();
+    const state = makeState();
+    settle(shadows, scene, state);
+    const rover = new Group();
+    rover.add(new Mesh());
+    shadows.setMovingCaster(rover);
+    for (let frame = 1; frame <= 120; frame++) {
+      rover.position.z += 0.2 / 3.6 / 60;
+      expect(shadows.plan(state)).toBe(true);
+      expect(shadows.renderPending(scene)).toBe(true);
+      const center = rover.position.clone().add(new Vector3(0, 0.55, 0))
+        .applyMatrix4(shadows.uniforms.uMovingShadowMatrix.value);
+      expect(center.x).toBeCloseTo(0.5, 8);
+      expect(center.y).toBeCloseTo(0.5, 8);
+      expect(renderer.passes[renderer.passes.length - 1].target?.depthTexture).toBe(shadows.uniforms.uMovingShadowMap.value);
+    }
+    expect(shadows.getRenderCount()).toBe(3);
+    expect(shadows.uniforms.uMovingShadowActive.value).toBe(1);
+    shadows.setMovingCaster(null);
+    expect(shadows.uniforms.uMovingShadowActive.value).toBe(0);
+    expect(shadows.plan(state)).toBe(false);
+    shadows.dispose();
   });
 
   it('maps the focus to the centre of the shadow map', () => {
