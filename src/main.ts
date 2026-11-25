@@ -161,7 +161,7 @@ if (isTouchDevice()) {
   touchControls.setVisible(false);
 }
 
-// Debug UI (stats overlay, shader panel, debug keys) requires ?debug=true
+// Debug tools require ?debug=true
 const debugEnabled =
   new URLSearchParams(window.location.search).get('debug') === 'true';
 
@@ -248,13 +248,15 @@ const menuMode = new MenuMode(engine.getCamera(), {
   onSelectExplore: () => modeManager.switchTo(exploreMode),
   onSelectRover: () => modeManager.switchTo(roverMode),
   onSelectLander: () => modeManager.switchTo(landerMode),
-  getSurfaceLabHref: () => {
-    const { x, y, z } = engine.getCamera().position;
-    const patch = new URLSearchParams({ x: String(x), z: String(z) });
-    const ground = chunkManager.getHeightAt(x, z);
-    if (ground !== null) patch.set('d', String(y - ground));
-    return `./surface-lab.html#${patch}`;
-  },
+  getSurfaceLabHref: debugEnabled
+    ? () => {
+        const { x, y, z } = engine.getCamera().position;
+        const patch = new URLSearchParams({ x: String(x), z: String(z) });
+        const ground = chunkManager.getHeightAt(x, z);
+        if (ground !== null) patch.set('d', String(y - ground));
+        return `./surface-lab.html#${patch}`;
+      }
+    : undefined,
   requestRender: () => engine.requestRender(),
 });
 

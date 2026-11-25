@@ -42,7 +42,9 @@ export interface FarTerrainConfig {
 
 export const DEFAULT_FAR_TERRAIN_CONFIG: FarTerrainConfig = {
   spacing: 100,
-  halfExtent: 12000,
+  // Keep the horizon within the grid at roughly the same flight altitude
+  // after doubling the curvature radius (horizon distance scales as sqrt(R)).
+  halfExtent: 16_800,
   recenterStep: 1600,
   rowsPerSlice: 12,
   budgetMs: 2,
