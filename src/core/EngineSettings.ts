@@ -9,7 +9,7 @@
  * Default planet radius in meters for curvature calculations.
  * This value is used by MoonMaterial, CelestialSystem, and Engine.
  */
-export const DEFAULT_PLANET_RADIUS = 15000;
+export const DEFAULT_PLANET_RADIUS = 30_000;
 
 /**
  * Upper bound on the renderer's device pixel ratio.

@@ -14,7 +14,7 @@ export class MenuMode implements GameMode {
   private onSelectExplore: () => void;
   private onSelectRover: () => void;
   private onSelectLander: () => void;
-  private getSurfaceLabHref: () => string;
+  private getSurfaceLabHref?: () => string;
   private requestRender: () => void;
 
   /** Yaw drift speed in radians/second (one lazy orbit ≈ 7 minutes). */
@@ -29,7 +29,7 @@ export class MenuMode implements GameMode {
       onSelectExplore: () => void;
       onSelectRover: () => void;
       onSelectLander: () => void;
-      getSurfaceLabHref: () => string;
+      getSurfaceLabHref?: () => string;
       requestRender: () => void;
     }
   ) {
@@ -106,11 +106,13 @@ export class MenuMode implements GameMode {
     overlay.appendChild(subtitle);
     overlay.appendChild(buttons);
     overlay.appendChild(settings);
-    const labLink = document.createElement('a');
-    labLink.className = 'menu-lab-link';
-    labLink.textContent = 'Surface lab';
-    labLink.href = this.getSurfaceLabHref();
-    overlay.appendChild(labLink);
+    if (this.getSurfaceLabHref) {
+      const labLink = document.createElement('a');
+      labLink.className = 'menu-lab-link';
+      labLink.textContent = 'Surface lab';
+      labLink.href = this.getSurfaceLabHref();
+      overlay.appendChild(labLink);
+    }
     return overlay;
   }
 }

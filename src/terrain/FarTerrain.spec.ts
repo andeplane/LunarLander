@@ -457,7 +457,7 @@ describe(FarTerrain.name, () => {
     expect(DEFAULT_FAR_TERRAIN_CONFIG.recenterStep % CHUNK).toBe(0);
     expect(DEFAULT_FAR_TERRAIN_CONFIG.spacing % RELIEF_LATTICE_SPACING).toBe(0);
     expect(CHUNK % DEFAULT_FAR_TERRAIN_CONFIG.spacing).toBe(0);
-    // One budgeted step does not finish a 241 x 241 grid
+    // One budgeted step does not finish the default grid
     expect(far.update(0, 0, noCoverage)).toBe(false);
     expect(far.ready).toBe(false);
     far.dispose();
