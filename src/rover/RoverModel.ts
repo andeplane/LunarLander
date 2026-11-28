@@ -479,6 +479,9 @@ export class RoverModel {
   readonly root = new Group();
   readonly panel = new RoverPanel();
   private readonly crew: Group;
+  setOccupied(occupied: boolean) {
+    this.crew.visible = occupied;
+  }
   setDriverView(cab: boolean) {
     this.crew.traverse((o) => {
       if (o instanceof Mesh) {

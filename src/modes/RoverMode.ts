@@ -11,6 +11,8 @@ import { RoverModel } from '../rover/RoverModel';
 import { RoverRocks } from '../rover/RoverRocks';
 import { RoverTrail } from '../rover/RoverTrail';
 import type { ChunkManager } from '../terrain/ChunkManager';
+import { TreasureHunt } from '../hunt/TreasureHunt';
+import type { RockGenerationConfig } from '../types';
 import type { GameMode } from './ModeManager';
 
 const CAB_LOOK_LIMIT = MathUtils.degToRad(15);
@@ -54,7 +56,11 @@ export class RoverMode implements GameMode {
   private drag?: { id: number; x: number; y: number };
   private touchedOrbit = false;
   private hudTime = 0;
-  constructor(private readonly o: RoverOptions) {}
+  private hunt?: TreasureHunt;
+  constructor(
+    private readonly o: RoverOptions,
+    private readonly surveyRocks?: RockGenerationConfig
+  ) {}
 
   setPhysics(physics: PhysicsWorld) {
     this.physics = physics;
@@ -127,6 +133,7 @@ export class RoverMode implements GameMode {
     this.lookTarget.set(0, 0);
   };
   private toggleCamera = () => {
+    if (this.hunt && !this.hunt.driving) return;
     this.cab = !this.cab;
     this.centerLook();
     this.lookAngles.set(0, 0);
@@ -195,9 +202,11 @@ export class RoverMode implements GameMode {
     return best;
   }
   private recover = () => {
-    if (!this.body) return;
+    if (!this.body || (this.hunt && !this.hunt.driving)) return;
     const p = this.body.position;
-    const parking = this.findParking(p.x, p.z) ?? this.findParking(this.spawn.x, this.spawn.z);
+    const parking =
+      this.findParking(p.x, p.z) ??
+      (this.hunt ? null : this.findParking(this.spawn.x, this.spawn.z));
     if (!parking) return;
     this.forward.set(0, 0, -1).applyQuaternion(this.body.rotation);
     this.body.reset(parking, Math.atan2(-this.forward.x, -this.forward.z));
@@ -220,25 +229,43 @@ export class RoverMode implements GameMode {
       this.model = new RoverModel(this.o.shadows);
       this.trail = new RoverTrail(chunks.sampleVisibleGround);
       scene.add(this.model.root, this.trail.root);
-      this.o.shadows.setMovingCaster(this.model.root);
+      if (this.surveyRocks) {
+        this.hunt = new TreasureHunt(
+          this.o,
+          this.body,
+          this.model,
+          hud,
+          this.physics.getWorld(),
+          this.surveyRocks
+        );
+      } else this.o.shadows.setMovingCaster(this.model.root);
       hud.status.textContent = '';
     }
     const b = this.body;
-    this.obstacles?.update(b.position.x, b.position.z, dt);
+    const surfacePosition = this.hunt?.surfacePosition ?? b.position;
+    this.obstacles?.update(surfacePosition.x, surfacePosition.z, dt);
     if (input.isKeyJustPressed('c')) this.toggleCamera();
     if (input.isKeyJustPressed('r')) this.recover();
     const held = (action: string, ...keys: string[]) =>
       hud.held(action) || keys.some((k) => input.isKeyPressed(k));
-    b.throttle = Number(held('drive', 'w', 'arrowup')) - Number(held('reverse', 's', 'arrowdown'));
-    b.steer = Number(held('left', 'a', 'arrowleft')) - Number(held('right', 'd', 'arrowright'));
-    b.brake = held('brake', ' ');
+    const throttle =
+      Number(held('drive', 'w', 'arrowup')) - Number(held('reverse', 's', 'arrowdown'));
+    const steer = Number(held('left', 'a', 'arrowleft')) - Number(held('right', 'd', 'arrowright'));
+    this.forward.set(0, 0, -1).applyQuaternion(b.rotation);
+    const bearing = Math.atan2(this.forward.x, -this.forward.z);
+    this.hunt?.update(dt, bearing, throttle, steer);
+    const driving = !this.hunt || this.hunt.driving;
+    b.throttle = driving ? throttle : 0;
+    b.steer = driving ? steer : 0;
+    b.brake = !driving || held('brake', ' ');
     const ground = this.ground(b.position.x, b.position.z);
     if (ground !== null && b.position.y < ground - 2) this.recover();
     this.model?.sync(b);
     this.trail?.update(b);
-    this.forward.set(0, 0, -1).applyQuaternion(b.rotation);
-    const bearing = Math.atan2(this.forward.x, -this.forward.z);
-    this.updateCamera(b, bearing, dt, this.physics.getWorld());
+    if (this.hunt && !driving) {
+      this.hunt.updateCamera(dt);
+      this.cameraSnap = true;
+    } else this.updateCamera(b, bearing, dt, this.physics.getWorld());
     this.hudTime -= dt;
     if (this.hudTime <= 0) {
       hud.update(b.speed, b.distance, MathUtils.radToDeg(bearing));
@@ -303,6 +330,8 @@ export class RoverMode implements GameMode {
     window.removeEventListener('blur', this.centerLook);
     canvas.removeEventListener('lostpointercapture', this.onUp);
     canvas.style.removeProperty('touch-action');
+    this.hunt?.dispose();
+    this.hunt = undefined;
     if (this.body) {
       this.physics?.removePhysicsStepListener(this.body);
       this.body.dispose();

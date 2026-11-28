@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { PerspectiveCamera, Vector3, Mesh, BufferGeometry, BoxGeometry, InstancedMesh, MeshBasicMaterial, Group } from 'three';
+import { PerspectiveCamera, Vector3, Mesh, BufferGeometry, BoxGeometry, PlaneGeometry, InstancedMesh, MeshBasicMaterial, Group } from 'three';
 import { ChunkManager, type ChunkConfig } from './ChunkManager';
 import type { TerrainGenerator } from './TerrainGenerator';
 import type { RockManager } from '../environment/RockManager';
@@ -356,6 +356,31 @@ describe(ChunkManager.name, () => {
   });
 
   describe('worker results', () => {
+    it('preserves a dig across chunk eviction and restores untouched ground on exit', () => {
+      vi.mocked(terrainGenerator.createTerrainMesh).mockImplementation(({ resolution }) =>
+        new Mesh(new PlaneGeometry(100, 100, resolution, resolution).rotateX(-Math.PI / 2))
+      );
+      const manager = createManager();
+      const eye = new Vector3(0, 4, 0);
+      const site = { x: 0, z: 0 };
+      const ground = new Float32Array(4);
+      const height = () => {
+        expect(manager.sampleVisibleGround(site.x, site.z, ground, 0)).toBe(true);
+        return ground[3];
+      };
+      manager.update(eye);
+      handleWorkerResult(manager, makeResult('0,0', 0, 64));
+      manager.setExcavationDepth(site, 0.96);
+      expect(height()).toBeCloseTo(-0.96);
+      manager.update(new Vector3(10000, 50, 0));
+      expect(manager.getChunk('0,0')).toBeUndefined();
+      manager.update(eye);
+      handleWorkerResult(manager, makeResult('0,0', 0, 64));
+      expect(height()).toBeCloseTo(-0.96);
+      manager.setExcavationDepth(site, 0);
+      expect(height()).toBeCloseTo(0);
+    });
+
     it('stores the worker index array for stitching without copying it', () => {
       const manager = createManager();
       manager.update(new Vector3(0, 50, 0));

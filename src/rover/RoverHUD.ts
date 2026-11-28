@@ -51,6 +51,7 @@ export class RoverHUD {
       ]) {
         const btn = document.createElement('button');
         btn.type = 'button';
+        btn.dataset.pedal = action;
         btn.textContent = label;
         btn.onpointerdown = (e) => {
           e.preventDefault();
@@ -70,6 +71,19 @@ export class RoverHUD {
   held(action: string) {
     for (const value of this.pointers.values()) if (value === action) return true;
     return false;
+  }
+  setWalking(walking: boolean) {
+    for (const [pedal, walk, drive] of [
+      ['left', 'Turn L', 'Left'],
+      ['right', 'Turn R', 'Right'],
+      ['drive', 'Walk', 'Drive'],
+      ['reverse', 'Back', 'Reverse'],
+    ]) {
+      const btn = this.root.querySelector<HTMLButtonElement>(`[data-pedal="${pedal}"]`);
+      if (btn) btn.textContent = walking ? walk : drive;
+    }
+    const brake = this.root.querySelector<HTMLButtonElement>('[data-pedal=brake]');
+    if (brake) brake.hidden = walking;
   }
   setCamera(cab: boolean, mouseLook: boolean) {
     this.root.classList.toggle('driver-view', cab);

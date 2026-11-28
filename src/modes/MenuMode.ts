@@ -13,6 +13,7 @@ export class MenuMode implements GameMode {
   private onSettings: () => void;
   private onSelectExplore: () => void;
   private onSelectRover: () => void;
+  private onSelectHunt: () => void;
   private onSelectLander: () => void;
   private getSurfaceLabHref?: () => string;
   private requestRender: () => void;
@@ -28,6 +29,7 @@ export class MenuMode implements GameMode {
       onSettings: () => void;
       onSelectExplore: () => void;
       onSelectRover: () => void;
+      onSelectHunt: () => void;
       onSelectLander: () => void;
       getSurfaceLabHref?: () => string;
       requestRender: () => void;
@@ -37,6 +39,7 @@ export class MenuMode implements GameMode {
     this.onSettings = callbacks.onSettings;
     this.onSelectExplore = callbacks.onSelectExplore;
     this.onSelectRover = callbacks.onSelectRover;
+    this.onSelectHunt = callbacks.onSelectHunt;
     this.onSelectLander = callbacks.onSelectLander;
     this.getSurfaceLabHref = callbacks.getSurfaceLabHref;
     this.requestRender = callbacks.requestRender;
@@ -94,6 +97,11 @@ export class MenuMode implements GameMode {
     roverBtn.innerHTML = '<span class="menu-button-name">Drive the Rover</span><span class="menu-button-desc">Cross the lunar surface in the Apollo LRV</span>';
     roverBtn.addEventListener('click', this.onSelectRover);
 
+    const huntBtn = document.createElement('button');
+    huntBtn.className = 'menu-button';
+    huntBtn.innerHTML = '<span class="menu-button-name">Lunar Treasure Hunt</span><span class="menu-button-desc">Drive out, dig for minerals, and return to base</span>';
+    huntBtn.addEventListener('click', this.onSelectHunt);
+
     const settings = document.createElement('button');
     settings.className = 'menu-settings';
     settings.textContent = 'Settings';
@@ -102,6 +110,7 @@ export class MenuMode implements GameMode {
     buttons.appendChild(exploreBtn);
     buttons.appendChild(landerBtn);
     buttons.appendChild(roverBtn);
+    buttons.appendChild(huntBtn);
     overlay.appendChild(title);
     overlay.appendChild(subtitle);
     overlay.appendChild(buttons);

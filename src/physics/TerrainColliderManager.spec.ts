@@ -157,6 +157,21 @@ describe(TerrainColliderManager.name, () => {
     expect(world.castRay(missRay, 200, true)).toBeNull();
   });
 
+  it('replaces a dug heightfield even when its resolution stays the same', () => {
+    const chunk = makeChunk('0,0', 4, 0);
+    chunks.set('0,0', chunk);
+    const manager = makeManager([4]);
+    const eye = new Vector3(0, 2, 0);
+    manager.update(eye);
+    chunk.getTerrainMesh(0)?.geometry.getAttribute('position').setY(12, -1);
+    chunk.excavationRevision = 1;
+    manager.update(eye);
+    world.step();
+    const ray = new RAPIER.Ray(eye, { x: 0, y: -1, z: 0 });
+    expect(world.castRay(ray, 10, true)?.toi).toBeCloseTo(3);
+    expect(world.colliders.len()).toBe(1);
+  });
+
   it('does not rebuild the collider when the effective resolution is unchanged', () => {
     chunks.set('0,0', makeChunk('0,0', 4, 0));
     const manager = makeManager([4]);

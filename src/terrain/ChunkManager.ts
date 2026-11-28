@@ -2,6 +2,7 @@ import { ROCK_HIDDEN_PX, ROCK_PREFETCH_PX } from '../environment/rockScreenLod';
 import { PebbleSurface, type PebbleGroundSampler } from './PebbleSurface';
 import type { SunShadowUniforms } from '../rendering/SunShadows';
 import { type Scene, Vector3, type Camera, type PerspectiveCamera, type InstancedMesh, MeshBasicMaterial, Color } from 'three';
+import { Excavations, type DigSite } from './Excavations';
 import { Chunk } from './Chunk';
 import type { TerrainGenerator } from './TerrainGenerator';
 import type { RockManager } from '../environment/RockManager';
@@ -78,6 +79,7 @@ interface WorkerState {
  * and coordinates between TerrainGenerator and RockManager.
  */
 export class ChunkManager {
+  private readonly excavations = new Excavations();
   private chunks: Map<string, Chunk> = new Map();
   private requestQueue: ChunkRequestQueue;
   private workers: WorkerState[] = [];
@@ -174,6 +176,24 @@ export class ChunkManager {
 
     // Identify the LOD level closest to resolution 32 for collision detection
     this.collisionLodLevel = this.findCollisionLodLevel(32);
+  }
+
+  setExcavationDepth(site: DigSite, cut: number): void {
+    if (cut > 0) this.excavations.depths.set(site, cut);
+    else this.excavations.depths.delete(site);
+    const { chunkWidth, chunkDepth, lodLevels } = this.config;
+    for (const chunk of this.chunks.values()) {
+      const { x, z } = chunk.lod.position;
+      if (!this.excavations.touches(site, x, z, chunkWidth, chunkDepth)) continue;
+      for (const level of chunk.builtLevels) {
+        const mesh = chunk.getTerrainMesh(level);
+        if (mesh) this.excavations.apply(mesh.geometry, lodLevels[level], x, z, chunkWidth, chunkDepth, site, cut);
+      }
+      chunk.excavationRevision++;
+    }
+    this.terrainRevision++;
+    this.pebbleGroundRevision++;
+    this.requestRender();
   }
 
   /**
@@ -302,6 +322,13 @@ export class ChunkManager {
 
     // Create terrain mesh via TerrainGenerator
     const terrainMesh = this.terrainGenerator.createTerrainMesh(result, this.debugMode, gridKey);
+
+    for (const [site, cut] of this.excavations.depths) {
+      const { x, z } = chunk.lod.position;
+      const { chunkWidth, chunkDepth, lodLevels } = this.config;
+      if (this.excavations.touches(site, x, z, chunkWidth, chunkDepth))
+        this.excavations.apply(terrainMesh.geometry, lodLevels[lodLevel], x, z, chunkWidth, chunkDepth, site, cut);
+    }
 
     // Store original indices for edge stitching. The same array the geometry
     // wraps is stored: stitching swaps in separately cached index arrays and

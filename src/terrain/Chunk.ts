@@ -27,6 +27,7 @@ export class Chunk {
   /** Screen-sized boulders belong to the world chunk for its entire lifetime. */
   readonly boulders: InstancedMesh[] = [];
   rockFloor = Infinity;
+  excavationRevision = 0;
   pebbleGroundId?: number;
 
   private terrainMeshes: (Mesh | null)[];

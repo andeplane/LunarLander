@@ -1,8 +1,9 @@
 # Lunar Explorer
 
-A browser-based Moon experience built with TypeScript and Three.js, featuring procedural terrain generation with LOD-based chunk streaming. Three modes are available from the main menu.
+A browser-based Moon experience built with TypeScript and Three.js, featuring procedural terrain generation with LOD-based chunk streaming. Four modes are available from the main menu.
 
 
+- **Lunar Treasure Hunt** sends you out from a lunar field station to excavate mineral samples and build a collection.
 - **Drive the Rover** lets you take an Apollo Lunar Roving Vehicle across the terrain in chase or driver view.
 - **Explore** — free flight over the lunar surface.
 - **Fly the Lander** — a 3D lunar-lander game played from inside the cockpit: real Rapier physics, drone-style assisted attitude control (tilt-to-translate, auto-level on release), fuel management, seeded missions with landing pads, Apollo-derived landing grades (Perfect / Good / Hard / Crash), and scoring with local best tracking. Design decisions are documented in [docs/adr/](docs/adr/).
@@ -146,6 +147,12 @@ Open **Settings** from the main menu or press **Esc** during play. General contr
 Use **W/S** to drive forward or reverse, **A/D** to steer and **Space** to brake. The arrow keys also work. Press **C** to switch between chase and driver views. Drag to orbit in chase view. In driver view, move the mouse to look up to 15° left, right, up or down. Move it back to the center to look ahead. Press **R** to recover upright nearby and **Esc** to pause. Touch devices have separate steering and pedal buttons.
 
 The original articulated model uses Apollo wheelbase, track and tire dimensions. Four driven wheels, counter-steering axles and independent spring-damper suspension act on a loaded rigid chassis in lunar gravity. The model includes a suited driver, wire wheels, thermal blankets and a working instrument panel. ImageGen supplied the cloth, foil, fender and alloy surface textures. [NASA Apollo 17 press kit](https://www.nasa.gov/wp-content/uploads/static/apollo50th/pdf/A17_PressKit.pdf)
+
+### Lunar Treasure Hunt
+
+Leave the sample vault with three minutes of oxygen and room for three specimens. Follow a numbered signal on the north-up relief map. Click the map or press **M** to enlarge it. Park within 14 m of the signal, brake, and use **E** or the on-screen action button to step out.
+
+Walk with **W/S** and turn with **A/D**. Approach the survey stake, dig until you uncover a sample, then pick it up and carry it to the rover. Board after loading and drive to **B** to refill oxygen and archive your cargo. The vault tracks monazite, xenotime, native gold, and diamonds across visits in the same browser. Running out of oxygen triggers a rescue and leaves unsecured samples at their sites.
 
 ### Lander Game
 

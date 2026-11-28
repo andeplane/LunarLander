@@ -1,0 +1,201 @@
+.hunt-hud {
+  position: fixed;
+  inset: 0;
+  z-index: 810;
+  pointer-events: none;
+  color: #f0f5f3;
+  font:
+    14px / 1.35 Inter,
+    system-ui,
+    sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.hunt-field,
+.hunt-station {
+  pointer-events: auto;
+  position: absolute;
+  background: rgba(14, 25, 29, 0.95);
+  border: 1px solid #56696c;
+  border-radius: 8px;
+  box-shadow: 0 4px 24px #0005;
+}
+.hunt-field {
+  top: max(14px, 2.5vh);
+  left: max(14px, 2.5vw);
+  width: 180px;
+  overflow: hidden;
+}
+.hunt-chart {
+  display: block;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  border-bottom: 1px solid #56696c;
+  background: #203038;
+  cursor: zoom-in;
+}
+.hunt-chart canvas {
+  display: block;
+  width: 100%;
+}
+.hunt-field.expanded {
+  width: min(330px, 46vh, 90vw);
+}
+.hunt-field.expanded .hunt-chart {
+  cursor: zoom-out;
+}
+.hunt-panel {
+  padding: 10px 12px;
+}
+.hunt-title {
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  font-size: 0.7rem;
+  font-weight: 650;
+  color: #a3d6c9;
+}
+.hunt-air {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+.hunt-field meter {
+  display: block;
+  width: 100%;
+  height: 10px;
+  accent-color: #9de2c6;
+}
+.hunt-field.low-air .hunt-air {
+  color: #ffb088;
+}
+.hunt-cargo,
+.hunt-guidance {
+  font-size: 0.78rem;
+  margin-top: 6px;
+}
+.hunt-guidance {
+  color: #d3ddda;
+}
+.hunt-action,
+.hunt-launch {
+  font: inherit;
+  font-weight: 600;
+  color: #162326;
+  background: #b2e1d2;
+  border: 0;
+  border-radius: 4px;
+  padding: 8px;
+  margin-top: 9px;
+  cursor: pointer;
+}
+.hunt-action {
+  width: 100%;
+  font-size: 0.8rem;
+}
+.hunt-action:disabled {
+  background: #344549;
+  color: #c2cbcc;
+  cursor: default;
+}
+.hunt-station {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(350px, 85vw);
+  box-sizing: border-box;
+  padding: 22px;
+  max-height: 76dvh;
+  overflow: auto;
+}
+.hunt-station h2 {
+  margin: 4px 0 10px;
+  font-size: 1.65rem;
+}
+.hunt-station p {
+  color: #c1cdce;
+  margin: 0;
+}
+.hunt-station ul {
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 6px;
+  border-top: 1px solid #455458;
+}
+.hunt-station li {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 7px 0;
+  border-bottom: 1px solid #39474b;
+}
+.hunt-station li i {
+  width: 10px;
+  height: 10px;
+  background: currentColor;
+  transform: rotate(45deg);
+}
+.hunt-station li b {
+  margin-left: auto;
+}
+.hunt-hud [hidden],
+.hunt-base .rover-instruments,
+.hunt-base .rover-pedals,
+.hunt-base .rover-keys,
+.hunt-base [data-action="camera"],
+.hunt-base [data-action="recover"],
+.hunt-eva [data-action="camera"],
+.hunt-eva [data-action="recover"],
+.hunt-eva .rover-instruments,
+.hunt-eva .rover-keys {
+  display: none;
+}
+@media (max-width: 720px), (max-height: 540px) {
+  .hunt-field {
+    width: min(45vw, 178px);
+    top: 8px;
+    left: 8px;
+  }
+  .hunt-chart canvas {
+    max-height: 115px;
+    object-fit: contain;
+  }
+  .hunt-field.expanded .hunt-chart canvas {
+    max-height: 35dvh;
+  }
+  .hunt-panel {
+    padding: 6px 8px;
+  }
+  .hunt-rover .rover-keys {
+    display: none;
+  }
+  .hunt-rover .rover-actions {
+    flex-direction: column;
+    align-items: end;
+    top: 8px;
+    right: 8px;
+  }
+}
+@media (max-height: 480px) {
+  .hunt-field:not(.expanded) {
+    width: min(300px, 55vw);
+    display: flex;
+    align-items: center;
+  }
+  .hunt-field .hunt-chart {
+    width: 40%;
+    flex-shrink: 0;
+  }
+  .hunt-field.expanded .hunt-chart {
+    width: 100%;
+  }
+  .hunt-field[hidden] {
+    display: none;
+  }
+}
+@media (min-width: 740px) {
+  .hunt-station {
+    left: max(18px, 4vw);
+    transform: translateY(-50%);
+    width: min(325px, 37vw);
+  }
+}

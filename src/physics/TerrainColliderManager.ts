@@ -40,6 +40,7 @@ interface ChunkCollider {
   lodLevel: number;
   /** Effective heightfield resolution (cells) used for this collider */
   physicsResolution: number;
+  excavationRevision: number;
   minHeight: number;
   maxHeight: number;
 }
@@ -108,7 +109,7 @@ export class TerrainColliderManager {
       const meshResolution = this.lodLevels[sourceLod] ?? this.lodLevels[0];
       const physicsResolution = effectivePhysicsResolution(meshResolution, cap);
       const needsRebuild =
-        !existing || existing.physicsResolution !== physicsResolution;
+        !existing || existing.physicsResolution !== physicsResolution || existing.excavationRevision !== chunk.excavationRevision;
 
       if (needsRebuild) {
         // Build-then-swap: only replace the old collider once the new one is
@@ -292,6 +293,7 @@ export class TerrainColliderManager {
       gridKey: chunk.gridKey,
       lodLevel,
       physicsResolution: numCells,
+      excavationRevision: chunk.excavationRevision,
       minHeight,
       maxHeight,
     };
