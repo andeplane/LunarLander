@@ -169,10 +169,10 @@ const debugEnabled =
 let drivingColliders: TerrainColliderManager | undefined;
 const modeManager = new ModeManager(inputManager, (mode) => {
   const isExplore = mode === exploreMode;
-  if (drivingColliders) drivingColliders.surfaceDriving = mode === roverMode;
+  if (drivingColliders) drivingColliders.surfaceDriving = mode instanceof RoverMode;
   // Debug UI and the O/I/C debug keys all require ?debug=true
   engine.setStatsVisible(debugEnabled && isExplore);
-  engine.setDebugKeysEnabled(debugEnabled && mode !== landerMode && mode !== roverMode);
+  engine.setDebugKeysEnabled(debugEnabled && mode !== landerMode && !(mode instanceof RoverMode));
   shaderUI.setVisible(debugEnabled && isExplore);
 });
 engine.setModeManager(modeManager);
@@ -199,7 +199,8 @@ const gameMenu = new GameMenu(settings, {
   },
   resume: () => {
     if (modeManager.getActiveMode() === exploreMode) exploreMode.resumeMouseLook();
-    if (modeManager.getActiveMode() === roverMode) roverMode.refreshCameraHint();
+    const mode = modeManager.getActiveMode();
+    if (mode instanceof RoverMode) mode.refreshCameraHint();
   },
   mainMenu: () => modeManager.switchTo(menuMode),
   applyVideo: applyVideoSettings,
@@ -230,7 +231,7 @@ const landerMode = new LanderMode({
   audio,
 });
 
-const roverMode = new RoverMode({
+const roverOptions = {
   camera: engine.getCamera(),
   canvas,
   scene: engine.getScene(),
@@ -241,11 +242,14 @@ const roverMode = new RoverMode({
   onPause: () => gameMenu.pause(),
   settings,
   requestRender: () => engine.requestRender(),
-});
+};
+const roverMode = new RoverMode(roverOptions);
+const huntMode = new RoverMode(roverOptions, rockGeneration);
 
 const menuMode = new MenuMode(engine.getCamera(), {
   onSettings: () => gameMenu.showSettings(),
   onSelectExplore: () => modeManager.switchTo(exploreMode),
+  onSelectHunt: () => modeManager.switchTo(huntMode),
   onSelectRover: () => modeManager.switchTo(roverMode),
   onSelectLander: () => modeManager.switchTo(landerMode),
   getSurfaceLabHref: debugEnabled
@@ -281,7 +285,7 @@ physicsWorld.initialize().then(() => {
   );
   
   drivingColliders = terrainColliderManager;
-  drivingColliders.surfaceDriving = modeManager.getActiveMode() === roverMode;
+  drivingColliders.surfaceDriving = modeManager.getActiveMode() instanceof RoverMode;
 
   // Create ball manager
   const ballManager = new BallManager(
@@ -308,11 +312,13 @@ physicsWorld.initialize().then(() => {
   // Late injection into modes (they exist before physics is ready)
   exploreMode.setBallManager(ballManager);
   roverMode.setPhysics(physicsWorld);
+  huntMode.setPhysics(physicsWorld);
   landerMode.setPhysics(physicsWorld, ballManager);
 
   console.log('[Physics] Physics system ready. Press Space to shoot balls (Explore mode).');
 }).catch((err) => {
   roverMode.reportPhysicsFailure();
+  huntMode.reportPhysicsFailure();
   console.error('[Physics] Failed to initialize:', err);
 });
 
